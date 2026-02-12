@@ -1,2 +1,7 @@
+^renv$
+^renv\.lock$
 ^bhCRR\.Rproj$
 ^\.Rproj\.user$
+^LICENSE\.md$
+^README\.Rmd$
+^\.github$
