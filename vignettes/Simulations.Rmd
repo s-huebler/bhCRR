@@ -10,7 +10,9 @@ vignette: >
 ```{r, include = FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
-  comment = "#>"
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4
 )
 have_tidy <- requireNamespace("dplyr", quietly = TRUE)&&
   requireNamespace("ggplot2", quietly = TRUE)
@@ -22,4 +24,337 @@ if(!have_tidy){
 
 ```{r setup}
 library(bhCRR)
+```
+
+# Motivation
+
+Outline a customizable scenario builder so that we can pick and choose which pieces are important.
+
+Every choice that I originally made
+
+-   Design matrix based off of a true dataset
+
+    -   Fixed n, p, distribution (non-zero values, comes from low abundance CLR data)
+
+-   Permutations (for low correlation)
+
+-   Number of competing risks
+
+-   Number of true covariates in each set
+
+    -   Fixed sparsity, masking
+
+-   Effect sizes
+
+    -   Range log HR distribution
+
+    -   Target standard deviation of linear predictors
+
+    -   Masked variables as a multiplicative factor
+
+-   Outcome parametric distribution
+
+    -   Linear form
+
+    -   Weibull ph
+
+        -   Fixed shape and scale
+
+# Specifications
+
+## Helper functions
+
+```{r}
+
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+sim_merge_lists <- function(default, user) {
+  if (is.null(user)) return(default)
+  if (!is.list(user)) stop("Expected a list, got: ", class(user)[1])
+  out <- default
+  for (nm in names(user)) {
+    if (!nm %in% names(out)) {
+      out[[nm]] <- user[[nm]]
+    } else if (is.list(out[[nm]]) && is.list(user[[nm]])) {
+      out[[nm]] <- sim_merge_lists(out[[nm]], user[[nm]])
+    } else {
+      out[[nm]] <- user[[nm]]
+    }
+  }
+  out
+}
+
+```
+
+## List of specification
+
+```{r}
+sim_spec <- function(
+  n = 50, # samples
+  p = 100, # features
+  x = list(), # design matrix
+  truth = list(), # variable selection
+  risks = list(), # risk 
+  censor = list(), #type of censoring
+  seed = NULL
+  
+){
+  
+  
+defaults <- list(
+    n = n,
+    p = p,
+    x = list(
+      family = "custom",  # custom | gaussian | binary_latent | zip | mixed
+      corr = list(type = "indep", rho = 0.0),  # indep | ar1 | block | factor
+      zero_inflation = 0.0,
+      standardize = TRUE,
+
+      # optional knobs used by some families/structures
+      binary_prob = 0.5,      # for binary_latent
+      zip_rate = 1.0,         # for zip (rough first pass)
+      factor_k = 5            # for corr$type = "factor"
+    ),
+    truth = list(
+      share_active_set = 0,
+      shared_multiplier = 1,
+      sparsity = 0.05,
+      beta = list(dist = "normal", mean = 0, sd = 0.3)#,
+
+      # nonlinear = list(
+      #   enabled = FALSE,
+      #   n_terms = 0,
+      #   forms = c("sin", "square"),
+      #   sd = 0.3
+      # ),
+      # interactions = list(
+      #   enabled = FALSE,
+      #   n_pairs = 0,
+      #   sd = 0.2
+      # )
+    ),
+    risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", gamma = 1.024, lambda = 0.02),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", gamma = 1.03, lambda = 0.02),
+        link = "PH"
+      ),
+      # cluster = list(
+      #   enabled = FALSE,
+      #   G = 40,
+      #   sd = 0.35,
+      #   shared_across_causes = TRUE
+      # )
+    ),
+    censor = list(
+      type = "administrative", # none | administrative | random | administrative_plus_random
+      administrative_time = 100,
+      random = list(dist = "exponential", rate = 0.15)
+      # future: target_censor, calibrate, etc.
+    ),
+    seed = seed
+  )
+
+  spec <- defaults
+  spec$x <- sim_merge_lists(defaults$x, x)
+  spec$truth <- sim_merge_lists(defaults$truth, truth)
+  spec$risks <- sim_merge_lists(defaults$risks, risks)
+  spec$censor <- sim_merge_lists(defaults$censor, censor)
+
+  class(spec) <- "sim_spec"
+
+  spec
+}
+```
+
+## Generator wrapper
+
+```{r}
+sim_generate <- function(spec,
+                         custom_design_matrix = NULL,
+                         seed = NULL){
+  if (!inherits(spec, "sim_spec")) {
+    # allow passing a plain list as long as it has the right shape
+    class(spec) <- unique(c("sim_spec", class(spec)))
+  }
+  
+  if (!is.null(seed)) {
+    set.seed(seed)
+  } else if (!is.null(spec$seed)) {
+    set.seed(spec$seed)
+  }
+  
+  n <- as.integer(spec$n)
+  p <- as.integer(spec$p)
+  
+  # Design matrix "X"
+  
+  if(!is.null(custom_design_matrix)){
+    X <- custom_design_matrix
+  }else{
+    
+    X <- sim_generate_x(spec$x, n, p)
+  }
+  
+  # Variable selection "truth:
+  truth <- sim_generate_truth(spec$truth, p)
+  
+  
+  # Covariate effects and outcomes "risks"
+  ## Linear predictors
+  eta1 <- sim_compute_eta(X, truth$cause1)
+  eta2 <- sim_compute_eta(X, truth$cause2)
+
+  ## Latent competing event times
+  b1 <- spec$risks$cause1$baseline
+  b2 <- spec$risks$cause2$baseline
+
+  
+  T1 <- sim_weibull_ph(shape = b1$shape %||% 1.2, scale = b1$scale %||% 1.0, eta = eta1)
+  T2 <- sim_weibull_ph(shape = b2$shape %||% 0.9, scale = b2$scale %||% 1.3, eta = eta2)
+
+  # Censoring "censor"
+  C <- sim_generate_censor_time(spec$censor, n)
+  time <- pmin(T1, T2, C)
+
+  event1 <- (T1 <= T2) & (T1 <= C)
+  event2 <- (T2 <  T1) & (T2 <= C)
+  status <- integer(n)
+  status[event1] <- 1L
+  status[event2] <- 2L
+  # remaining are censored (0)
+
+  out <- list(
+    id = seq_len(n),
+    time = as.numeric(time),
+    status = as.integer(status),
+    X = X,
+    spec = spec,
+    truth = truth,
+    lp = list(cause1 = eta1, cause2 = eta2)
+  )
+
+
+  class(out) <- "sim_data"
+  out
+  
+  
+}
+```
+
+# Design Matrix
+
+For future implementation. ChatGPT 5.2 Pro placeholder.
+
+```{r}
+sim_generate_x <- function(xspec, n, p) {
+  corr_type <- xspec$corr$type %||% "indep"
+  rho <- xspec$corr$rho %||% 0
+
+  # 1) latent Gaussian core with requested dependence
+  Z <- switch(
+    corr_type,
+    indep = matrix(stats::rnorm(n * p), nrow = n),
+    ar1 = {
+      if (!is.finite(rho) || abs(rho) >= 1) stop("For ar1, corr$rho must satisfy abs(rho) < 1.")
+      eps <- matrix(stats::rnorm(n * p), nrow = n)
+      out <- eps
+      if (p >= 2) {
+        s <- sqrt(1 - rho^2)
+        for (j in 2:p) out[, j] <- rho * out[, j - 1] + s * eps[, j]
+      }
+      out
+    },
+    block = {
+      block_size <- xspec$corr$block_size %||% 50L
+      block_size <- as.integer(block_size)
+      if (block_size < 1) stop("For block correlation, corr$block_size must be >= 1.")
+      # equicorrelation within blocks via a shared latent factor
+      out <- matrix(0, nrow = n, ncol = p)
+      nb <- ceiling(p / block_size)
+      for (b in seq_len(nb)) {
+        j0 <- (b - 1) * block_size + 1
+        j1 <- min(b * block_size, p)
+        m <- j1 - j0 + 1
+        z_shared <- stats::rnorm(n)
+        eps <- matrix(stats::rnorm(n * m), nrow = n)
+        out[, j0:j1] <- sqrt(max(rho, 0)) * z_shared + sqrt(max(1 - max(rho, 0), 0)) * eps
+      }
+      out
+    },
+    factor = {
+      k <- as.integer(xspec$factor_k %||% 5L)
+      k <- max(1L, k)
+      Zf <- matrix(stats::rnorm(n * k), nrow = n)
+      Lambda <- matrix(stats::rnorm(k * p), nrow = k) / sqrt(k)
+      E <- matrix(stats::rnorm(n * p), nrow = n)
+      Zf %*% Lambda + E
+    },
+    stop("Unknown corr$type: ", corr_type)
+  )
+
+  # 2) transform latent Z to requested family
+  family <- xspec$family %||% "gaussian"
+  X <- switch(
+    family,
+    gaussian = Z,
+    binary_latent = {
+      prob <- xspec$binary_prob %||% 0.5
+      prob <- min(max(prob, 1e-6), 1 - 1e-6)
+      thr <- stats::qnorm(1 - prob)
+      (Z > thr) * 1.0
+    },
+    zip = {
+      # Rough first pass: correlated log-intensity from Z
+      rate0 <- xspec$zip_rate %||% 1.0
+      mu <- log(pmax(rate0, 1e-8)) + 0.3 * Z
+      stats::rpois(n * p, lambda = exp(mu)) |> matrix(nrow = n)
+    },
+    mixed = {
+      # first pass: 70% gaussian, 30% binary_latent
+      p_bin <- as.integer(round(0.3 * p))
+      idx_bin <- if (p_bin > 0) sample.int(p, p_bin) else integer(0)
+      Xmix <- Z
+      if (length(idx_bin) > 0) Xmix[, idx_bin] <- (Z[, idx_bin] > 0) * 1.0
+      Xmix
+    },
+    stop("Unknown x$family: ", family)
+  )
+
+  # 3) zero inflation overlay (applies to all families in this first pass)
+  zi <- xspec$zero_inflation %||% 0
+  if (zi > 0) {
+    mask <- matrix(stats::runif(n * p) < zi, nrow = n)
+    X[mask] <- 0
+  }
+
+  # 4) optional standardization
+  if (isTRUE(xspec$standardize)) {
+    cm <- colMeans(X)
+    cs <- apply(X, 2, stats::sd)
+    cs[cs == 0] <- 1
+    X <- sweep(X, 2, cm, "-")
+    X <- sweep(X, 2, cs, "/")
+  }
+
+  X
+}
+```
+
+# Working Model
+
+```{r}
+sim_generate_truth <- function(truthspec, p){
+  
+  # Number of active predictors
+  if(truthspec$sparsity < 1){
+    s <- ceiling(p * (trspec$sparsity %||% 0.05))
+    s <- max(0L, min(p, as.integer(s)))
+  }else if(truthspec$sparsity >= 1 & truthspec$sparsity <= p ){
+    s <- truthspec$sparsity
+  }
+}
 ```
