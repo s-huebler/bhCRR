@@ -1,0 +1,25 @@
+---
+title: "Simulations"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Simulations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+have_tidy <- requireNamespace("dplyr", quietly = TRUE)&&
+  requireNamespace("ggplot2", quietly = TRUE)
+
+if(!have_tidy){
+  message("To reproduce the full vignette, please install the suggested packages: dplyr, ggplot2")
+}
+```
+
+```{r setup}
+library(bhCRR)
+```
