@@ -23,7 +23,10 @@ if(!have_tidy){
 ```
 
 ```{r setup}
-library(bhCRR)
+library(dplyr)
+library(ggplot2)
+library(simsurv)
+#library(bhCRR)
 ```
 
 # Motivation
@@ -88,6 +91,10 @@ sim_merge_lists <- function(default, user) {
 
 ## List of specification
 
+Things to add:
+
+-   Nonlinear and interaction terms in the truth
+
 ```{r}
 sim_spec <- function(
   n = 50, # samples
@@ -105,7 +112,7 @@ defaults <- list(
     n = n,
     p = p,
     x = list(
-      family = "custom",  # custom | gaussian | binary_latent | zip | mixed
+      family = "gaussian",  #  gaussian | binary_latent | zip | mixed
       corr = list(type = "indep", rho = 0.0),  # indep | ar1 | block | factor
       zero_inflation = 0.0,
       standardize = TRUE,
@@ -119,7 +126,7 @@ defaults <- list(
       share_active_set = 0,
       shared_multiplier = 1,
       sparsity = 0.05,
-      beta = list(dist = "normal", mean = 0, sd = 0.3)#,
+      beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
 
       # nonlinear = list(
       #   enabled = FALSE,
@@ -132,16 +139,18 @@ defaults <- list(
       #   n_pairs = 0,
       #   sd = 0.2
       # )
+      
+      target_eta_sd = c(0.5, 0.5)
     ),
     risks = list(
       cause1 = list(
-        baseline = list(dist = "weibull", gamma = 1.024, lambda = 0.02),
+        baseline = list(dist = "weibull", shape = 1, scale = 0.011),
         link = "PH"
       ),
       cause2 = list(
-        baseline = list(dist = "weibull", gamma = 1.03, lambda = 0.02),
+        baseline = list(dist = "weibull", shape = 1, scale = 0.011),
         link = "PH"
-      ),
+      )
       # cluster = list(
       #   enabled = FALSE,
       #   G = 40,
@@ -151,7 +160,7 @@ defaults <- list(
     ),
     censor = list(
       type = "administrative", # none | administrative | random | administrative_plus_random
-      administrative_time = 100,
+      administrative_time = 65,
       random = list(dist = "exponential", rate = 0.15)
       # future: target_censor, calibrate, etc.
     ),
@@ -175,6 +184,8 @@ defaults <- list(
 ```{r}
 sim_generate <- function(spec,
                          custom_design_matrix = NULL,
+                         custom_predictor_set = NULL,
+                         custom_betas = NULL,
                          seed = NULL){
   if (!inherits(spec, "sim_spec")) {
     # allow passing a plain list as long as it has the right shape
@@ -191,33 +202,122 @@ sim_generate <- function(spec,
   p <- as.integer(spec$p)
   
   # Design matrix "X"
-  
+  ## Allow for custom design matrix
   if(!is.null(custom_design_matrix)){
-    X <- custom_design_matrix
+    X <- data.matrix(custom_design_matrix)
   }else{
     
     X <- sim_generate_x(spec$x, n, p)
   }
   
+  print("Success in generating X")
+  
   # Variable selection "truth:
-  truth <- sim_generate_truth(spec$truth, p)
+  ## Allow for custom covariate choices, but check that custom predictor set is a list of length 2 
+  if(!is.null(custom_predictor_set)){
+     if(!(typeof(custom_predictor_set) == "list" & 
+                length(custom_predictor_set) == 2 &
+                sum(custom_predictor_set[[1]]%%1) == 0 &
+                sum(custom_predictor_set[[2]]%%1) == 0 &
+                max(custom_predictor_set[[1]]) <= p &
+                max(custom_predictor_set[[2]]) <= p)){
+    warning("custom_predictor_set should be a list of 2 sets of index integers (with max integer <= p). Ignoring custom predictor sets and custom_betas. Generating from truth defaults. ")
+    custom_predictor_set <- NULL
+    custom_betas <- NULL
+    }}
+  
+    
+  if(!is.null(custom_predictor_set)){
+    truth$shared_multiplier = spec$truth$shared_multiplier
+    truth$cause1 = custom_predictor_set[[1]]
+    truth$cause2 = custome_predictor_set[[2]]
+    truth$shared_predictors = intersect(custom_predictor_set[[1]],
+                                        custom_predictor_set[[2]])
+    
+    #print real truth rather than defaults
+    #number of real shared active sets
+    truth$share_active_set = length(truth$shared_predictors)
+    #true sparsity based on min sparsity of the 2 causes
+    truth$sparsity = min(c(length(truth$cause1), length(truth$cause1)))/p
+    #placeholders
+    truth$beta = spec$truth$beta
+    truth$target_eta_sd = spec$truth$target_eta_sd
+  }else{
+    truth <- sim_generate_truth(spec$truth, p, seed = seed)
+  }
+  
+  print("Success in generating truth")
   
   
-  # Covariate effects and outcomes "risks"
-  ## Linear predictors
-  eta1 <- sim_compute_eta(X, truth$cause1)
-  eta2 <- sim_compute_eta(X, truth$cause2)
+  # Covariate effects (add to "truth")
+  ## Allow for custom covariate effects, but check that custom predictors is a list of 
+  if(!is.null(custom_betas)){
+     if(!(length(custom_betas[[1]]) == length(truth$cause1) &
+       length(custom_betas[[2]]) == length(truth$cause2))){
+    warning("Lengh of custom betas does not match length of predictor sets. Generating from truth defaults.")
+    custom_betas <- NULL
+  }}
+  ## Covariate effects and linear predictors
+  if(!is.null(custom_betas)){
+    effects1$betas1 <- custom_betas[[1]]
+    effects1$betas1_sd <- sd(effects1$betas1)
+    effects1$eta1 <- X[, truth$cause1] %*% custom_betas[[1]]
+    effects1$eta1_sd <- sd(effects1$eta1)
+    
+    effects2$betas2 <- custom_betas[[2]]
+    effects2$betas2_sd <- sd(effects2$betas2)
+    effects2$eta2 <- X[, truth$cause2] %*% custom_betas[[2]]
+    effects2$eta2_sd <- sd(effects2$eta2)
+    
+    effects <- list(effects1, effects2)
+    
+    
+  }else{
+  effects <- sim_compute_effects(X, truth)
+  }
+  
+  if(truth$share_active_set > 0){
+      #sort to the shared predictor order
+      i1 <- match(truth$shared_predictors, truth$cause1)
+      i2 <- match(truth$shared_predictors, truth$cause2)
+    truth$shared_multiplier <- effects$effects1$betas1[i1] / effects$effects2$betas2[i2]
+    }else{
+      truth$shared_multiplier <- NA
+    }
+  
 
-  ## Latent competing event times
+  truth$beta <- NULL
+  truth$target_eta_sd <- NULL
+  truth$effects <- effects
+  
+  #print("Shared predictors")
+  #print(truth$shared_predictors)
+  
+  print("Success in generating truth with outcomes")
+  #test_truth <<- truth
+
+  # Outcome "risks"
+  ## baseline hazard
   b1 <- spec$risks$cause1$baseline
   b2 <- spec$risks$cause2$baseline
 
+  ## Latent competing event times
+  event1 <- sim_weibull_ph(shape = b1$shape %||% 1, 
+                       scale = b1$scale %||% 0.011, 
+                       eta_val = truth$effects$effects1$eta1)
   
-  T1 <- sim_weibull_ph(shape = b1$shape %||% 1.2, scale = b1$scale %||% 1.0, eta = eta1)
-  T2 <- sim_weibull_ph(shape = b2$shape %||% 0.9, scale = b2$scale %||% 1.3, eta = eta2)
+  T1 <- event1$eventtime
+  
+  event2 <- sim_weibull_ph(shape = b2$shape %||% 1, 
+                       scale = b2$scale %||% 0.011, 
+                       eta_val = truth$effects$effects2$eta2)
+  T2 <- event2$eventtime
+  
+  print("Success in generating latent event times")
 
+  maxtime <- max(c(T1, T2))
   # Censoring "censor"
-  C <- sim_generate_censor_time(spec$censor, n)
+  C <- sim_generate_censor_time(spec$censor, n, maxtime)
   time <- pmin(T1, T2, C)
 
   event1 <- (T1 <= T2) & (T1 <= C)
@@ -226,15 +326,18 @@ sim_generate <- function(spec,
   status[event1] <- 1L
   status[event2] <- 2L
   # remaining are censored (0)
+  
+  print("Success in generating censoring")
 
   out <- list(
     id = seq_len(n),
     time = as.numeric(time),
     status = as.integer(status),
+    latent_time_event1 = T1,
+    latent_time_event2 = T2,
     X = X,
-    spec = spec,
-    truth = truth,
-    lp = list(cause1 = eta1, cause2 = eta2)
+    spec_call = spec,
+    truth = truth
   )
 
 
@@ -247,7 +350,9 @@ sim_generate <- function(spec,
 
 # Design Matrix
 
-For future implementation. ChatGPT 5.2 Pro placeholder.
+-   For future implementation. ChatGPT 5.2 Pro placeholder.
+
+-   Need to add clinical factors as a designation thing
 
 ```{r}
 sim_generate_x <- function(xspec, n, p) {
@@ -346,15 +451,371 @@ sim_generate_x <- function(xspec, n, p) {
 
 # Working Model
 
+Things to add
+
+-   Different number of predictors per outcome event
+
+-   Random vs preset predictors
+
+-   Clinical predictors
+
+-   Different distributions of the betas
+
 ```{r}
-sim_generate_truth <- function(truthspec, p){
+sim_generate_truth <- function(trspec, p, seed){
   
   # Number of active predictors
-  if(truthspec$sparsity < 1){
+  if(trspec$sparsity < 1){
     s <- ceiling(p * (trspec$sparsity %||% 0.05))
     s <- max(0L, min(p, as.integer(s)))
-  }else if(truthspec$sparsity >= 1 & truthspec$sparsity <= p ){
-    s <- truthspec$sparsity
+  }else if(trspec$sparsity >= 1 & trspec$sparsity <= p ){
+    s <- trspec$sparsity
   }
+  
+  #print(s)
+  
+  # Choice of active predictors
+  if(!is.null(seed)){
+    set.seed(seed)
+  }else if(is.null(seed)){
+    set.seed(9134)
+  }
+  active_predictors <- sample(1:p, 2*s-trspec$share_active_set)
+  active_predictors_cause1 <- active_predictors[1:s]
+  active_predictors_cause2 <- active_predictors[((s-trspec$share_active_set)+1):length(active_predictors)]
+  shared_predictors <- dplyr::intersect(active_predictors_cause1,
+                                        active_predictors_cause2)
+  
+  #rm(.Random.seed)
+  
+  ret <- list(shared_multiplier = trspec$shared_multiplier,
+              cause1 = active_predictors_cause1,
+              cause2 = active_predictors_cause2,
+              shared_predictors = shared_predictors,
+              share_active_set = trspec$share_active_set,
+              sparsity = trspec$sparsity,
+              target_eta_sd = trspec$target_eta_sd,
+              beta = trspec$beta)
+  
+  return(ret)
+  
 }
+```
+
+```{r}
+sim_compute_effects <- function(X, truth){
+  # Simulate event of interest first (ignore masking issue)
+  X1 <- X[,truth$cause1]
+
+  #print(truth$cause1)
+  #print(truth$cause2)
+  #print(truth$share_active_set)
+  #print(truth$shared_predictors)
+
+  target_beta_sd <- truth$beta$sd[1]
+  target_eta_sd <- truth$target_eta_sd[1]
+  p1 <- ncol(X1)
+  betas1 <- numeric(p1)
+
+  
+  betas1 <- rnorm(p1, 0, target_beta_sd)
+
+  eta1_0 <- as.numeric(X1 %*% betas1)
+  scale_factor <- target_eta_sd / sd(eta1_0)
+  betas1 <- betas1 * scale_factor
+
+
+  eta1 <- as.numeric(X1 %*% betas1)
+  
+  # Simulate competing event next
+  X2 <- X[,truth$cause2]
+  #names_X2 <- colnames(X2)
+  if(exists("truth$beta$sd[2]")){
+  target_beta_sd <- truth$beta$sd[2]
+  }
+  if(exists("truth$target_eta_sd[2]")){
+  target_eta_sd <- truth$target_eta_sd[2]
+  }
+  p2 <- ncol(X2)
+  betas2 <- numeric(p2)
+  
+  if(truth$share_active_set < 1){
+    betas2 <- rnorm(p1, 0, target_beta_sd)
+    eta2_0 <- as.numeric(X2 %*% betas2)
+    scale_factor <- target_eta_sd / sd(eta2_0)
+    betas2 <- betas2 * scale_factor
+  }else{
+    i1 <- match(truth$shared_predictors, truth$cause1)
+    i2 <- match(truth$shared_predictors, truth$cause2)
+    
+    if(length(truth$shared_multiplier) == 1){
+      truth$shared_multiplier == rep(truth$shared_multiplier, share_active_set)
+    }
+    
+    #print(truth$shared_multiplier)
+    #print(betas1[i1])
+  
+    betas2[i2] <- betas1[i1] * 1/truth$shared_multiplier
+    #print(betas2[i2])
+    betas2[-i2] <- rnorm(p2-length(i2), 0, target_beta_sd)
+    
+    eta_overlap <- as.numeric(X2[,i2, drop = FALSE] %*% betas2[i2])
+    #print(eta_overlap)
+
+    eta_nonoverlap_raw <- as.numeric(X2[, -i2, drop = FALSE] %*% betas2[-i2])
+    scale_factor2 <- target_eta_sd / sd(eta_nonoverlap_raw)
+    betas2[-i2] <- betas2[-i2] * scale_factor2
+        #print(eta_nonoverlap_raw)
+    
+    # solve scale factor for nonoverlap betas such that 
+    # sd(eta_overlap + scale*non_overlap) = target_sd
+  #   objective <- function(c) {
+  #   sd(eta_overlap + c * eta_nonoverlap_raw) - target_eta_sd
+  #   }
+  # 
+  #   c_hat <- uniroot(objective, interval = c(-100, 100))$root
+  #   betas2[-i2] <- c_hat * betas2[-i2]
+   }
+  
+    eta2 <- as.numeric(X2 %*% betas2)
+  
+  ret <- list(
+    effects1 = list(
+      betas1 = betas1,
+      betas1_sd = sd(betas1),
+      eta1 = eta1,
+      eta1_sd = sd(eta1)
+    ),
+    effects2 = list(
+      betas2 = betas2,
+      betas2_sd = sd(betas2),
+      eta2 = eta2,
+      eta2_sd = sd(eta2)
+    )
+  )
+
+  return(ret)
+
+  
+}
+```
+
+# Latent Outcome Model
+
+## Weibull proportional hazards model
+
+Parameterization of the weibull model based off of the weibull distribution with shape parameter $\gamma > 0$ and scale/rate parameter $\lambda > 0$ . Shape controls whether the hazard increases or decreases with time. As $\lambda$ increases, the hazard increases, and survival is shorter. Note the parameterization is different here than in parameterizations which relate scale $b$ to xx, which can be achieved with the transformation $b = \lambda ^{-1/\gamma}$.
+
+Weibull proportional hazards relationships.
+
+Baseline hazard function
+
+$$
+h_0(t) = \gamma\lambda t^{\gamma-1}
+$$
+
+Baseline cumulative hazard function
+
+$$
+H_0(t) = \int_0^t h_0(s) ds \\
+=  \lambda \int_0^t \gamma s^{\gamma-1} ds\\
+= \lambda t^{\gamma}\\
+= -\log(S_0(t))
+$$
+
+Baseline survival function
+
+$$
+S_0(t) = \exp(-H_0(t)) \\ 
+= \exp(-\lambda t^{\gamma})\\
+= 1 - F_0(t)
+$$
+
+Baseline probability density function
+
+$$
+f_0(t) = S_0(t) h_0(t)\\
+=  \exp(-\lambda t^{\gamma})\gamma\lambda t^{\gamma-1}\\
+= -\frac{d}{dt}S_0(t)\\
+= \frac{d}{dt}F_0(t)
+$$
+
+Baseline cumulative incidence function
+
+$$
+F_0(t) = 1- S_0(t) \\
+= 1 - \exp(-\lambda t^{\gamma})
+$$
+
+This cumulative incidence function is a weibull CDF.
+
+With linear predictors given by $\eta_i = x_i^T \beta$, the person specific functions are
+
+Person specific hazard function
+
+$$
+h_i(t) = h_0(t) \exp(\eta_i) \\
+=\gamma\lambda t^{\gamma-1} \exp(\eta_i)
+$$
+
+Person specific cumulative hazard function
+
+$$
+H_i(t) = \int_0^t h_i(s) ds \\
+=  \lambda \exp(\eta_i) \int_0^t \gamma s^{\gamma-1} ds\\
+= \lambda t^{\gamma} \exp(\eta_i)\\
+= -\log(S_it))
+$$
+
+Person specific survival function
+
+$$
+S_i(t) = \exp(-H_i(t)) \\ 
+= \exp(-\lambda t^{\gamma}\exp(\eta_i))\\
+= 1 - F_i(t)
+$$
+
+Person specific density function
+
+$$
+f_i(t) = S_i(t) h_i(t)\\
+=  \exp(-\lambda t^{\gamma}\exp(\eta_i))\gamma\lambda t^{\gamma-1}\exp(\eta_i)\\
+= -\frac{d}{dt}S_i(t)\\
+= \frac{d}{dt}F_i(t)
+$$
+
+Person specific cumulative distribution function
+
+$$
+F_i(t) = 1- S_i(t) \\
+= 1 - \exp(-\lambda t^{\gamma}\exp(\eta_i))
+$$
+
+The effective scale of the
+
+### Randomness of Eta
+
+Consider $\eta \sim N(0, \sigma^2)$ to be a random pull. Then $\exp(\eta) \sim$ lognormal. This means that only the conditional event time $T_i | \eta_i$ is weibull ditributed.
+
+## Default values
+
+Generic value of gamma: gamma = 1
+
+-   Constant hazard: 1
+
+-   Moderately increasing hazard: [1.2, 1]
+
+-   Decreasing hazard due to early risk: \< 1
+
+Generic values of lambda
+
+-   Choose a median survival time $m$ so that we can solve for
+
+    $$
+    m:= arg{ S_0(m) = 0.5}\\
+     -\lambda m^{\gamma} = 0.5 \\
+     \lambda = \frac{log 2}{m ^{\gamma}}
+    $$
+
+-   Choose a baseline event probability $p$ at a certain time $\tau$
+
+    $$
+    p:= Pr(T_{event} \leq \tau) = 1 - S_0(\tau) \\
+    S_0(\tau) = 1-p\\
+    \exp(-\lambda \tau ^ {\gamma}) = 1-p \\
+    \lambda = \frac{-\log(1-p)}{\tau^{\gamma}}
+    $$
+
+Generic values of sd of eta
+
+-   Mild: 0.3 (HR increases 1.35 per standard deviation)
+
+## Function
+
+```{r}
+sim_weibull_ph <- function(shape, scale, eta_val){
+  x_frame <- data.frame(eta = eta_val)
+
+
+  names(x_frame)<- "eta"
+  betas_frame <- c(eta = 1)
+
+  simsurv::simsurv(dist = "weibull",
+                   lambdas = scale,
+                   gammas = shape,
+                   x =x_frame,
+                   betas = betas_frame)
+}
+```
+
+# Censoring
+
+```{r}
+sim_generate_censor_time <- function(cspec, n, maxtime){
+  if(cspec$type == "none") {
+    return(rep(maxtime + 10, n))
+  }else if(cspec$type == "administrative") {
+    return(rep(cspec$administrative_time, n))
+  }
+  
+  random_censor_dist <- cspec$random$dist
+  random_censor_admin <- cspec$administrative_time
+  latent_censor_time <- switch(
+    random_censor_dist,
+    exponential ={rexp(n, rate = 1/(random_censor_admin+30))},
+    stop("Unknown random censor distribution: ", random_censor_dist)
+  )
+}
+```
+
+# Testing
+
+```{r}
+fpath <- system.file( "example_dat.Rdata", package = "bhCRR")
+
+if (nzchar(fpath)) {
+  load(fpath)
+  # The objects are now in your environment
+} else {
+  warning("Could not find the dataset in the installed package. Loading from inst file.")
+  
+  load("../inst/example_dat.Rdata") 
+    example_dm <- example_dat |> dplyr::select(dplyr::starts_with("ASV"))
+}
+```
+
+```{r}
+scenario1 <- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+  truth = list(share_active_set = 2,
+               shared_multiplier = c(0.5, 0.2),
+               sparsity = 0.05,
+               beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+               target_eta_sd = c(0.5, 0.5)), # variable selection
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.011),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.011),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "administrative",
+                administrative_time = 65), #type of censoring
+  seed = 9134
+  
+)
+
+
+```
+
+```{r}
+scenario1_sim <- sim_generate(scenario1,
+                         custom_design_matrix = example_dm,
+                         custom_predictor_set = NULL,
+                         custom_betas = NULL,
+                         seed = 9134)
 ```
