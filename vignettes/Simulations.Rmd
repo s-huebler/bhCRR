@@ -768,7 +768,7 @@ sim_generate_censor_time <- function(cspec, n, maxtime){
 }
 ```
 
-# Testing
+# Getting defaults
 
 ```{r}
 fpath <- system.file( "example_dat.Rdata", package = "bhCRR")
@@ -819,4 +819,64 @@ scenario1_sim <- sim_generate(scenario1,
                          custom_predictor_set = NULL,
                          custom_betas = NULL,
                          seed = 9134)
+```
+
+# Controlling Event Rates
+
+To show that we are successfully able to control outcomes, I will generate a scenarios based on a specified shape=0 (constant hazard) and scale values (calculated for baseline probability of events at time 100) for the weibull proportional hazards distribution. I will generate 10 sets of this scenario to check whether we are 1) Getting the expected weibull distribution for the latent event times and 2) Getting the desired event 1/event 2/censoring proportion.
+
+## Checking generated default parameters
+
+I will fix the design matrix, the predictor set for both event 1 (of interest) and event 2 (competing risk), and the covariate effect for both events based on the default from scenario1_sim (run above).
+
+The important predictors for event 1.
+
+```{r}
+names(example_dm[,scenario1_sim$truth$cause1])
+```
+
+The betas and corresponding hazard ratios.
+
+```{r}
+scenario1_sim$truth$effects$effects1$betas1
+exp(scenario1_sim$truth$effects$effects1$betas1)
+```
+
+The distribution of the linear predictors. The standard deviation should be 0.5 as specified by the default.
+
+```{r}
+lp_event1 <- as.matrix(example_dm[,scenario1_sim$truth$cause1]) %*% scenario1_sim$truth$effects$effects1$betas1
+
+sd(lp_event1)
+```
+
+```{r}
+hist(lp_event1)
+```
+
+The important predictors for event 2.
+
+```{r}
+names(example_dm[,scenario1_sim$truth$cause2])
+```
+
+The betas and corresponding hazard ratios.
+
+```{r}
+scenario1_sim$truth$effects$effects2$betas2
+exp(scenario1_sim$truth$effects$effects2$betas2)
+```
+
+The distribution of the linear predictors. The standard deviation should be near 0.5 as specified by the default, but currently trouble shooting on how to target the sd while inducing masking effects. (See commented out section on objective solver in sim_compute_effects).
+
+```{r}
+
+lp_event2 <- as.matrix(example_dm[,scenario1_sim$truth$cause2]) %*% scenario1_sim$truth$effects$effects2$betas2
+
+sd(lp_event2)
+
+```
+
+```{r}
+hist(lp_event2)
 ```
