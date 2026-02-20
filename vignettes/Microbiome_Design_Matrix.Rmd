@@ -1,0 +1,177 @@
+---
+title: "Microbiome_Design_Matrix"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Microbiome_Design_Matrix}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4
+)
+have_tidy <- requireNamespace("dplyr", quietly = TRUE)&&
+  requireNamespace("ggplot2", quietly = TRUE)&&
+  requireNamespace("corrplot", quietly = TRUE)
+
+if(!have_tidy){
+  message("To reproduce the full vignette, please install the suggested packages: dplyr, ggplot2")
+}
+```
+
+```{r setup}
+#library(bhCRR)
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+```
+
+# Example Design Matrix
+
+```{r}
+fpath <- system.file( "example_dat.Rdata", package = "bhCRR")
+
+if (nzchar(fpath)) {
+  load(fpath)
+  # The objects are now in your environment
+} else {
+  warning("Could not find the dataset in the installed package. Loading from inst file.")
+  
+  load("../inst/example_dat.Rdata")
+}
+```
+
+Example data:
+
+-   ASVs center log ratio transformed
+
+    -   Pre filtered for taxa that appear in at least 10% of samples
+
+-   Keeping the following clinical variables
+
+    -   age, sex, race, BMI, disease
+
+    -   sex, race, and disease need to be dummy coded
+
+```{r}
+example_dat <- example_dat |>
+  dplyr::mutate(female = ifelse(sex == "female", 1, 0),
+                nonwhite = ifelse(race == "white", 0, 1),
+                leukemia = ifelse(disease %in% c("AA", "ALL", "AML", "CLL", "CML", "MDS"),
+                                  1, 0),
+                 lymphoma = ifelse(disease %in% c("HD", "NHL", "TCL"),
+                                   1, 0)
+                )|>
+  dplyr::mutate(age = as.numeric(age),
+                BMI = as.numeric(BMI))|>
+  dplyr::select(c(age, female, nonwhite, BMI, leukemia, #lymphoma,
+                  dplyr::starts_with("ASV")))
+
+X <- model.matrix(~ . - 1 , data = example_dat)
+```
+
+# Correlation
+
+## Corplot
+
+```{r}
+
+
+# Visualizing correlation structure
+C <- cor(X)
+corrplot(C, method = "color", order = "hclust", 
+         tl.cex = 0.5, title = "Correlation Structure of X")
+```
+
+## Sparse graphical lasso
+
+### Coerce positive definite
+
+```{r}
+library(caret)
+
+# Input your design matrix (not the correlation matrix)
+# ensure numeric matrix format
+comboInfo <- caret::findLinearCombos(X)
+
+# The result is a list with:
+# $linearCombos: The sets of variables that are collinear
+# $remove: The specific column indices it suggests dropping
+
+if(length(comboInfo$remove) > 0) {
+  print(paste("Offending columns found:", length(comboInfo$remove)))
+  print(colnames(X)[comboInfo$remove])
+  
+  # Create a fully rank-deficient free matrix
+  X_rank_safe <- X[, -comboInfo$remove]
+} else {
+  print("No exact linear combinations found.")
+}
+```
+
+```{r}
+# Install if needed
+# install.packages("qgraph")
+library(qgraph)
+
+# 1. Compute the optimal sparse correlation matrix
+# 'gamma' is the hyperparameter for EBIC. 
+# gamma = 0.5 is standard. Higher values (e.g., 1.0) lead to sparser, simpler graphs.
+results <- EBICglasso(
+  S = cor(X_rank_safe), # Input the correlation matrix of your clean data
+  n = nrow(X_rank_safe), # Number of observations (crucial for the penalty)
+  gamma = 0,
+  lambda.min.ratio = 0.01,
+  returnAllResults =  TRUE # Return the precision matrix and other details
+)
+
+# 2. Extract the Partial Correlation Matrix and Precision Matrix
+# This represents the "True" dependency structure of your design matrix
+Partial_Corr <- results$optnet  # The sparse partial correlations
+Precision_Matrix <- results$optwi # The inverse covariance (Omega)
+
+# 3. Visualize the Design Matrix Structure
+# This draws the network of dependencies between your variables
+qgraph(Partial_Corr, 
+       layout = "spring", 
+       title = "Structure of Design Matrix (EBIC Glasso)",
+       node.names = colnames(X_rank_safe),
+       vsize = 4, 
+       label.cex = 1.2)
+```
+
+## Ledoit-Wolf shrinkage
+
+```{r}
+cov_shrink <- corpcor::cov.shrink(X)
+corrplot(cov2cor(cov_shrink), method = "color", order = "hclust", 
+         tl.cex = 0.5, title = "Correlation Structure of X")
+```
+
+# Distribution
+
+```{r}
+# 1. Scale the data so distributions are comparable
+X_scaled <- scale(X[,grep("ASV", colnames(X))]) |>
+  as.data.frame()
+
+# 2. Reshape to "Long" format for ggplot
+X_long <- X_scaled |>
+  tidyr::pivot_longer(cols = everything(), names_to = "Variable", values_to = "Value")
+
+# 3. Plot overlay
+ggplot(X_long, aes(x = Value, group = Variable)) +
+  # Use a very transparent line to see the "mass" of distributions
+  geom_density(alpha = 0.1, size = 0.2, color = "black") + 
+  # Add a standard normal curve in red for reference
+  stat_function(fun = dnorm, color = "red", size = 1, linetype = "dashed") +
+  theme_minimal() +
+  labs(title = "Overlay of Scaled Distributions",
+       subtitle = "Black lines = ASVs; Red Dashed = Standard Normal",
+       x = "Z-Score") +
+  coord_cartesian(xlim = c(-4, 4)) # Zoom in on the main mass
+```

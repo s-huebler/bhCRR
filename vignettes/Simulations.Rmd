@@ -780,8 +780,9 @@ if (nzchar(fpath)) {
   warning("Could not find the dataset in the installed package. Loading from inst file.")
   
   load("../inst/example_dat.Rdata") 
-    example_dm <- example_dat |> dplyr::select(dplyr::starts_with("ASV"))
 }
+
+example_dm <- example_dat |> dplyr::select(dplyr::starts_with("ASV"))
 ```
 
 ```{r}
