@@ -26,6 +26,7 @@ if(!have_tidy){
 library(dplyr)
 library(ggplot2)
 library(simsurv)
+library(patchwork)
 #library(bhCRR)
 ```
 
@@ -212,6 +213,8 @@ sim_generate <- function(spec,
   
   print("Success in generating X")
   
+  truth <- spec$truth
+  
   # Variable selection "truth:
   ## Allow for custom covariate choices, but check that custom predictor set is a list of length 2 
   if(!is.null(custom_predictor_set)){
@@ -230,7 +233,7 @@ sim_generate <- function(spec,
   if(!is.null(custom_predictor_set)){
     truth$shared_multiplier = spec$truth$shared_multiplier
     truth$cause1 = custom_predictor_set[[1]]
-    truth$cause2 = custome_predictor_set[[2]]
+    truth$cause2 = custom_predictor_set[[2]]
     truth$shared_predictors = intersect(custom_predictor_set[[1]],
                                         custom_predictor_set[[2]])
     
@@ -259,17 +262,24 @@ sim_generate <- function(spec,
   }}
   ## Covariate effects and linear predictors
   if(!is.null(custom_betas)){
+    
+    effects1 <- list()
+    effects2 <- list() 
+    
+    
     effects1$betas1 <- custom_betas[[1]]
     effects1$betas1_sd <- sd(effects1$betas1)
     effects1$eta1 <- X[, truth$cause1] %*% custom_betas[[1]]
+    effects1$eta1_mean = mean(effects1$eta1)
     effects1$eta1_sd <- sd(effects1$eta1)
     
     effects2$betas2 <- custom_betas[[2]]
     effects2$betas2_sd <- sd(effects2$betas2)
     effects2$eta2 <- X[, truth$cause2] %*% custom_betas[[2]]
+    effects2$eta2_mean <- mean(effects2$eta2)
     effects2$eta2_sd <- sd(effects2$eta2)
     
-    effects <- list(effects1, effects2)
+    effects <- list(effects1 = effects1, effects2 = effects2)
     
     
   }else{
@@ -318,6 +328,7 @@ sim_generate <- function(spec,
   maxtime <- max(c(T1, T2))
   # Censoring "censor"
   C <- sim_generate_censor_time(spec$censor, n, maxtime)
+  #print(C)
   time <- pmin(T1, T2, C)
 
   event1 <- (T1 <= T2) & (T1 <= C)
@@ -335,6 +346,7 @@ sim_generate <- function(spec,
     status = as.integer(status),
     latent_time_event1 = T1,
     latent_time_event2 = T2,
+    latent_time_censor = C,#ifelse(spec$censor$type == "none", NA, C),
     X = X,
     spec_call = spec,
     truth = truth
@@ -503,100 +515,94 @@ sim_generate_truth <- function(trspec, p, seed){
 ```
 
 ```{r}
-sim_compute_effects <- function(X, truth){
-  # Simulate event of interest first (ignore masking issue)
-  X1 <- X[,truth$cause1]
-
-  #print(truth$cause1)
-  #print(truth$cause2)
-  #print(truth$share_active_set)
-  #print(truth$shared_predictors)
-
+sim_compute_effects <- function(X, truth) {
+  
+  # 1. Mean-center the entire design matrix upfront
+  # This guarantees all future eta = X %*% beta have a mean of 0
+  X <- scale(X, center = TRUE, scale = FALSE)
+  
+  # Simulate event of interest first
+  X1 <- X[, truth$cause1, drop = FALSE]
+  
   target_beta_sd <- truth$beta$sd[1]
   target_eta_sd <- truth$target_eta_sd[1]
   p1 <- ncol(X1)
-  betas1 <- numeric(p1)
-
   
+  # Generate and scale betas for Cause 1
   betas1 <- rnorm(p1, 0, target_beta_sd)
-
   eta1_0 <- as.numeric(X1 %*% betas1)
+  print(mean(eta1_0))
+  
+  # Scale beta to hit the exact target SD for eta
   scale_factor <- target_eta_sd / sd(eta1_0)
   betas1 <- betas1 * scale_factor
-
-
+  
+  # eta1 now naturally has a mean of 0 and the exact target SD
   eta1 <- as.numeric(X1 %*% betas1)
+  print(mean(eta1))
   
   # Simulate competing event next
-  X2 <- X[,truth$cause2]
-  #names_X2 <- colnames(X2)
-  if(exists("truth$beta$sd[2]")){
-  target_beta_sd <- truth$beta$sd[2]
+  X2 <- X[, truth$cause2, drop = FALSE]
+  
+  if (length(truth$beta$sd) >= 2) {
+    target_beta_sd <- truth$beta$sd[2]
   }
-  if(exists("truth$target_eta_sd[2]")){
-  target_eta_sd <- truth$target_eta_sd[2]
+  if (length(truth$target_eta_sd) >= 2) {
+    target_eta_sd <- truth$target_eta_sd[2]
   }
+  
   p2 <- ncol(X2)
   betas2 <- numeric(p2)
   
-  if(truth$share_active_set < 1){
-    betas2 <- rnorm(p1, 0, target_beta_sd)
+  if (truth$share_active_set < 1) {
+    betas2 <- rnorm(p2, 0, target_beta_sd)
     eta2_0 <- as.numeric(X2 %*% betas2)
     scale_factor <- target_eta_sd / sd(eta2_0)
     betas2 <- betas2 * scale_factor
-  }else{
+  } else {
     i1 <- match(truth$shared_predictors, truth$cause1)
     i2 <- match(truth$shared_predictors, truth$cause2)
     
-    if(length(truth$shared_multiplier) == 1){
-      truth$shared_multiplier == rep(truth$shared_multiplier, share_active_set)
+    if (length(truth$shared_multiplier) == 1) {
+      truth$shared_multiplier <- rep(truth$shared_multiplier, truth$share_active_set)
     }
     
-    #print(truth$shared_multiplier)
-    #print(betas1[i1])
-  
-    betas2[i2] <- betas1[i1] * 1/truth$shared_multiplier
-    #print(betas2[i2])
-    betas2[-i2] <- rnorm(p2-length(i2), 0, target_beta_sd)
+    betas2[i2] <- betas1[i1] * (1 / truth$shared_multiplier)
+    betas2[-i2] <- rnorm(p2 - length(i2), 0, target_beta_sd)
     
-    eta_overlap <- as.numeric(X2[,i2, drop = FALSE] %*% betas2[i2])
-    #print(eta_overlap)
-
+    eta_overlap <- as.numeric(X2[, i2, drop = FALSE] %*% betas2[i2])
     eta_nonoverlap_raw <- as.numeric(X2[, -i2, drop = FALSE] %*% betas2[-i2])
-    scale_factor2 <- target_eta_sd / sd(eta_nonoverlap_raw)
-    betas2[-i2] <- betas2[-i2] * scale_factor2
-        #print(eta_nonoverlap_raw)
     
-    # solve scale factor for nonoverlap betas such that 
-    # sd(eta_overlap + scale*non_overlap) = target_sd
-  #   objective <- function(c) {
-  #   sd(eta_overlap + c * eta_nonoverlap_raw) - target_eta_sd
-  #   }
-  # 
-  #   c_hat <- uniroot(objective, interval = c(-100, 100))$root
-  #   betas2[-i2] <- c_hat * betas2[-i2]
-   }
+    # Use optimization to solve for the correct scaling factor
+    objective <- function(c) {
+      (sd(eta_overlap + c * eta_nonoverlap_raw) - target_eta_sd)^2
+    }
+    
+    opt_res <- optimize(objective, interval = c(-100, 100))
+    betas2[-i2] <- opt_res$minimum * betas2[-i2]
+  }
   
-    eta2 <- as.numeric(X2 %*% betas2)
+  # eta2 also naturally has a mean of 0 and the exact target SD
+  eta2 <- as.numeric(X2 %*% betas2)
   
   ret <- list(
     effects1 = list(
       betas1 = betas1,
       betas1_sd = sd(betas1),
       eta1 = eta1,
+      eta1_mean = mean(eta1),
       eta1_sd = sd(eta1)
     ),
     effects2 = list(
       betas2 = betas2,
       betas2_sd = sd(betas2),
       eta2 = eta2,
+      eta2_mean = mean(eta2),
       eta2_sd = sd(eta2)
     )
   )
-
-  return(ret)
-
   
+  return(ret)
 }
 ```
 
@@ -713,8 +719,8 @@ Generic values of lambda
 
     $$
     m:= arg{ S_0(m) = 0.5}\\
-     -\lambda m^{\gamma} = 0.5 \\
-     \lambda = \frac{log 2}{m ^{\gamma}}
+     \exp(-\lambda m^{\gamma}) = 0.5 \\
+     \lambda = -\frac{log 0.5}{m ^{\gamma}}
     $$
 
 -   Choose a baseline event probability $p$ at a certain time $\tau$
@@ -762,9 +768,15 @@ sim_generate_censor_time <- function(cspec, n, maxtime){
   random_censor_admin <- cspec$administrative_time
   latent_censor_time <- switch(
     random_censor_dist,
-    exponential ={rexp(n, rate = 1/(random_censor_admin+30))},
+    exponential = {
+      temp <- rexp(n, rate = cspec$random$rate)
+      temp[temp>=cspec$administrative_time]<- cspec$administrative_time
+      temp
+      },
+    #exponential ={rexp(n, rate = 1/(random_censor_admin+30))},
     stop("Unknown random censor distribution: ", random_censor_dist)
   )
+  return(latent_censor_time)
 }
 ```
 
@@ -782,11 +794,21 @@ if (nzchar(fpath)) {
   load("../inst/example_dat.Rdata") 
 }
 
-example_dm <- example_dat |> dplyr::select(dplyr::starts_with("ASV"))
+permute_rows <- function(df, seed = NULL) {
+  if (!is.null(seed)) set.seed(seed)
+  m <- as.matrix(df)                # numeric matrix
+  permuted_mat <- t(apply(m, 1, function(row) row[sample.int(length(row))]))
+  colnames(permuted_mat) <- colnames(m)
+  rownames(permuted_mat) <- rownames(m)
+  as.data.frame(permuted_mat)
+}
+
+example_dm <- example_dat |> dplyr::select(dplyr::starts_with("ASV")) |>
+  permute_rows()
 ```
 
 ```{r}
-scenario1 <- sim_spec (
+scenario_default <- sim_spec (
   n = nrow(example_dm), # samples
   p = ncol(example_dm), # features
   #x = list(), # design matrix will be custom
@@ -814,39 +836,42 @@ scenario1 <- sim_spec (
 ```
 
 ```{r}
-scenario1_sim <- sim_generate(scenario1,
+scenario_default_sim <- sim_generate(scenario_default,
                          custom_design_matrix = example_dm,
                          custom_predictor_set = NULL,
                          custom_betas = NULL,
                          seed = 9134)
 ```
 
-# Controlling Event Rates
+# Prelim Diagnostics
 
-To show that we are successfully able to control outcomes, I will generate a scenarios based on a specified shape=0 (constant hazard) and scale values (calculated for baseline probability of events at time 100) for the weibull proportional hazards distribution. I will generate 10 sets of this scenario to check whether we are 1) Getting the expected weibull distribution for the latent event times and 2) Getting the desired event 1/event 2/censoring proportion.
+To show that we are successfully able to control outcomes, I will generate a scenarios based on a specified shape=1 (constant hazard) and scale values (calculated for baseline median survival time of 50 days) for the weibull proportional hazards distribution. I will generate 10 sets of this scenario to check whether we are 1) Getting the expected weibull distribution for the latent event times and 2) Getting the desired event 1/event 2/censoring proportion.
 
 ## Checking generated default parameters
 
-I will fix the design matrix, the predictor set for both event 1 (of interest) and event 2 (competing risk), and the covariate effect for both events based on the default from scenario1_sim (run above).
+I will fix the design matrix, the predictor set for both event 1 (of interest) and event 2 (competing risk), and the covariate effect for both events based on the default from scenario_default_sim (run above).
 
 The important predictors for event 1.
 
 ```{r}
-names(example_dm[,scenario1_sim$truth$cause1])
+names(example_dm[,scenario_default_sim$truth$cause1])
 ```
 
 The betas and corresponding hazard ratios.
 
 ```{r}
-scenario1_sim$truth$effects$effects1$betas1
-exp(scenario1_sim$truth$effects$effects1$betas1)
+scenario_default_sim$truth$effects$effects1$betas1
+exp(scenario_default_sim$truth$effects$effects1$betas1)
 ```
 
 The distribution of the linear predictors. The standard deviation should be 0.5 as specified by the default.
 
 ```{r}
-lp_event1 <- as.matrix(example_dm[,scenario1_sim$truth$cause1]) %*% scenario1_sim$truth$effects$effects1$betas1
+lp_event1 <-scale(as.matrix(example_dm[,scenario_default_sim$truth$cause1]), 
+      center = TRUE, scale = FALSE) %*% 
+  scenario_default_sim$truth$effects$effects1$betas1
 
+mean(lp_event1)
 sd(lp_event1)
 ```
 
@@ -857,26 +882,1034 @@ hist(lp_event1)
 The important predictors for event 2.
 
 ```{r}
-names(example_dm[,scenario1_sim$truth$cause2])
+names(example_dm[,scenario_default_sim$truth$cause2])
 ```
 
 The betas and corresponding hazard ratios.
 
 ```{r}
-scenario1_sim$truth$effects$effects2$betas2
-exp(scenario1_sim$truth$effects$effects2$betas2)
+scenario_default_sim$truth$effects$effects2$betas2
+exp(scenario_default_sim$truth$effects$effects2$betas2)
 ```
 
 The distribution of the linear predictors. The standard deviation should be near 0.5 as specified by the default, but currently trouble shooting on how to target the sd while inducing masking effects. (See commented out section on objective solver in sim_compute_effects).
 
 ```{r}
 
-lp_event2 <- as.matrix(example_dm[,scenario1_sim$truth$cause2]) %*% scenario1_sim$truth$effects$effects2$betas2
+lp_event2 <-scale(as.matrix(example_dm[,scenario_default_sim$truth$cause2]), 
+      center = TRUE, scale = FALSE) %*% 
+  scenario_default_sim$truth$effects$effects2$betas2
 
+
+mean(lp_event2)
 sd(lp_event2)
 
 ```
 
 ```{r}
 hist(lp_event2)
+```
+
+## Defining basic scenarios for testing
+
+Let us consider 3 different scenarios.
+
+1) Basic scenario no censoring: Shape parameter for both events is 1 (constant hazard). This is equivalent to the exponential distribution. We will have no censoring. And we will have the scale parameter be the same for the 2 events. This should produce about equal event rates. We can choose the scale values based on a median survival time of 50 days.
+
+2) Basic scenario with administrative censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days.
+
+3) Basic scenario with administrative and random censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days and random censoring with an exponential distribution with rate such that prior to the administrative censoring there is a 15% chance of being censored.
+
+## Choosing scales
+
+If $\gamma = 1$ and we want median survival time to be 50, then $\lambda = -log(0.5)/50^1 = 0.0139$. This would correspond to a event probability at 50 days of $1-\exp(-0.0139 * 50^1)=0.5$ and an event probability at 90 day (the time of administrative censoring) to be 0.71. For the random censoring, let's say that we would want random censoring to occur at a rate near 15% (if there were no other events). Then we can solve the rate parameter (for the exponential distribution) by $\lambda_{cen} = -\log(1- 0.15)/90= 0.0018$.
+
+## Diagnostic plots
+
+```{r}
+outcome_simulation_diagnostic_plots <- function(sim, shapes, scales){
+  df_event1 <- cbind(  
+    data.frame(id = sim$id, time = sim$latent_time_event1, status = 1),
+    scale(sim$X, center = TRUE, scale = FALSE)[,sim$truth$cause1 ]
+  )
+  
+  
+  df_event2 <- cbind(  
+    data.frame(id = sim$id, time = sim$latent_time_event2, status = 1),
+    scale(sim$X, center = TRUE, scale = FALSE)[,sim$truth$cause2 ]
+  )
+  
+  
+  if(shapes[1] == shapes[2] &
+     scales[1] == scales[2]){
+    
+    plot1 <- ggplot(df_event1, aes(x = time)) +
+      # Map color inside aes() so scale_color_manual works
+      geom_density(aes(color = "Event 1 (latent)"), linewidth = 1) +
+      geom_density(data = df_event2, aes(color = "Event 2 (latent)"), linewidth = 1) +
+      
+      # Theoretical Curves
+      stat_function(fun = dweibull, 
+                    args = list(shape = shapes[1], scale = scales[1]^(-1)),
+                    aes(color = "Theoretical"), 
+                    linewidth = 1) +
+      
+      
+      # Manual Color Scale
+      scale_color_manual(
+        name = "Distribution",
+        values = c(
+          "Event 1 (latent)" = "darkred", 
+          "Event 2 (latent)" = "darkblue", 
+          "Theoretical" = "black"
+        )
+      ) +
+      labs(
+        title = "Observed vs. Theoretical Marginal Event Density",
+        x = "Time",
+        y = "Density"
+      ) +
+      theme_classic()
+    
+  }else{
+    plot1 <- ggplot(df_event1, aes(x = time)) +
+      # Map color inside aes() so scale_color_manual works
+      geom_density(aes(color = "Event 1 (latent)"), linewidth = 1) +
+      geom_density(data = df_event2, aes(color = "Event 2 (latent)"), linewidth = 1) +
+      
+      # Theoretical Curves
+      stat_function(fun = dweibull, 
+                    args = list(shape = shapes[1], scale = scales[1]^(-1)),
+                    aes(color = "Event 1 (theoretical)"), 
+                    linewidth = 1) +
+      stat_function(fun = dweibull, 
+                    args = list(shape = shapes[2], scale = scales[2]^(-1)),
+                    aes(color = "Event 2 (theoretical)"), 
+                    linewidth = 1) +
+      
+      # Manual Color Scale
+      scale_color_manual(
+        name = "Distribution",
+        values = c(
+          "Event 1 (latent)" = "darkred", 
+          "Event 2 (latent)" = "darkblue", 
+          "Event 1 (theoretical)" = "red", 
+          "Event 2 (theoretical)" = "blue"
+        )
+      ) +
+      labs(
+        title = "Observed vs. Theoretical Marginal Event Density",
+        x = "Time",
+        y = "Event Probability Density"
+      ) +
+      theme_classic()
+  }
+  
+  plot1
+  
+  cox_snell_func <- function(df){
+    form1 <- names(df %>%
+                     select(-c(id, time, status))) %>%
+      paste(collapse = " + ")
+
+
+    form2 <- paste0("Surv(time, status) ~ ", form1)
+
+    cox_model <- coxph(as.formula(form2), data = df)
+
+
+    cs_residual_fit <- df$status - residuals(cox_model, type = "martingale")
+
+    fit_cs_emp <- survfit(Surv(cs_residual_fit, df$status) ~ 1)
+    cum_haz_emp <- -log(fit_cs_emp$surv)
+
+    cox_snell_df <- data.frame(cs_residuals = fit_cs_emp$time,
+                               cumhaz = cum_haz_emp)
+
+    ggplot(cox_snell_df, aes(x = cs_residuals, y = cumhaz))+
+      geom_step(linewidth = 0.8)+
+      geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed", linewidth = 1) +
+      labs(
+        # title = "Cox-Snell Residuals Diagnostic Plot",
+        x = "Cox-Snell Residuals",
+        y = "Estimated Cumulative Hazard"
+      ) +
+      theme_classic()
+  }
+
+  plot2a <- cox_snell_func(df_event1)+
+    ggtitle("Event 1")
+
+  plot2b <- cox_snell_func(df_event2)+
+    ggtitle("Event 2")
+
+  plot2 <- plot2a + plot2b +
+    plot_annotation(title = "Cox-Snell Residual Diagnostic Plots of Latent Event Times")
+
+  plot2
+  
+  table1 <- data.frame(time = sim$time, status = sim$status)%>% 
+    mutate(status = factor(status, 
+                           levels = c(0,1,2), 
+                           labels = c("Censored", "Event1", "Event2"))) %>%
+    group_by(status, .drop = F)%>% 
+    summarize(N = n(), 
+              Observed_TTE_median = median(time), 
+              Observed_TTE_mean = mean(time), 
+              Observed_TTE_sd = sd(time))%>% 
+    mutate(Proportion = N/sum(.$N))%>%
+    select(status, N, Proportion, Observed_TTE_median, Observed_TTE_mean, Observed_TTE_sd)%>%
+    ungroup()%>%
+    mutate(Latent_TTE_median = case_when(status == "Censored" ~ median(sim$latent_time_censor, na.rm = T),
+                                         status == "Event1" ~ median(sim$latent_time_event1, na.rm = T),
+                                         status == "Event2" ~ median(sim$latent_time_event2, na.rm = T)))%>%
+    mutate(Latent_TTE_mean = case_when(status == "Censored" ~ mean(sim$latent_time_censor, na.rm = T),
+                                         status == "Event1" ~ mean(sim$latent_time_event1, na.rm = T),
+                                         status == "Event2" ~ mean(sim$latent_time_event2, na.rm = T)))%>%
+    mutate(Latent_TTE_sd = case_when(status == "Censored" ~ sd(sim$latent_time_censor, na.rm = T),
+                                         status == "Event1" ~ sd(sim$latent_time_event1, na.rm = T),
+                                         status == "Event2" ~ sd(sim$latent_time_event2, na.rm = T)))
+  
+  ret <- list("Marginal" = plot1,
+              "CoxSnell" = plot2,
+              "ObservedOutcomeSummary" = table1)
+  
+  
+  return(ret)
+  
+}
+```
+
+# Basic scenarios
+
+## Basic scenario, no censoring
+
+```{r}
+basic_NoCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "none",
+                administrative_time = 65), #type of censoring
+  seed = NULL
+  
+)
+
+tenSeeds <- .Random.seed[1:10]
+basic_NoCensoring_sim <- list()
+
+for(i in 1:10){
+basic_NoCensoring_sim[[i]] <- sim_generate(basic_NoCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+```
+
+### Checking event times
+
+Median event times should be around 50 days (variability from the standard deviation of the eta).
+
+```{r}
+outcome_simulation_diagnostic_plots(basic_NoCensoring_sim[[2]], shapes = c(1,1), scales = c(0.0139,0.0139))
+```
+
+```{r}
+
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(basic_NoCensoring_sim[[i]], shapes = c(1,1), scales = c(0.0139,0.0139))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+basic_NoCensoring_Summary = do.call("rbind", summary_tables)
+
+basic_NoCensoring_Summary
+
+```
+
+```{r}
+basic_NoCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+```
+
+```{r}
+basic_NoCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  filter(status != "Censored")%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+## Basic scenario, admin censoring
+
+```{r}
+basic_AdminCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "administrative",
+                administrative_time = 90), #type of censoring
+  seed = NULL
+  
+)
+
+#tenSeeds <- .Random.seed[1:10]
+basic_AdminCensoring_sim <- list()
+
+for(i in 1:10){
+basic_AdminCensoring_sim[[i]] <- sim_generate(basic_AdminCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+```
+
+```{r}
+
+
+outcome_simulation_diagnostic_plots(basic_AdminCensoring_sim[[2]], shapes = c(1,1), scales = c(0.0139,0.0139))
+```
+
+```{r}
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(basic_AdminCensoring_sim[[i]], shapes = c(1,1), scales = c(0.0139,0.0139))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+basic_AdminCensoring_Summary = do.call("rbind", summary_tables)
+
+basic_AdminCensoring_Summary
+```
+
+```{r}
+basic_AdminCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+```
+
+```{r}
+basic_AdminCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+## Basic scenario, random censoring
+
+```{r}
+basic_RandomCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      )), # risk 
+  ccensor = list(
+      type = "administrative_plus_random", # none | administrative | random | administrative_plus_random
+      administrative_time = 90,
+      random = list(dist = "exponential", rate = 0.0018)
+      # future: target_censor, calibrate, etc.
+    ),
+  seed = NULL
+  
+)
+
+#tenSeeds <- .Random.seed[1:10]
+basic_RandomCensoring_sim <- list()
+
+for(i in 1:10){
+basic_RandomCensoring_sim[[i]] <- sim_generate(basic_RandomCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+```
+
+```{r}
+outcome_simulation_diagnostic_plots(basic_RandomCensoring_sim[[2]], shapes = c(1,1), scales = c(0.0139,0.0139))
+```
+
+```{r}
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(basic_RandomCensoring_sim[[i]], shapes = c(1,1), scales = c(0.0139,0.0139))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+basic_RandomCensoring_Summary = do.call("rbind", summary_tables)
+
+basic_RandomCensoring_Summary
+```
+
+```{r}
+basic_RandomCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+```
+
+```{r}
+basic_RandomCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+# Advanced scenarios
+
+## Adv, no censor
+
+```{r}
+adv_NoCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 0.8, scale = -log(0.5)/(50^0.8)),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1.1, scale = -log(0.5)/(50^1.1)),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "none",
+                administrative_time = 90), #type of censoring
+  seed = NULL
+  
+)
+
+tenSeeds <- .Random.seed[1:10]
+adv_NoCensoring_sim <- list()
+
+for(i in 1:10){
+adv_NoCensoring_sim[[i]] <- sim_generate(adv_NoCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+
+
+
+```
+
+```{r}
+outcome_simulation_diagnostic_plots(adv_NoCensoring_sim[[2]], shapes = c(0.8,1.1), scales = c(0.03031443,0.009374723))
+```
+
+```{r}
+
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(adv_NoCensoring_sim[[i]], shapes = c(0.8,1.1), scales = c( 0.03031443,0.009374723))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+adv_NoCensoring_Summary = do.call("rbind", summary_tables)
+
+adv_NoCensoring_Summary
+
+adv_NoCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+
+adv_NoCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  filter(status != "Censored")%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+## Adv, admin censor
+
+```{r}
+adv_AdminCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 0.8, scale = -log(0.5)/(50^0.8)),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1.1, scale = -log(0.5)/(50^1.1)),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "administrative",
+                administrative_time = 90), #type of censoring
+  seed = NULL
+  
+)
+
+adv_AdminCensoring_sim <- list()
+
+for(i in 1:10){
+adv_AdminCensoring_sim[[i]] <- sim_generate(adv_AdminCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+
+
+
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(adv_AdminCensoring_sim[[i]], shapes = c(0.8,1.1), scales = c( 0.03031443,0.009374723))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+adv_AdminCensoring_Summary = do.call("rbind", summary_tables)
+
+adv_AdminCensoring_Summary
+
+adv_AdminCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+
+adv_AdminCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+## Adv, random censor
+
+```{r}
+adv_RandomCensoring<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(#share_active_set = 2,
+                shared_multiplier = c(0.5, 0.2)#,
+                #sparsity = 0.05,
+                #beta = list(dist = "normal", mean = 0, sd = c(0.3, 0.3)),
+                #target_eta_sd = c(0.5, 0.5)), # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 0.8, scale = -log(0.5)/(50^0.8)),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1.1, scale = -log(0.5)/(50^1.1)),
+        link = "PH"
+      )), # risk 
+  censor = list(
+      type = "administrative_plus_random", # none | administrative | random | administrative_plus_random
+      administrative_time = 90,
+      random = list(dist = "exponential", rate = 0.0018)
+      # future: target_censor, calibrate, etc.
+    ),
+  seed = NULL
+  
+)
+
+adv_RandomCensoring_sim <- list()
+
+for(i in 1:10){
+adv_RandomCensoring_sim[[i]] <- sim_generate(adv_RandomCensoring,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario_default_sim$truth$cause1,
+                                                  scenario_default_sim$truth$cause2),
+                         custom_betas = 
+                list(scenario_default_sim$truth$effects$effects1$betas1,
+                     scenario_default_sim$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+
+
+
+summary_tables <- list()
+for(i in 1:10){
+temp1<-outcome_simulation_diagnostic_plots(adv_RandomCensoring_sim[[i]], shapes = c(0.8,1.1), scales = c( 0.03031443,0.009374723))
+temp2<- temp1$ObservedOutcomeSummary
+temp2$SimNumber = rep(i, nrow(temp2))
+summary_tables[[i]]<- temp2
+rm(temp2)
+}
+adv_RandomCensoring_Summary = do.call("rbind", summary_tables)
+
+adv_RandomCensoring_Summary
+
+adv_RandomCensoring_Summary %>%
+  group_by(status)%>%
+  summarise(Mean_Proportion = mean(Proportion, na.rm = T),
+            SD_Proportion = sd(Proportion, na.rm = T))
+
+adv_RandomCensoring_Summary %>%
+  select(status, Observed_TTE_median, Latent_TTE_median)%>%
+  tidyr::pivot_longer(cols = c(Observed_TTE_median, Latent_TTE_median),
+                      names_to = "True",
+                      values_to = "TTE_Median")%>%
+  ungroup()%>%
+  #filter(status != "Censored")%>%
+  ggplot(aes(x = status, y = TTE_Median, color = True))+
+  geom_boxplot()+
+  ylab("Median Time to Event")+
+  xlab("Outcome")+
+  scale_color_manual(name = "",
+                     values = c("red", "blue"),
+                     labels = c("Latent", "Observed"))+
+  theme_classic()+
+  ggtitle("Observed and Latent Event Times Across 10 Runs")
+```
+
+# Modeling
+
+```{r}
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+library(BhGLM, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+```
+
+```{r}
+cs_oracle_func <- function(df){
+    
+    cox_true <- coxph(
+    Surv(timing, status) ~ .,
+    data = df
+  )
+
+  cox_true_sum <- summary(cox_true)
+
+  cs_mod_res <- cox_true_sum$coefficients %>%
+    as.data.frame()%>%
+    rownames_to_column("Variable")%>%
+    filter(`Pr(>|z|)` < 0.05)%>%
+    dplyr::select(Variable, coef)
+
+  names(cs_mod_res)<- c("Variable", "Estimate")
+
+  cs_mod_res
+  }
+```
+
+```{r}
+cs_ssl_func <- function(x,y){
+  # 2. Define the grid for the scale parameters (s0 and s1)
+s0_grid <- seq(0.005, 0.1, length.out = 20)    # Spike scales (small values)
+s1_grid <- c(0.5)      # Slab scales (larger values)
+
+# Pre-allocate variables to store results
+results <- data.frame()
+best_cindex <- -Inf
+best_ss <- c(NA, NA)
+
+# 3. Create a fixed fold ID for consistent cross-validation splits
+nobs <- nrow(x)
+nfolds <- 10
+#set.seed(123) # For reproducibility
+foldid <- sample(rep(1:nfolds, length.out = nobs))
+
+# 4. Run the grid search
+for (s0 in s0_grid) {
+  for (s1 in s1_grid) {
+    
+    # The spike scale must be smaller than the slab scale
+    if (s0 >= s1) next 
+    
+    # Fit the bmlasso model using the current scale values
+    #fit <- bmlasso(x = x, y = y, family = "cox", ss = c(s0, s1), verbose = FALSE)
+    fit <- BhGLM::bmlasso(x,
+                     y,
+                     family = "cox",
+                     ss = c(s0, s1))
+    
+    # Run cross-validation using the fixed folds
+    cv_res <- cv.bh(fit, foldid = foldid, verbose = FALSE)
+    
+    # Extract performance metrics for Cox models (Cindex and deviance)
+    cindex <- cv_res$measures["Cindex"]
+    dev <- cv_res$measures["deviance"]
+    
+    # Store the results of this iteration
+    results <- rbind(results, data.frame(s0 = s0, s1 = s1, 
+                                         Cindex = cindex, 
+                                         Deviance = dev))
+    
+    # Check if this is the best model so far (maximizing Concordance Index)
+    if (cindex > best_cindex) {
+      best_cindex <- cindex
+      best_ss <- c(s0, s1)
+    }
+  }
+}
+
+
+# 6. Fit the final model using the optimized scale values
+final_model <- bmlasso(x,
+                     y, family = "cox", ss = best_ss)
+
+final_model
+} 
+```
+
+```{r}
+psdh_ssl_func <- function(x,y){
+  fit <- fit_ssl_psdh(x,y)
+  
+  tunes <- tune_ssl_psdh(fit, 
+                         seq(0.01, 0.7, 0.05),
+                         seq(0.4, 0.9, 0.05)
+                         )
+  max_tune <- tunes %>%
+    filter(score_mean == max(tunes$score_mean,na.rm = T))
+  
+  final_fit <- fit_ssl_psdh(x,y, ss = c(max_tune$s0, max_tune$s1))
+  
+  final_fit
+  
+}
+```
+
+```{r}
+model_sim_func <- function(sim){
+  # Predictors
+  df <- as.data.frame(sim$X)
+  event1_df <- as.data.frame(sim$X[,sim$truth$cause1])
+  event2_df <- as.data.frame(sim$X[,sim$truth$cause2])
+
+  # Cause specific hazard with true variables
+  cs_event1_df <- event1_df
+  cs_event1_df$timing <- sim$time
+  cs_event1_df$status <- sim$status
+  cs_event1_df$status[cs_event1$status == 2] <- 0
+  
+  cs_event2_df <- event2_df
+  cs_event2_df$timing <- sim$time
+  cs_event2_df$status <- sim$status
+  cs_event2_df$status[cs_event2$status == 1] <- 0
+  cs_event2_df$status[cs_event2$status == 2] <- 1
+  
+  # PSDH 
+  psdh_timing <- sim$time
+  psdh_status1 <- sim$status
+  psdh_status2 <- sim$status/2
+  psdh_status2[psdh_timing2 == 0.5] <- 2
+  
+  
+  
+  cs_event1_oracle <- cs_oracle_func(cs_event1_df)
+  cs_event2_oracle <- cs_oracle_func(cs_event2_df)
+  
+  # Competing risks hazard with true variables
+  
+  psdh_event1_oracle <- fastcmprsk::fastCrr(Crisk(sim$time, sim$status,
+        cencode = 0, failcode = 1) ~ 
+        as.matrix(event1_df),
+        variance = T)
+  
+  psdh_event2_oracle <- fastcmprsk::fastCrr(Crisk(sim$time, sim$status,
+        cencode = 0, failcode = 2) ~ 
+        as.matrix(event2_df),
+        variance = T)
+  
+  
+  #Cause-specific 
+  
+  cs_event1_ssl <- cs_ssl_func(sim$X, Surv(cs_event1_df$timing, 
+                                           cs_event1_df$status))
+  
+  cs_event2_ssl <- cs_ssl_func(sim$X, Surv(cs_event2_df$timing, 
+                                           cs_event2_df$status))
+  
+  #PSDH
+  psdh_event1_ssl <- psdh_ssl_func(sim$X, Surv(psdh_timing,
+                                               psdh_status1))
+  
+  psdh_event2_ssl <- psdh_ssl_func(sim$X, Surv(psdh_timing,
+                                               psdh_status2))
+ 
+ # Wrapper
+  # event1_res <- data.frame(Features = names(event1_df),
+  #                              True_Effects = unname(death_effects$beta))%>%
+  # dplyr::mutate(Overlap = ifelse(Features %in% selected_features$overlap, "Yes", ""))%>%
+  # select(Features, Overlap, True_Effects)%>%
+  # full_join(cs_oracle_death %>%
+  #             dplyr::mutate(Features = Variable)%>%
+  #             dplyr::mutate(CS_Oracle = Estimate)%>%
+  #             dplyr::select(Features, CS_Oracle),
+  #           by = "Features")%>%
+  # full_join(data.frame(Features = names(death_effects$beta),
+  #                      PSDH_Oracle = psdh_oracle_death$coef),
+  #           by = "Features")%>%
+  # full_join(data.frame(Features = rownames(cs_ssl_death$beta), 
+  #                      CS_SSL = cs_ssl_death$beta[,1])%>%
+  #             dplyr::filter(abs(CS_SSL) > 0),
+  #           by = "Features")%>%
+  # full_join(psdh_ssl_death$coefficients %>%
+  #             dplyr::filter(abs(PSDH_SSL) > 0),
+  #           by = "Features")
+  # 
+  # gvhd_res <- data.frame(Features = names(gvhd_effects$beta),
+  #                              True_Effects = unname(gvhd_effects$beta))%>%
+  # dplyr::mutate(Overlap = ifelse(Features %in% selected_features$overlap, "Yes", ""))%>%
+  # select(Features, Overlap, True_Effects)%>%
+  # full_join(cs_oracle_gvhd %>%
+  #             dplyr::mutate(Features = Variable)%>%
+  #             dplyr::mutate(CS_Oracle = Estimate)%>%
+  #             dplyr::select(Features, CS_Oracle),
+  #           by = "Features")%>%
+  # full_join(data.frame(Features = names(gvhd_effects$beta),
+  #                      PSDH_Oracle = psdh_oracle_gvhd$coef),
+  #           by = "Features")%>%
+  # full_join(data.frame(Features = rownames(cs_ssl_gvhd$beta), 
+  #                      CS_SSL = cs_ssl_gvhd$beta[,1])%>%
+  #             dplyr::filter(abs(CS_SSL) > 0),
+  #           by = "Features")%>%
+  # full_join(psdh_ssl_gvhd$coefficients %>%
+  #             dplyr::filter(abs(PSDH_SSL) > 0),
+  #           by = "Features")
+  # 
+  # 
+  # 
+  # 
+  # return(list("Death" = death_res,
+  #             "GVHD" = gvhd_res))
+  
+  
+  
+  
+}
+```
+
+```{r}
+test <- as.data.frame(basic_AdminCensoring_sim[[1]]$X)
+test$timing <- basic_AdminCensoring_sim[[1]]$time
+test$status <- basic_AdminCensoring_sim[[1]]$status
+```
+
+```{r}
+
+test_x <- as.matrix(basic_AdminCensoring_sim[[1]]$X)
+test_y_time <- basic_AdminCensoring_sim[[1]]$time
+test_y_status <- basic_AdminCensoring_sim[[1]]$status
+test_y_status[test_y_status == 2] <- 0
+
+f1 <- BhGLM::bmlasso(test_x,
+                     Surv(test_y_time,test_y_status),
+                     family = "cox",
+                     ss = c(0.05, 0.5))
+
+BhGLM::cv.bh(f1, nfolds = 10, ncv = 5)
+```
+
+```{r}
+# 2. Define the grid for the scale parameters (s0 and s1)
+s0_grid <- seq(0.005, 0.1, length.out = 20)    # Spike scales (small values)
+s1_grid <- c(0.5)      # Slab scales (larger values)
+
+# Pre-allocate variables to store results
+results <- data.frame()
+best_cindex <- -Inf
+best_ss <- c(NA, NA)
+
+# 3. Create a fixed fold ID for consistent cross-validation splits
+nobs <- nrow(test_x)
+nfolds <- 10
+#set.seed(123) # For reproducibility
+foldid <- sample(rep(1:nfolds, length.out = nobs))
+
+# 4. Run the grid search
+for (s0 in s0_grid) {
+  for (s1 in s1_grid) {
+    
+    # The spike scale must be smaller than the slab scale
+    if (s0 >= s1) next 
+    
+    # Fit the bmlasso model using the current scale values
+    #fit <- bmlasso(x = x, y = y, family = "cox", ss = c(s0, s1), verbose = FALSE)
+    fit <- BhGLM::bmlasso(test_x,
+                     Surv(test_y_time,test_y_status),
+                     family = "cox",
+                     ss = c(s0, s1))
+    
+    # Run cross-validation using the fixed folds
+    cv_res <- cv.bh(fit, foldid = foldid, verbose = FALSE)
+    
+    # Extract performance metrics for Cox models (Cindex and deviance)
+    cindex <- cv_res$measures["Cindex"]
+    dev <- cv_res$measures["deviance"]
+    
+    # Store the results of this iteration
+    results <- rbind(results, data.frame(s0 = s0, s1 = s1, 
+                                         Cindex = cindex, 
+                                         Deviance = dev))
+    
+    # Check if this is the best model so far (maximizing Concordance Index)
+    if (cindex > best_cindex) {
+      best_cindex <- cindex
+      best_ss <- c(s0, s1)
+    }
+  }
+}
+
+# 5. Review the optimal values
+print("Cross-Validation Results:")
+print(results)
+
+cat("\nOptimal Scale Values (s0, s1):", best_ss, "\n")
+cat("Best Cross-Validated C-Index:", best_cindex, "\n")
+
+# 6. Fit the final model using the optimized scale values
+final_model <- bmlasso(test_x,
+                     Surv(test_y_time,test_y_status), family = "cox", ss = best_ss)
 ```
