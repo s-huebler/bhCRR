@@ -2459,4 +2459,15 @@ ggplot(res_Cindex %>%
   labs(caption = "Averaged over 10 runs",
        title = "Time dependent C index: Event 2")+
   theme_bw()
+
+ggplot(res_Cindex )+
+  geom_line(aes(x = Time,
+                y = Ave_Cindex,
+                color = Event))+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Time")+
+  ylab("Cindex")+
+  labs(caption = "Averaged over 10 runs",
+       title = "Time dependent C index")+
+  theme_bw()
 ```
