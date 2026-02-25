@@ -11,3 +11,4 @@
 expected_penalty_weights <- function(s1, s0, p){
   (1 - p) / s0 + p / s1
 }
+

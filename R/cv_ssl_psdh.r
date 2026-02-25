@@ -37,12 +37,12 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
       #print("Checking Outcome")
       #print(table(y_train[,2]))
 
-      if(min(y_train[,2])>0){
-        print("No censoring in fold")
-        break}
-      if(all(y_train[,2] != 1)){
-        print("No events of interest in fold")
-        break}
+      # if(min(y_train[,2])>0){
+      #   print("No censoring in fold")
+      #   break}
+      # if(all(y_train[,2] != 1)){
+      #   print("No events of interest in fold")
+      #   break}
 
       y_train <- as.matrix(y_train)
 
@@ -67,13 +67,13 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
       })
 
       if("try-error" %in% class(fit)){
-        print("fit_ssl_psdh failed in fold")
-        print(i)
+        #print("fit_ssl_psdh failed in fold")
+        #print(i)
 
-        print("Checking Outcome")
-        print(table(y_train[,2]))
+        #print("Checking Outcome")
+        #print(table(y_train[,2]))
 
-        failed_df[[i]]<<- cbind(y_train, x_train)
+        #failed_df[[i]]<<- cbind(y_train, x_train)
         break
       }
 
@@ -81,7 +81,8 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
       # PREDICT on hold-out set
       x_test <- x[omit_indices, , drop=FALSE]
       lp_all[omit_indices] <- predict_from_ssl_psdh(fit, newx = x_test, eval_time)
-    }
+      }
+
 
 
 

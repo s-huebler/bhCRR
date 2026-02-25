@@ -914,11 +914,11 @@ hist(lp_event2)
 
 Let us consider 3 different scenarios.
 
-1) Basic scenario no censoring: Shape parameter for both events is 1 (constant hazard). This is equivalent to the exponential distribution. We will have no censoring. And we will have the scale parameter be the same for the 2 events. This should produce about equal event rates. We can choose the scale values based on a median survival time of 50 days.
+1)  Basic scenario no censoring: Shape parameter for both events is 1 (constant hazard). This is equivalent to the exponential distribution. We will have no censoring. And we will have the scale parameter be the same for the 2 events. This should produce about equal event rates. We can choose the scale values based on a median survival time of 50 days.
 
-2) Basic scenario with administrative censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days.
+2)  Basic scenario with administrative censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days.
 
-3) Basic scenario with administrative and random censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days and random censoring with an exponential distribution with rate such that prior to the administrative censoring there is a 15% chance of being censored.
+3)  Basic scenario with administrative and random censoring: We will keep the same set up of the basic scenario but add in administrative censoring at 90 days and random censoring with an exponential distribution with rate such that prior to the administrative censoring there is a 15% chance of being censored.
 
 ## Choosing scales
 
@@ -927,6 +927,7 @@ If $\gamma = 1$ and we want median survival time to be 50, then $\lambda = -log(
 ## Diagnostic plots
 
 ```{r}
+library(survival)
 outcome_simulation_diagnostic_plots <- function(sim, shapes, scales){
   df_event1 <- cbind(  
     data.frame(id = sim$id, time = sim$latent_time_event1, status = 1),
@@ -1143,6 +1144,7 @@ temp1<-outcome_simulation_diagnostic_plots(basic_NoCensoring_sim[[i]], shapes = 
 temp2<- temp1$ObservedOutcomeSummary
 temp2$SimNumber = rep(i, nrow(temp2))
 summary_tables[[i]]<- temp2
+rm(temp1)
 rm(temp2)
 }
 basic_NoCensoring_Summary = do.call("rbind", summary_tables)
@@ -1289,7 +1291,7 @@ basic_RandomCensoring<- sim_spec (
         baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
         link = "PH"
       )), # risk 
-  ccensor = list(
+  censor = list(
       type = "administrative_plus_random", # none | administrative | random | administrative_plus_random
       administrative_time = 90,
       random = list(dist = "exponential", rate = 0.0018)
@@ -1621,6 +1623,52 @@ library(BhGLM, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Res
 ```
 
 ```{r}
+source("../R/cv_ssl_psdh.r")
+source("../R/fit_ssl_psdh.r")
+source("../R/update_betas.r")
+source("../R/expected_inclusion_probs.r")
+source("../R/expected_penalty_weights.r")
+source("../R/update_mixture_prob.r")
+source("../R/helpers.r")
+source("../R/tune_ssl_psdh.r")
+source("../R/measure_ssl_psdh.r")
+source("../R/predict_from_ssl_psdh.r")
+source("../R/generate_foldid.r")
+```
+
+```{r}
+# test_sim <- basic_AdminCensoring_sim[[1]]
+# test_df <- as.data.frame(test_sim$X)
+#   test_event1_df <- as.data.frame(test_sim$X[,test_sim$truth$cause1])
+#   test_event2_df <- as.data.frame(test_sim$X[,test_sim$truth$cause2])
+# 
+#   # Cause specific hazard with true variables
+#   test_cs_event1_df <- test_event1_df
+#   test_cs_event1_df$timing <- test_sim$time
+#   test_cs_event1_df$status <- test_sim$status
+#   test_cs_event1_df$status[test_cs_event1_df$status == 2] <- 0
+#   
+#   test_cs_event2_df <- test_event2_df
+#   test_cs_event2_df$timing <- test_sim$time
+#   test_cs_event2_df$status <- test_sim$status
+#   test_cs_event2_df$status[test_cs_event2_df$status == 1] <- 0
+#   test_cs_event2_df$status[test_cs_event2_df$status == 2] <- 1
+#   
+#   # PSDH 
+#   test_psdh_timing <- test_sim$time
+#   test_psdh_status1 <- test_sim$status
+#   test_psdh_status2 <- test_sim$status/2
+#   test_psdh_status2[test_psdh_status2 == 0.5] <- 2
+#   
+# out_01 <- data.frame(Features = names(test_event1_df),
+#                                 True_Effects = test_sim$truth$effects$effects1$betas1)|>
+#   dplyr::mutate(Overlap = case_when(Features %in% names(test_df[,test_sim$truth$shared_predictors])~ "Yes", 
+#                                      TRUE ~ ""))|>
+#   select(Features, Overlap, True_Effects)
+# out_01
+```
+
+```{r}
 cs_oracle_func <- function(df){
     
     cox_true <- coxph(
@@ -1630,23 +1678,80 @@ cs_oracle_func <- function(df){
 
   cox_true_sum <- summary(cox_true)
 
-  cs_mod_res <- cox_true_sum$coefficients %>%
-    as.data.frame()%>%
-    rownames_to_column("Variable")%>%
-    filter(`Pr(>|z|)` < 0.05)%>%
-    dplyr::select(Variable, coef)
+  cs_mod_res <- cox_true_sum$coefficients |>
+    as.data.frame()
+  
+  cs_mod_res$Features <- rownames(cs_mod_res)
+  cs_mod_res <- cs_mod_res |>
+    filter(`Pr(>|z|)` < 0.05)|>
+    dplyr::mutate(CS_Oracle = coef)|>
+    dplyr::select(Features, CS_Oracle)
 
-  names(cs_mod_res)<- c("Variable", "Estimate")
+  names(cs_mod_res)<- c("Features", "CS_Oracle")
 
-  cs_mod_res
+  ret <- list("CS_Oracle_Model" = cox_true,
+              "CS_Oracle_Summary" = cs_mod_res)
+  
+  ret
   }
+```
+
+```{r}
+# test_cs_oracle <- cs_oracle_func(test_cs_event1_df)
+# 
+# 
+# out_02 <- out_01 |>
+#   full_join(test_cs_oracle$CS_Oracle_Summary ,
+#             by = "Features")
+# out_02
+```
+
+```{r}
+psdh_oracle_func <- function(x, y_time, y_status, failcode_num){
+  mod <- fastcmprsk::fastCrr(Crisk(y_time, y_status,
+        cencode = 0, failcode = failcode_num) ~ 
+        as.matrix(x),
+        variance = T)
+  
+  sum_mod <- summary(mod)
+  psdh_mod_res <- sum_mod$coef |>
+    as.data.frame()
+  
+  
+  
+  psdh_mod_res$Features <- names(x)
+  psdh_mod_res <- psdh_mod_res |>
+    filter(`Pr(>|z|)` < 0.05)|>
+    dplyr::mutate(PSDH_Oracle = coef)|>
+    dplyr::select(Features, PSDH_Oracle)
+
+  names(psdh_mod_res)<- c("Features", "PSDH_Oracle")
+  
+  ret <- list("PSDH_Oracle_Model" = mod,
+              "PSDH_Oracle_Summary" = psdh_mod_res)
+  
+  ret
+
+}
+```
+
+```{r}
+# test_psdh_oracle <- psdh_oracle_func(test_event1_df, test_psdh_timing, test_psdh_status1, 1)
+# 
+# 
+# out_03 <- out_02 |>
+#   full_join(test_psdh_oracle$PSDH_Oracle_Summary ,
+#             by = "Features")
+# out_03
 ```
 
 ```{r}
 cs_ssl_func <- function(x,y){
   # 2. Define the grid for the scale parameters (s0 and s1)
 s0_grid <- seq(0.005, 0.1, length.out = 20)    # Spike scales (small values)
-s1_grid <- c(0.5)      # Slab scales (larger values)
+s1_grid <- c(0.4, 0.9, length.out = 20)      # Slab scales (larger values)
+
+
 
 # Pre-allocate variables to store results
 results <- data.frame()
@@ -1663,27 +1768,31 @@ foldid <- sample(rep(1:nfolds, length.out = nobs))
 for (s0 in s0_grid) {
   for (s1 in s1_grid) {
     
+
+    
     # The spike scale must be smaller than the slab scale
     if (s0 >= s1) next 
     
-    # Fit the bmlasso model using the current scale values
-    #fit <- bmlasso(x = x, y = y, family = "cox", ss = c(s0, s1), verbose = FALSE)
-    fit <- BhGLM::bmlasso(x,
-                     y,
-                     family = "cox",
-                     ss = c(s0, s1))
+    
+     call_expr <- bquote(BhGLM::bmlasso(x = x, y = y, family = "cox", ss = c(.(s0), .(s1))))
+       fit <- eval(call_expr)
+
+    
+   
     
     # Run cross-validation using the fixed folds
-    cv_res <- cv.bh(fit, foldid = foldid, verbose = FALSE)
+    cv_res <- BhGLM::cv.bh(fit, foldid = foldid, verbose = FALSE)
+    
+
     
     # Extract performance metrics for Cox models (Cindex and deviance)
     cindex <- cv_res$measures["Cindex"]
     dev <- cv_res$measures["deviance"]
     
     # Store the results of this iteration
-    results <- rbind(results, data.frame(s0 = s0, s1 = s1, 
-                                         Cindex = cindex, 
-                                         Deviance = dev))
+    results <- rbind(results, data.frame("s0" = s0, "s1" = s1, 
+                                         "Cindex" = cindex, 
+                                         "Deviance" = dev))
     
     # Check if this is the best model so far (maximizing Concordance Index)
     if (cindex > best_cindex) {
@@ -1703,13 +1812,29 @@ final_model
 ```
 
 ```{r}
+
+# test_cs_ssl <- cs_ssl_func(test_sim$X, Surv(test_cs_event1_df$timing, 
+#                                            test_cs_event1_df$status))
+# 
+# out_04 <- out_03 |>
+#   full_join(
+#     data.frame(Features = rownames(test_cs_ssl$beta),
+#                         CS_SSL = test_cs_ssl$beta[,1])|>
+#                dplyr::filter(abs(CS_SSL) > 0),
+#     by = "Features")
+# 
+# out_04
+```
+
+```{r}
 psdh_ssl_func <- function(x,y){
   fit <- fit_ssl_psdh(x,y)
   
-  tunes <- tune_ssl_psdh(fit, 
-                         seq(0.01, 0.7, 0.05),
-                         seq(0.4, 0.9, 0.05)
+  tunes <- tryCatch({tune_ssl_psdh(fit, 
+                         seq(0.005, 0.1, length.out = 20),
+                         c(0.4, 0.9, length.out = 20)
                          )
+  }, error = function(msg){return(NA)})
   max_tune <- tunes %>%
     filter(score_mean == max(tunes$score_mean,na.rm = T))
   
@@ -1718,6 +1843,34 @@ psdh_ssl_func <- function(x,y){
   final_fit
   
 }
+```
+
+```{r}
+# test_psdh_ssl<-fit_ssl_psdh(test_sim$X, cbind(test_psdh_timing, 
+#                                            test_psdh_status1))
+```
+
+```{r}
+
+
+# tune_ssl_psdh(test_psdh_ssl, seq(0.01, 0.7, 0.05),
+#                          seq(0.4, 0.9, 0.05))
+
+
+
+```
+
+```{r}
+# test_psdh_ssl_func <- psdh_ssl_func(test_sim$X, cbind(test_psdh_timing, 
+#                                            test_psdh_status1))
+# 
+# out_05 <- out_04 |>
+#   full_join( data.frame(Features = colnames(test_df),
+#                         PSDH_SSL = test_psdh_ssl_func$coef[,1])|>
+#                dplyr::filter(abs(PSDH_SSL) > 0),
+#              by = "Features")
+# 
+# out_05
 ```
 
 ```{r}
@@ -1731,36 +1884,32 @@ model_sim_func <- function(sim){
   cs_event1_df <- event1_df
   cs_event1_df$timing <- sim$time
   cs_event1_df$status <- sim$status
-  cs_event1_df$status[cs_event1$status == 2] <- 0
+  cs_event1_df$status[cs_event1_df$status == 2] <- 0
   
   cs_event2_df <- event2_df
   cs_event2_df$timing <- sim$time
   cs_event2_df$status <- sim$status
-  cs_event2_df$status[cs_event2$status == 1] <- 0
-  cs_event2_df$status[cs_event2$status == 2] <- 1
+  cs_event2_df$status[cs_event2_df$status == 1] <- 0
+  cs_event2_df$status[cs_event2_df$status == 2] <- 1
   
   # PSDH 
   psdh_timing <- sim$time
   psdh_status1 <- sim$status
   psdh_status2 <- sim$status/2
-  psdh_status2[psdh_timing2 == 0.5] <- 2
+  psdh_status2[psdh_status2 == 0.5] <- 2
   
   
   
   cs_event1_oracle <- cs_oracle_func(cs_event1_df)
   cs_event2_oracle <- cs_oracle_func(cs_event2_df)
   
+  
+  
   # Competing risks hazard with true variables
   
-  psdh_event1_oracle <- fastcmprsk::fastCrr(Crisk(sim$time, sim$status,
-        cencode = 0, failcode = 1) ~ 
-        as.matrix(event1_df),
-        variance = T)
+  psdh_event1_oracle <- psdh_oracle_func(event1_df, psdh_timing, psdh_status1, 1)
   
-  psdh_event2_oracle <- fastcmprsk::fastCrr(Crisk(sim$time, sim$status,
-        cencode = 0, failcode = 2) ~ 
-        as.matrix(event2_df),
-        variance = T)
+  psdh_event2_oracle <- psdh_oracle_func(event2_df, psdh_timing, psdh_status2, 1)
   
   
   #Cause-specific 
@@ -1772,144 +1921,542 @@ model_sim_func <- function(sim){
                                            cs_event2_df$status))
   
   #PSDH
-  psdh_event1_ssl <- psdh_ssl_func(sim$X, Surv(psdh_timing,
-                                               psdh_status1))
+  psdh_event1_ssl <- suppressWarnings(
+    suppressMessages( psdh_ssl_func(sim$X, cbind(psdh_timing, 
+                                           psdh_status1))
+    ))
   
-  psdh_event2_ssl <- psdh_ssl_func(sim$X, Surv(psdh_timing,
-                                               psdh_status2))
+  psdh_event2_ssl <- suppressWarnings(
+    suppressMessages(psdh_ssl_func(sim$X, cbind(psdh_timing, 
+                                           psdh_status2))
+    ))
+  
+
  
  # Wrapper
-  # event1_res <- data.frame(Features = names(event1_df),
-  #                              True_Effects = unname(death_effects$beta))%>%
-  # dplyr::mutate(Overlap = ifelse(Features %in% selected_features$overlap, "Yes", ""))%>%
-  # select(Features, Overlap, True_Effects)%>%
-  # full_join(cs_oracle_death %>%
-  #             dplyr::mutate(Features = Variable)%>%
-  #             dplyr::mutate(CS_Oracle = Estimate)%>%
-  #             dplyr::select(Features, CS_Oracle),
-  #           by = "Features")%>%
-  # full_join(data.frame(Features = names(death_effects$beta),
-  #                      PSDH_Oracle = psdh_oracle_death$coef),
-  #           by = "Features")%>%
-  # full_join(data.frame(Features = rownames(cs_ssl_death$beta), 
-  #                      CS_SSL = cs_ssl_death$beta[,1])%>%
-  #             dplyr::filter(abs(CS_SSL) > 0),
-  #           by = "Features")%>%
-  # full_join(psdh_ssl_death$coefficients %>%
-  #             dplyr::filter(abs(PSDH_SSL) > 0),
-  #           by = "Features")
-  # 
-  # gvhd_res <- data.frame(Features = names(gvhd_effects$beta),
-  #                              True_Effects = unname(gvhd_effects$beta))%>%
-  # dplyr::mutate(Overlap = ifelse(Features %in% selected_features$overlap, "Yes", ""))%>%
-  # select(Features, Overlap, True_Effects)%>%
-  # full_join(cs_oracle_gvhd %>%
-  #             dplyr::mutate(Features = Variable)%>%
-  #             dplyr::mutate(CS_Oracle = Estimate)%>%
-  #             dplyr::select(Features, CS_Oracle),
-  #           by = "Features")%>%
-  # full_join(data.frame(Features = names(gvhd_effects$beta),
-  #                      PSDH_Oracle = psdh_oracle_gvhd$coef),
-  #           by = "Features")%>%
-  # full_join(data.frame(Features = rownames(cs_ssl_gvhd$beta), 
-  #                      CS_SSL = cs_ssl_gvhd$beta[,1])%>%
-  #             dplyr::filter(abs(CS_SSL) > 0),
-  #           by = "Features")%>%
-  # full_join(psdh_ssl_gvhd$coefficients %>%
-  #             dplyr::filter(abs(PSDH_SSL) > 0),
-  #           by = "Features")
-  # 
-  # 
-  # 
-  # 
-  # return(list("Death" = death_res,
-  #             "GVHD" = gvhd_res))
   
+  models <- list("CS_Oracle_Event1" = cs_event1_oracle$CS_Oracle_Model,
+                 "CS_Oracle_Event2" = cs_event2_oracle$CS_Oracle_Model,
+                 "PSDH_Oracle_Event1" = psdh_event1_oracle$PSDH_Oracle_Model,
+                 "PSDH_Oracle_Event2" = psdh_event2_oracle$PSDH_Oracle_Model,
+                 "CS_SSL_Event1" = cs_event1_ssl,
+                 "CS_SSL_Event2" = cs_event2_ssl,
+                 "PSDH_SSL_Event1" = psdh_event1_ssl,
+                 "PSDH_SSL_Event2" = psdh_event2_ssl)
   
+  selected_features_summary_event1 <- data.frame(Features = names(event1_df),
+                                True_Effects = sim$truth$effects$effects1$betas1)|>
+    dplyr::mutate(Overlap = case_when(Features %in% names(df[,sim$truth$shared_predictors])~ "Yes", 
+                                     TRUE ~ ""))|>
+    select(Features, Overlap, True_Effects)|>
+    full_join(cs_event1_oracle$CS_Oracle_Summary ,
+            by = "Features")|>
+    full_join(psdh_event1_oracle$PSDH_Oracle_Summary ,
+            by = "Features")|>
+    full_join(data.frame(Features = rownames(cs_event1_ssl$beta),
+                        CS_SSL = cs_event1_ssl$beta[,1])|>
+               dplyr::filter(abs(CS_SSL) > 0),
+    by = "Features")|>
+    full_join(data.frame(Features = colnames(df),
+                        PSDH_SSL = psdh_event1_ssl$coef[,1])|>
+               dplyr::filter(abs(PSDH_SSL) > 0),
+    by = "Features")
   
+  selected_features_summary_event2 <- data.frame(Features = names(event2_df),
+                                True_Effects = sim$truth$effects$effects2$betas2)|>
+    dplyr::mutate(Overlap = case_when(Features %in% names(df[,sim$truth$shared_predictors])~ "Yes", 
+                                     TRUE ~ ""))|>
+    select(Features, Overlap, True_Effects)|>
+    full_join(cs_event2_oracle$CS_Oracle_Summary ,
+            by = "Features")|>
+    full_join(psdh_event2_oracle$PSDH_Oracle_Summary ,
+            by = "Features")|>
+    full_join(data.frame(Features = rownames(cs_event2_ssl$beta),
+                        CS_SSL = cs_event2_ssl$beta[,1])|>
+               dplyr::filter(abs(CS_SSL) > 0),
+    by = "Features")|>
+    full_join(data.frame(Features = colnames(df),
+                        PSDH_SSL = psdh_event2_ssl$coef[,1])|>
+               dplyr::filter(abs(PSDH_SSL) > 0),
+    by = "Features")
+  
+  ret <- list("Models" = models,
+              "Selected_Features_Event1" = selected_features_summary_event1,
+              "Selected_Features_Event2" = selected_features_summary_event2
+              )
+  
+  ret
+  
+ 
+
   
 }
 ```
 
 ```{r}
-test <- as.data.frame(basic_AdminCensoring_sim[[1]]$X)
-test$timing <- basic_AdminCensoring_sim[[1]]$time
-test$status <- basic_AdminCensoring_sim[[1]]$status
+test_output <- model_sim_func(basic_AdminCensoring_sim[[1]])
+
+```
+
+```{r}
+#test_output$Selected_Features_Event1
+```
+
+```{r}
+#test_output$Selected_Features_Event2
+```
+
+# Exporting Results
+
+Taking about 5 minutes per loop
+
+```{r}
+
+########### Basic Admin
+
+# basic_AdminCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   basic_AdminCensoring_output[[i]] <- model_sim_func(basic_AdminCensoring_sim[[i]])
+# }
+# 
+# save(basic_AdminCensoring_output, file = "~/Documents/bhCRR/inst/basic_AdminCensoring_output.Rdata")
+
+
+########## Basic Random
+# 
+# basic_RandomCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   basic_RandomCensoring_output[[i]] <- model_sim_func(basic_RandomCensoring_sim[[i]])
+# }
+# 
+# save(basic_RandomCensoring_output, file = "~/Documents/bhCRR/inst/basic_RandomCensoring_output.Rdata")
+
+############ Adv Admin
+# 
+# adv_AdminCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   adv_AdminCensoring_output[[i]] <- model_sim_func(adv_AdminCensoring_sim[[i]])
+# }
+# 
+# save(adv_AdminCensoring_output, file = "~/Documents/bhCRR/inst/adv_AdminCensoring_output.Rdata")
+
+########## Adv Random
+# 
+# adv_RandomCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   adv_RandomCensoring_output[[i]] <- model_sim_func(adv_RandomCensoring_sim[[i]])
+# }
+# 
+# save(adv_RandomCensoring_output, file = "~/Documents/bhCRR/inst/adv_RandomCensoring_output.Rdata")
+
+
+####### Basic None
+# 
+# basic_NoCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   basic_NoCensoring_output[[i]] <- model_sim_func(basic_NoCensoring_sim[[i]])
+# }
+# 
+# save(basic_NoCensoring_output, file = "~/Documents/bhCRR/inst/basic_NoCensoring_output.Rdata")
+
+####### Adv None
+# adv_NoCensoring_output <- list()
+# for(i in 1:10){
+#   print(Sys.time())
+#   adv_NoCensoring_output[[i]] <- model_sim_func(adv_NoCensoring_sim[[i]])
+# }
+# 
+# save(adv_NoCensoring_output, file = "~/Documents/bhCRR/inst/adv_NoCensoring_output.Rdata")
+```
+
+```{r}
+load("~/Documents/bhCRR/inst/basic_AdminCensoring_output.Rdata")
+load("~/Documents/bhCRR/inst/basic_RandomCensoring_output.Rdata")
+load("~/Documents/bhCRR/inst/adv_AdminCensoring_output.Rdata")
+load("~/Documents/bhCRR/inst/adv_RandomCensoring_output.Rdata")
+load("~/Documents/bhCRR/inst/basic_NoCensoring_output.Rdata")
+load("~/Documents/bhCRR/inst/adv_NoCensoring_output.Rdata")
+```
+
+# Sensitivity and Speceficity
+
+```{r}
+basic_AdminCensoring_output %>%
+  purrr::map("Selected_Features_Event2")%>%
+  bind_rows(.id = "Run")
+```
+
+```{r}
+parse_simulation_results <- function(results_list, event) {
+  str <- paste0("Selected_Features_Event", event)
+  
+  # Combine the list into one massive data frame, keeping track of the iteration
+  all_data <- results_list %>%
+  purrr::map(str)%>%
+  bind_rows(.id = "iteration")
+  
+  # Define model names dynamically (excluding the metadata columns)
+  model_names <- c("CS_Oracle",
+                   "PSDH_Oracle", 
+                   "CS_SSL", 
+                   "PSDH_SSL") 
+  
+  # Pivot the data so we have one row per model per feature per iteration
+  long_data <- all_data %>%
+     tidyr::pivot_longer(cols = all_of(model_names), names_to = "model", values_to = "estimate")%>%
+     mutate(
+       # 1. Logic for Signal Detection
+       is_true_effect = !is.na(True_Effects),
+       is_detected    = !is.na(estimate),
+       is_special     = !is.na(Overlap) & Overlap == "Yes",
+       
+       # 2. Logic for Sign Consistency
+       # Only relevant if both true_effect and estimate exist
+       correct_sign = ifelse(is_true_effect & is_detected, 
+                             sign(True_Effects) == sign(estimate), 
+                             NA)
+     )%>%
+    transform(estimate = ifelse(is.na(estimate), 0, estimate))%>%
+    transform(True_Effects = ifelse(is.na(True_Effects), 0, True_Effects))
+  
+  #print(head(long_data))
+  
+#   # Calculate Metrics per Model per Iteration
+  summary_stats <- long_data %>%
+    group_by(iteration, model) %>%
+    summarise(
+      sensitivity = sum(is_detected & is_true_effect) / sum(is_true_effect),
+      specificity = sum(!is_detected & !is_true_effect) / sum(!is_true_effect),
+
+      # Precision/Detection for 'Special' features
+      special_recall = sum(is_detected & is_special) / sum(is_special),
+
+      # Sign Accuracy (among true signals that were actually detected)
+      sign_accuracy = sum(correct_sign, na.rm = TRUE) / sum(is_detected & is_true_effect),
+      
+      MSE = mean((estimate - True_Effects)^2),
+
+      .groups = 'drop'
+    )
+  
+  #print(head(summary_stats))
+
+  return(summary_stats)
+ }
 ```
 
 ```{r}
 
-test_x <- as.matrix(basic_AdminCensoring_sim[[1]]$X)
-test_y_time <- basic_AdminCensoring_sim[[1]]$time
-test_y_status <- basic_AdminCensoring_sim[[1]]$status
-test_y_status[test_y_status == 2] <- 0
 
-f1 <- BhGLM::bmlasso(test_x,
-                     Surv(test_y_time,test_y_status),
-                     family = "cox",
-                     ss = c(0.05, 0.5))
-
-BhGLM::cv.bh(f1, nfolds = 10, ncv = 5)
+scenario1a <- parse_simulation_results(basic_NoCensoring_output, "1")
+scenario1a$Event = rep("Event1", nrow(scenario1a))
+scenario1b <- parse_simulation_results(basic_NoCensoring_output, "2")
+scenario1b$Event = rep("Event2", nrow(scenario1b))
+scenario1 <- rbind(scenario1a, scenario1b)
+scenario1$Scenario = "Basic_NoCensoring"
+scenario1$Complexity = "Basic"
+scenario1$Censoring = "None"
 ```
 
 ```{r}
-# 2. Define the grid for the scale parameters (s0 and s1)
-s0_grid <- seq(0.005, 0.1, length.out = 20)    # Spike scales (small values)
-s1_grid <- c(0.5)      # Slab scales (larger values)
+scenario2a <- parse_simulation_results(basic_AdminCensoring_output, "1")
+scenario2a$Event = rep("Event1", nrow(scenario2a))
+scenario2b <- parse_simulation_results(basic_AdminCensoring_output, "2")
+scenario2b$Event = rep("Event2", nrow(scenario2b))
+scenario2 <- rbind(scenario2a, scenario2b)
+scenario2$Scenario = "Basic_AdminCensoring"
+scenario2$Complexity = "Basic"
+scenario2$Censoring = "Admin"
 
-# Pre-allocate variables to store results
-results <- data.frame()
-best_cindex <- -Inf
-best_ss <- c(NA, NA)
 
-# 3. Create a fixed fold ID for consistent cross-validation splits
-nobs <- nrow(test_x)
-nfolds <- 10
-#set.seed(123) # For reproducibility
-foldid <- sample(rep(1:nfolds, length.out = nobs))
+scenario3a <- parse_simulation_results(basic_RandomCensoring_output, "1")
+scenario3a$Event = rep("Event1", nrow(scenario3a))
+scenario3b <- parse_simulation_results(basic_RandomCensoring_output, "2")
+scenario3b$Event = rep("Event2", nrow(scenario3b))
+scenario3 <- rbind(scenario3a, scenario3b)
+scenario3$Scenario = "Basic_RandomCensoring"
+scenario3$Complexity = "Basic"
+scenario3$Censoring = "Random"
 
-# 4. Run the grid search
-for (s0 in s0_grid) {
-  for (s1 in s1_grid) {
-    
-    # The spike scale must be smaller than the slab scale
-    if (s0 >= s1) next 
-    
-    # Fit the bmlasso model using the current scale values
-    #fit <- bmlasso(x = x, y = y, family = "cox", ss = c(s0, s1), verbose = FALSE)
-    fit <- BhGLM::bmlasso(test_x,
-                     Surv(test_y_time,test_y_status),
-                     family = "cox",
-                     ss = c(s0, s1))
-    
-    # Run cross-validation using the fixed folds
-    cv_res <- cv.bh(fit, foldid = foldid, verbose = FALSE)
-    
-    # Extract performance metrics for Cox models (Cindex and deviance)
-    cindex <- cv_res$measures["Cindex"]
-    dev <- cv_res$measures["deviance"]
-    
-    # Store the results of this iteration
-    results <- rbind(results, data.frame(s0 = s0, s1 = s1, 
-                                         Cindex = cindex, 
-                                         Deviance = dev))
-    
-    # Check if this is the best model so far (maximizing Concordance Index)
-    if (cindex > best_cindex) {
-      best_cindex <- cindex
-      best_ss <- c(s0, s1)
-    }
+scenario4a <- parse_simulation_results(adv_NoCensoring_output, "1")
+scenario4a$Event = rep("Event1", nrow(scenario4a))
+scenario4b <- parse_simulation_results(adv_NoCensoring_output, "2")
+scenario4b$Event = rep("Event2", nrow(scenario4b))
+scenario4 <- rbind(scenario4a, scenario4b)
+scenario4$Scenario = "Adv_NoCensoring"
+scenario4$Complexity = "Adv"
+scenario4$Censoring = "None"
+
+scenario5a <- parse_simulation_results(adv_AdminCensoring_output, "1")
+scenario5a$Event = rep("Event1", nrow(scenario5a))
+scenario5b <- parse_simulation_results(adv_AdminCensoring_output, "2")
+scenario5b$Event = rep("Event2", nrow(scenario5b))
+scenario5 <- rbind(scenario5a, scenario5b)
+scenario5$Scenario = "Adv_AdminCensoring"
+scenario5$Complexity = "Adv"
+scenario5$Censoring = "Admin"
+
+scenario6a <- parse_simulation_results(adv_RandomCensoring_output, "1")
+scenario6a$Event = rep("Event1", nrow(scenario6a))
+scenario6b <- parse_simulation_results(adv_RandomCensoring_output, "2")
+scenario6b$Event = rep("Event2", nrow(scenario6b))
+scenario6 <- rbind(scenario6a, scenario6b)
+scenario6$Scenario = "Adv_RandomCensoring"
+scenario6$Complexity = "Adv"
+scenario6$Censoring = "Random"
+```
+
+```{r}
+res_variableSelection <- rbind(scenario1, scenario2, scenario3,
+                 scenario4, scenario5, scenario6) |>
+  dplyr::mutate(Censoring = factor(Censoring,
+                                   levels = c("None",
+                                              "Admin",
+                                              "Random")),
+                Complexity = factor(Complexity,
+                                    levels = c("Basic", "Adv")))
+```
+
+```{r}
+ggplot(res_variableSelection %>%
+         filter(Event == "Event1"))+
+  geom_point(aes(x = sensitivity,
+                 y = specificity, 
+                 color = model),
+             alpha = 0.8)+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Sensitivity")+
+  ylab("Specificity")+
+  labs(caption = "10 runs",
+       title = "Event 1")+
+  theme_bw()
+```
+
+```{r}
+ggplot(res_variableSelection %>%
+         filter(Event == "Event2"))+
+  geom_point(aes(x = sensitivity,
+                 y = specificity, 
+                 color = model))+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Sensitivity")+
+  ylab("Specificity")+
+  labs(caption = "10 runs",
+       title = "Event 2")+
+  theme_bw()
+```
+
+```{r}
+ggplot(res_variableSelection %>%
+         filter(Event == "Event1") %>%
+         group_by(model, Scenario, Complexity, Censoring)%>%
+         summarise(sensitivity = mean(sensitivity, na.rm = T),
+                   specificity = mean(specificity, na.rm = T)))+
+  geom_point(aes(x = sensitivity,
+                 y = specificity, 
+                 color = model),
+             alpha = 0.8)+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Sensitivity")+
+  ylab("Specificity")+
+  labs(caption = "Averaged over 10 runs",
+       title = "Event 1")+
+  theme_bw()
+
+ggplot(res_variableSelection %>%
+         filter(Event == "Event2") %>%
+         group_by(model, Scenario, Complexity, Censoring)%>%
+         summarise(sensitivity = mean(sensitivity, na.rm = T),
+                   specificity = mean(specificity, na.rm = T)))+
+  geom_point(aes(x = sensitivity,
+                 y = specificity, 
+                 color = model),
+             alpha = 0.8)+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Sensitivity")+
+  ylab("Specificity")+
+  labs(caption = "Averaged over 10 runs",
+       title = "Event 2")+
+  theme_bw()
+```
+
+# C-index
+
+```{r}
+library(SurvMetrics)
+```
+
+```{r}
+
+risk_matrix_func <- function(a_mod, time_points = seq(1, 500, 25)){
+  risk_array <- matrix(NA, nrow = nrow(a_mod$y), ncol = length(time_points))
+  colnames(risk_array)<- paste0("time ", time_points)
+  for(times in time_points){
+    risk_array[, paste0("time ", times)]<- 1-predict_from_ssl_psdh(a_mod, a_mod$x, times)
   }
+  
+  risk_array
 }
 
-# 5. Review the optimal values
-print("Cross-Validation Results:")
-print(results)
 
-cat("\nOptimal Scale Values (s0, s1):", best_ss, "\n")
-cat("Best Cross-Validated C-Index:", best_cindex, "\n")
+```
 
-# 6. Fit the final model using the optimized scale values
-final_model <- bmlasso(test_x,
-                     Surv(test_y_time,test_y_status), family = "cox", ss = best_ss)
+```{r}
+risk_matrix_func(basic_AdminCensoring_output[[1]]$Models$PSDH_SSL_Event1)
+```
+
+```{r}
+cindex_trajectory_func <- function(a_mod, time_points = seq(1, 200, 25)){
+  risk_matrix <- risk_matrix_func(a_mod, time_points)
+  y_truth <- a_mod$y
+  
+  cindex_df <- data.frame(Time = time_points) 
+  cindices <- c()
+  for(i in 1:nrow(cindex_df)){
+    cindices[i]<- measure_ssl_psdh(y_truth, risk_matrix[,i], time_points[i])
+  }
+  cindex_df$Concordance <- cindices
+  
+  cindex_df
+
+}
+```
+
+```{r}
+cindex_trajectory_func(basic_AdminCensoring_output[[1]]$Models$PSDH_SSL_Event1)
+```
+
+```{r}
+parse_cindex_results <- function(results_list, event, time_points = seq(1, 200, 25)) {
+  
+  event_oi <- paste0("PSDH_SSL_Event", event)
+  
+  cindices <- results_list %>%
+  purrr::map("Models")%>%
+  purrr::map(event_oi) %>%
+  purrr::map(\(mod) cindex_trajectory_func(mod))%>%
+  bind_rows(.id = "iteration")
+  
+  summary_stats <- cindices %>%
+    group_by(Time)%>%
+    summarise(Ave_Cindex = mean(Concordance, na.rm = T),
+              Sd_Cindex = sd(Concordance, na.rm = T))
+  
+  return(summary_stats)
+ }
+```
+
+```{r}
+
+res_Cindex <- rbind(
+  parse_cindex_results(basic_NoCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "None",
+         Scenario = "basic_NoCensoring",
+         Event = "Event1"),
+  
+  parse_cindex_results(basic_AdminCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "Admin",
+         Scenario = "basic_AdminCensoring",
+         Event = "Event1"),
+  
+  parse_cindex_results(basic_RandomCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "Random",
+         Scenario = "basic_RandomCensoring",
+         Event = "Event1"), 
+  
+  parse_cindex_results(basic_NoCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "None",
+         Scenario = "basic_NoCensoring",
+         Event = "Event2"),
+  
+  parse_cindex_results(basic_AdminCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "Admin",
+         Scenario = "basic_AdminCensoring",
+         Event = "Event2"),
+  
+  parse_cindex_results(basic_RandomCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Basic",
+         Censoring = "Random",
+         Scenario = "basic_RandomCensoring",
+         Event = "Event2"),
+  
+  # Adv
+  
+  parse_cindex_results(adv_NoCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "None",
+         Scenario = "adv_NoCensoring",
+         Event = "Event1"),
+  
+  parse_cindex_results(adv_AdminCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "Admin",
+         Scenario = "adv_AdminCensoring",
+         Event = "Event1"),
+  
+  parse_cindex_results(adv_RandomCensoring_output, 1, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "Random",
+         Scenario = "adv_RandomCensoring",
+         Event = "Event1"), 
+  
+  parse_cindex_results(adv_NoCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "None",
+         Scenario = "adv_NoCensoring",
+         Event = "Event2"),
+  
+  parse_cindex_results(adv_AdminCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "Admin",
+         Scenario = "adv_AdminCensoring",
+         Event = "Event2"),
+  
+  parse_cindex_results(adv_RandomCensoring_output, 2, time_points = seq(1, 201, 5)) %>%
+  mutate(Complexity = "Adv",
+         Censoring = "Random",
+         Scenario = "adv_RandomCensoring",
+         Event = "Event2")
+
+)|>
+  dplyr::mutate(Censoring = factor(Censoring,
+                                   levels = c("None",
+                                              "Admin",
+                                              "Random")),
+                Complexity = factor(Complexity,
+                                    levels = c("Basic", "Adv")))
+```
+
+```{r}
+ggplot(res_Cindex %>%
+         filter(Event == "Event1"))+
+  geom_line(aes(x = Time,
+                y = Ave_Cindex))+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Time")+
+  ylab("Cindex")+
+  labs(caption = "Averaged over 10 runs",
+       title = "Time dependent C index: Event 1")+
+  theme_bw()
+
+ggplot(res_Cindex %>%
+         filter(Event == "Event2"))+
+  geom_line(aes(x = Time,
+                y = Ave_Cindex))+
+  facet_grid(Complexity ~ Censoring, labeller = label_both)+
+  xlab("Time")+
+  ylab("Cindex")+
+  labs(caption = "Averaged over 10 runs",
+       title = "Time dependent C index: Event 2")+
+  theme_bw()
 ```

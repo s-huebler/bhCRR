@@ -11,6 +11,7 @@
 #' @export
 #'
 #' @examples
+#'
 fit_ssl_psdh <- function(x, y,
                          ss=c(0.04, 0.5),
                          initial_sparsity = 0.05,
@@ -46,9 +47,11 @@ fit_ssl_psdh <- function(x, y,
   for(iter in 1:maxit){
     # E-Step
     # Update inclusion probabilites (gamma_j)
-    current_inclusion_probs <- expected_inclusion_probs(ss1, ss0,
+
+
+    current_inclusion_probs <- suppressWarnings(expected_inclusion_probs(ss1, ss0,
                                                         current_mixture_prob,
-                                                        current_betas)
+                                                        current_betas))
 
     # Update penalty weights (inverse S_j)
     current_penalty_weights <- expected_penalty_weights(ss0, ss1,
@@ -90,7 +93,11 @@ fit_ssl_psdh <- function(x, y,
   mod$coefficients <- coefficients_df
   mod$penalty.factor <- Pf
   mod$lambda <- mod$lambda.path
+  mod$ss <- ss
 
   return(mod)
 
 }
+
+
+

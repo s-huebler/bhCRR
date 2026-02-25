@@ -67,6 +67,8 @@ measure_ssl_psdh <- function(y_true, risk_score, evaluation_time) {
     for (j in 1:n) {
       if (i == j) next
 
+      if(is.na(risk_score[i])|is.na(risk_score[j])) next
+
       # Determine if pair (i,j) is evaluable
       # A_ij = I(T_i < T_j)
       # B_ij = I(T_i >= T_j and D_j = 2) (Competing event happens before or at T_i)

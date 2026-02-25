@@ -51,8 +51,8 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL)
                               eval_quantile = 0.5))
 
     if("try-error" %in% class(cv_res)){
-      print(paste0("Failed when s0 = ", current_s0,
-                   "; s1 = ", current_s1))
+     # print(paste0("Failed when s0 = ", current_s0,
+    #               "; s1 = ", current_s1))
 
 
       cv_res$measures <- c(NA,NA)

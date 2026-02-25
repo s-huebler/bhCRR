@@ -16,13 +16,13 @@ update_betas <- function(penalty_weights,
                          timing_vector,
                          status_vector,
                          feature_matrix,
-                         cencode = 0,
-                         failcode = 1,
+                         cencode_num = 0,
+                         failcode_num = 1,
                          lambda = mean(penalty_weights)/length(status_vector)
 ){
   fastcmprsk::fastCrrp(Crisk(timing_vector, status_vector,
-                             cencode = cencode,
-                             failcode = failcode) ~ feature_matrix,
+                             cencode = cencode_num,
+                             failcode = failcode_num) ~ feature_matrix,
                        penalty.factor = penalty_weights,
                        penalty = "LASSO",
                        lambda = lambda)
