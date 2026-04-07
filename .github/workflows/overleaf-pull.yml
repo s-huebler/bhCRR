@@ -7,6 +7,8 @@ jobs:
   pull-from-overleaf:
     name: Pull Overleaf changes into manuscript/
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
