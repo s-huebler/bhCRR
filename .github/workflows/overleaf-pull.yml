@@ -42,7 +42,7 @@ jobs:
           if [[ -n $(git status --porcelain) ]]; then
             git add manuscript/
             git commit -m "sync: pull changes from Overleaf"
-            git push origin main
+            git push origin master
             echo "Changes from Overleaf committed to GitHub."
           else
             echo "No changes — manuscript/ already up to date."
