@@ -1,0 +1,49 @@
+name: Pull from Overleaf
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pull-from-overleaf:
+    name: Pull Overleaf changes into manuscript/
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone Overleaf and copy changes into manuscript/
+        run: |
+          git clone https://git:${{ secrets.OVERLEAF_TOKEN }}@git.overleaf.com/69a719651491cfbb8d4d4306 /tmp/overleaf_pull
+
+          # Pull everything from Overleaf into manuscript/, including .bib so
+          # ReadCube-managed bibliography changes are captured in git history.
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.gitignore' \
+            --exclude='*.aux' \
+            --exclude='*.log' \
+            --exclude='*.out' \
+            --exclude='*.toc' \
+            --exclude='*.synctex.gz' \
+            --exclude='*.fls' \
+            --exclude='*.fdb_latexmk' \
+            --exclude='*.blg' \
+            --exclude='*.bbl' \
+            --exclude='*.bcf' \
+            --exclude='*.run.xml' \
+            /tmp/overleaf_pull/ manuscript/
+
+      - name: Commit and push if Overleaf had changes
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          if [[ -n $(git status --porcelain) ]]; then
+            git add manuscript/
+            git commit -m "sync: pull changes from Overleaf"
+            git push origin main
+            echo "Changes from Overleaf committed to GitHub."
+          else
+            echo "No changes — manuscript/ already up to date."
+          fi

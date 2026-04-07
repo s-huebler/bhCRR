@@ -1,0 +1,57 @@
+name: Sync manuscript/ to Overleaf
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "manuscript/**"
+
+jobs:
+  sync-to-overleaf:
+    name: Push manuscript/ to Overleaf
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone current Overleaf state, overlay changes, and push
+        run: |
+          OVERLEAF_URL="https://git:${{ secrets.OVERLEAF_TOKEN }}@git.overleaf.com/69a719651491cfbb8d4d4306"
+
+          # Clone Overleaf's current state so we never force-push or create conflicts
+          git clone "$OVERLEAF_URL" /tmp/overleaf_sync
+
+          # Overlay manuscript/ onto the Overleaf clone, skipping build artifacts.
+          # NOTE: .bib is excluded — bibliography is managed by ReadCube Papers
+          # inside Overleaf and should not be overwritten from GitHub.
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.gitignore' \
+            --exclude='*.bib' \
+            --exclude='*.aux' \
+            --exclude='*.log' \
+            --exclude='*.out' \
+            --exclude='*.toc' \
+            --exclude='*.synctex.gz' \
+            --exclude='*.fls' \
+            --exclude='*.fdb_latexmk' \
+            --exclude='*.blg' \
+            --exclude='*.bbl' \
+            --exclude='*.bcf' \
+            --exclude='*.run.xml' \
+            manuscript/ /tmp/overleaf_sync/
+
+          cd /tmp/overleaf_sync
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+
+          if [[ -n $(git status --porcelain) ]]; then
+            git add -A
+            git commit -m "Sync from GitHub (${GITHUB_SHA::7})"
+            git push origin master
+            echo "Synced to Overleaf."
+          else
+            echo "No changes — Overleaf already up to date."
+          fi
