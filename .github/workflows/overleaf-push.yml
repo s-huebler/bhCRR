@@ -11,6 +11,8 @@ jobs:
   sync-to-overleaf:
     name: Push manuscript/ to Overleaf
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
