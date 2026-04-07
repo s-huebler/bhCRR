@@ -1,0 +1,119 @@
+% Header: Here are all packages used and some additional definitions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[onehalfspacing]{setspace}
+\usepackage{graphicx} % zum Einbinden von Graphiken
+\usepackage[breaklinks=true,colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue]{hyperref} % f. Referenzen
+\usepackage{amsmath,amsthm,amssymb} % Mathematik Umgebung 
+\usepackage{icomma} % Intelligentes Komma, das den richtigen Abstand zwischen Dezimalzahlen als auch in Formeln wählt.
+%\usepackage[ngerman]{babel} % Deutsche Bezeichnungen bei Inhaltsangabe etc
+\usepackage[T1]{fontenc}    % andere Schriftsatzkodierung für richtige Silbentrennung bei Umlauten
+\usepackage[locale = DE,space-before-unit=true,per-mode = symbol]{siunitx} % Bessere Einheiten
+\usepackage{placeins} % Definiert den Befehl “\FloatBarrier”, der die Ausgabe der davor eingebundenen Bilder erzwingt, befor der Text weiter geht. (Mit vorsicht zu verwenden)
+%\usepackage[natbib,abbreviate=true,doi=false,style=numeric-comp,giveninits=true,sorting=none]{biblatex} % Modernes Paket zur Erzeugung von Bibliografien (benötigt biber!)
+\usepackage[normalem]{ulem}
+%\addbibresource{MyBibliography.bib} % Ort der .bib Datei, die die Datenbank für Literatur/Referenzen enthält.
+\usepackage[ruled,vlined]{algorithm2e}
+\SetKwInput{KwInput}{Input} % Set the Input
+\SetKwInput{KwOutput}{Output} % set the Output
+\graphicspath{{Bilder/}}
+
+\DeclareSIUnit{\dBm}{dBm}
+\DeclareSIUnit[per-mode=reciprocal]\WN{\per\centi\meter}
+
+
+%Bibliography and citations
+\usepackage[backend=biber, style=authoryear, sorting=nyt, maxnames = 10, maxcitenames = 2]{biblatex}
+\addbibresource{references.bib}
+
+
+\DeclareFieldFormat{citehyperref}{%
+  \DeclareFieldAlias{bibhyperref}{noformat}%
+  \bibhyperref{#1}}
+\savebibmacro{cite}
+\renewbibmacro*{cite}{%
+  \printtext[citehyperref]{%
+    \restorebibmacro{cite}%
+    \usebibmacro{cite}}}
+
+\let\cite\parencite
+
+\AtBeginBibliography{\renewbibmacro*{begentry}{\printnames{author}}}
+\AtEveryBibitem{\clearfield{note}}
+
+\setlength{\bibhang}{1em}
+%\defbibenvironment{bibliography}
+%  {\list
+%     {\printtext[labelnumberwidth]{%
+%        \printfield{labelprefix}%
+%        \printfield{labelnumber}}}
+%     {\setlength{\labelwidth}{\labelnumberwidth}%
+%     \setlength{\leftmargin}{\bibhang}
+%     % \setlength{\leftmargin}{\labelwidth}%
+%      \setlength{\labelsep}{\biblabelsep}%
+%      \setlength{\itemsep}{\bibitemsep}%
+%      \setlength{\parsep}{\bibparsep}%
+%      \addtolength{\leftmargin}{\labelsep}%
+%      \setlength{\itemindent}{-\bibhang}
+%      %\setlength{\itemindent}{0pt}%
+%      \renewcommand*{\makelabel}[1]{\hss##1}%
+%      \raggedright}}
+%  {\endlist}
+%  {\item}
+
+ 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+\section{Self-adaption to sparsity}
+
+\section{EMVS algorithm}
+Summarizing important info/proofs from RockovaGeorge2014\\
+
+We have the following set up for a spike-and-slab prior model (note here, not lasso because the mixture is gaussian rather than double-exponential)
+\begin{align*}
+    & f(\boldsymbol{y}| \alpha, \boldsymbol{\beta}, \sigma) = N_n(1_n \alpha + \boldsymbol{X}\boldsymbol{\beta}, \sigma^2I_n) \\
+    & \pi(\boldsymbol{\beta}|\sigma, \boldsymbol{\gamma}, \nu_0, \nu_1) = N_p(\boldsymbol{0}, \boldsymbol{D}_{\sigma , \boldsymbol{\gamma}})\\
+    & \pi(\sigma^2 | \gamma) = \mathrm{IG}(\nu/2, \nu \lambda/2), \hspace{1cm} \nu = 1, \lambda = 1\\
+    & \pi(\boldsymbol{\gamma}|\theta)  = \theta^{|\gamma|}(1-\theta)^{p-|\gamma|}, \hspace{1cm} \theta \in [0,1], |\gamma| = \sum_{i}\gamma_i\\
+    & \pi(\theta) \sim Beta(a,b)
+\end{align*}
+
+We want to use the beta prior on $\theta$ because the conditional prior on $\boldsymbol{\gamma}$ is bernoulli (binomial with n=1), so we have beta-binomial priors $\pi(\boldsymbol{\gamma}) = E_{\pi(\theta)}\pi(\boldsymbol{\gamma}|\theta)$.
+
+We want to find posterior modes of the parameter posterior $\pi(\boldsymbol{\beta}, \theta, \sigma | \boldsymbol{y})$. An MCMC or other stochastic posterior sampling algorithms would try to simulate the posterior $\pi(\boldsymbol{\gamma}|\boldsymbol{y})$. But that is computationally intensive. Instead we treat the latent inclusion indicators $\boldsymbol{\gamma}$ as missing data and proceed iteratively. 
+
+The E step is, for each iteration, we calculate the expectation of $\gamma_j$ conditional on the observed data and current parameter estimates. The M step is then, for each iteration, maximize the expected complete data log posterior with respect to $(\boldsymbol{\beta}, \theta, \sigma)$, using the estimates for the latent variables found in the E step. This converges to a local maxima.
+
+It is noted that the algorithm proceeds conditionally on $\theta$ (and $\sigma$, but that is less important for us), as opposed to margining these out at the beginning. I believe this is connected to the non-seperable form of the SSL described in RockovaGeorge2018, in which there is emphasis but on treating $\theta$ as a random variable in the fully bayesian form of the model. This makes the priors on the regression parameters conditionally dependent, allowing for the self-adaptivity to sparsity from the model.
+
+For the E step, we calculate the conditional expected value of the latent variables, and then the conditional expected value of the penalty term which depends on the latent variables. We condition on the current parameter values, noting that this conditioning set $\boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)}$ is made up of fixed values. We take the expectation with respect to the posterior distribution of the latent variables. For each individual parameter, we find $p^*_j = E_{\boldsymbol{\gamma}|(\boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)})}$, which is equal to the probability that $B_j$ comes from the slab component of the mixture distribution. 
+\begin{align*}
+     p^*_j = &E_{\boldsymbol{\gamma}|(\boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)})}\gamma_j\\
+     =& \Pr(\gamma_j = 1 | \boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)})
+     \\= &   \frac{\Pr(\boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)}|\gamma_j =1 )\Pr(\gamma_j = 1)}{\Pr(\boldsymbol{\beta}^{(k)},\sigma^{(k)}, \theta^{(k)})}
+     \\=  &  \frac{\pi(\beta_j^{(k)} \mid \sigma^{(k)}, \theta^{(k)}, \gamma_j = 1) \cdot \Pr(\sigma^{(k)} \mid \theta^{(k)}, \gamma_j = 1) \cdot \Pr(\theta^{(k)} \mid \gamma_j = 1) \cdot \Pr(\gamma_j = 1)}{\int_{\gamma_j} \pi(\beta_j^{(k)},\sigma^{(k)}, \theta^{(k)})d\gamma_j}
+     \\ = &  \frac{\pi(\beta_j^{(k)} \mid \sigma^{(k)}, \theta^{(k)}, \gamma_j = 1) \cdot \Pr(\sigma^{(k)}) \cdot \Pr(\theta^{(k)}) \cdot \Pr( \gamma_j = 1|\theta^{(k)}) }{\sum_{x = \{0,1\}} \pi(\beta_j^{(k)},\sigma^{(k)}, \theta^{(k)}| \gamma_j =x ) \Pr(\gamma_j = x |\theta^{(k)})}
+     \\ = &  \frac{\pi(\beta_j^{(k)}|\sigma^{(k)}, \gamma_j =1)\Pr(\gamma_j = 1 | \theta^{(k)})}{\pi(\beta_j^{(k)}|\sigma^{(k)}, \gamma_j = 1)\Pr(\gamma_j = 1 | \theta^{(k)}) + \pi(\beta_j^{(k)}|\sigma^{(k)}, \gamma_j = 0)\Pr(\gamma_j = 0 | \theta^{(k)})}
+     \\=& \frac{a_j}{a_j + b_j}
+\end{align*}
+
+\noindent where $a_j = \pi(\beta_j^{(k)}|\sigma^{(k)}, \gamma_j = 1)\Pr(\gamma_j = 1 | \theta^{(k)})$ is the joint density that the current $\beta_j^{(k)}$ comes from the slab distribution, and $b_j = \pi(\beta_j^{(k)}|\sigma^{(k)}, \gamma_j = 0)\Pr(\gamma_j = 0 | \theta^{(k)})$ is the joint density that the current $\beta_j^{(k)}$ comes from the spike distribution. Dividing $a_j /(a_j + b_j)$ gives the probability that $\beta_j$ comes from the slab distribution, which we call the posterior inclusion probability.\\
+Things to note about the derivation
+\begin{itemize}
+    \item The hierarchical posterior distribution of $\boldsymbol{\gamma}$ depends on the data $\boldsymbol{y}$ only through the current parameter estimates
+    \item There is conditional independence of the $\gamma_j$'s, so $\Pr(\gamma_j = 1 | \theta^{(k)}) = \theta^{(k)}$.
+    \item $\Pr(\sigma^{(k)}|\theta^{(k)}, \gamma_j =1 ) = \Pr(\sigma^{(k)})$ because $\sigma$ and $\gamma_j$ are independent
+    \item $\Pr(\theta^{(k)})$ and $\Pr(\sigma^{(k)})$ cancel out as constants
+\end{itemize}
+
+Now given our
+
+
+
+
+
+
+\end{document}
