@@ -1,0 +1,568 @@
+---
+title: "Visualizing the problem"
+format: html
+editor: visual
+---
+
+# Hypothesis #1
+
+When we have an influential variable which affects both the event of interest and the competing risk, we believe that our model will be more likely to identify that influential variable than a model which ignores competing risks.
+
+## Problem we are trying to solve:
+
+A spike-and-slab cox model that treats competing risks as censored will have lower sensitivity if all of the variables which affect the event of interest also affect the competing risk.
+
+## Showing the problem
+
+We will create 2 scenarios.
+
+1.  Scenario 1: The variables which affect the event of interest are completely separate from the variables which affect the competing event 
+
+2.  Scenario 2: The variables which affect the event of interest are the same as the variables which affect the competing event 
+
+## Simulating outcomes
+
+We will keep the scenario simple by keeping the outcome distributions for the 2 events identical and no censoring.
+
+### Scenario 1
+
+First we will get defaults for 2 completely different sets of predictors.
+
+```{r}
+scenario1_default_setting<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(share_active_set = 0,
+                #shared_multiplier = c(0.5, 0.2)#,
+                sparsity = 0.05,
+                beta = list(dist = "normal", mean = 4, sd = c(1, 0.2)),
+                target_eta_sd = c(1.2, 0.8) # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "none",
+                administrative_time = 65), #type of censoring
+  seed = NULL
+  
+)
+
+scenario1_default <- sim_generate(scenario1_default_setting,
+                         custom_design_matrix = example_dm,
+                         custom_predictor_set = NULL,
+                         custom_betas = NULL,
+                         seed = 9134)
+
+
+```
+
+```{r}
+names(example_dm[,scenario1_default$truth$cause1])
+scenario1_default$truth$effects$effects1$betas1
+exp(scenario1_default$truth$effects$effects1$betas1)
+```
+
+```{r}
+names(example_dm[,scenario1_default$truth$cause2])
+scenario1_default$truth$effects$effects2$betas2
+exp(scenario1_default$truth$effects$effects2$betas2)
+```
+
+```{r}
+tenSeeds <- .Random.seed[1:100]
+scenario1_sims <- list()
+
+for(i in 1:100){
+scenario1_sims[[i]] <- sim_generate(scenario1_default_setting,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario1_default$truth$cause1,
+                                                  scenario1_default$truth$cause2),
+                         custom_betas = 
+                list(scenario1_default$truth$effects$effects1$betas1,
+                     scenario1_default$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+```
+
+### Scenario 2
+
+Next we will get defaults for a single overlapping set of predictors. We'll generate the ratio of the effect on the event of interest to the competing risk by a uniform distribution between 0 and 1, ensuring that the effect is always greater on the competing risk than it is on the event of interest.
+
+```{r}
+scenario2_default_setting<- sim_spec (
+  n = nrow(example_dm), # samples
+  p = ncol(example_dm), # features
+  #x = list(), # design matrix will be custom
+   truth = list(share_active_set = 6,
+                shared_multiplier = runif(6, 0, 1),
+                sparsity = 0.05,
+                beta = list(dist = "normal", mean = 4, sd = c(1, 0.2)),
+                target_eta_sd = c(1.2, 0.8) # variable selection
+   ),
+  risks = list(
+      cause1 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      ),
+      cause2 = list(
+        baseline = list(dist = "weibull", shape = 1, scale = 0.0139),
+        link = "PH"
+      )), # risk 
+  censor = list(type = "none",
+                administrative_time = 65), #type of censoring
+  seed = NULL
+  
+)
+
+scenario2_default <- sim_generate(scenario2_default_setting,
+                         custom_design_matrix = example_dm,
+                         custom_predictor_set = NULL,
+                         custom_betas = NULL,
+                         seed = 9134)
+```
+
+```{r}
+names(example_dm[,scenario2_default$truth$cause1])
+scenario2_default$truth$effects$effects1$betas1
+exp(scenario2_default$truth$effects$effects1$betas1)
+```
+
+```{r}
+names(example_dm[,scenario2_default$truth$cause2])
+scenario2_default$truth$effects$effects2$betas2
+exp(scenario2_default$truth$effects$effects2$betas2)
+```
+
+```{r}
+scenario2_sims <- list()
+
+for(i in 1:100){
+scenario2_sims[[i]] <- sim_generate(scenario2_default_setting,
+                         custom_design_matrix = scale(example_dm,
+                                                      center = TRUE,
+                                                      scale = FALSE),
+                         custom_predictor_set = list(scenario2_default$truth$cause1,
+                                                  scenario2_default$truth$cause2),
+                         custom_betas = 
+                list(scenario2_default$truth$effects$effects1$betas1,
+                     scenario2_default$truth$effects$effects2$betas2),
+                         seed = tenSeeds[i])
+}
+```
+
+### Visualizing outcomes
+
+We would expect to see approximately equal event rates across either scenario because the underlying shape and scale distributions are the same for both event types and there is no censoring.
+
+```{r}
+get_status_proportions <- function(sim_list) {
+  # Loop through each simulation in the list
+  results <- lapply(seq_along(sim_list), function(i) {
+    # Extract the current iteration
+    current_sim <- sim_list[[i]]
+    
+    # Calculate proportions (mean of a logical vector gives the proportion)
+    # na.rm = TRUE is included just in case you have missing data
+    p1 <- mean(current_sim$status == 1, na.rm = TRUE)
+    p2 <- mean(current_sim$status == 2, na.rm = TRUE)
+    
+    # Return as a single-row data frame
+    data.frame(
+      iteration = i,
+      prop_status_1 = p1,
+      prop_status_2 = p2
+    )
+  })
+  
+  # Bind all the individual rows into one comprehensive data frame
+  final_df <- do.call(rbind, results)
+  return(final_df)
+}
+```
+
+```{r}
+scenario1_proportions <- get_status_proportions(scenario1_sims)
+
+plot_scenario1_outcomes <- scenario1_proportions %>%
+  # Make sure iteration is numeric (especially if you used purrr and it made it a character)
+  mutate(iteration = as.numeric(iteration)) %>% 
+  pivot_longer(
+    cols = c(prop_status_1, prop_status_2), 
+    names_to = "status_type", 
+    values_to = "proportion"
+  )
+
+# 2. Create the plot
+ggplot(plot_scenario1_outcomes, aes(x = iteration, y = proportion, color = status_type)) +
+  geom_line(alpha = 0.7) +   # Add lines connecting the iterations
+  geom_point(size = 1.5) +   # Add points for each specific iteration
+  scale_y_continuous(limits = c(0, 1)) + # Proportions always fall between 0 and 1
+  scale_color_manual(
+    values = c("prop_status_1" = "#1b9e77", "prop_status_2" = "#d95f02"),
+    labels = c("Status 1", "Status 2")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Stability of Event Rates Across Simulations: Scenario 1",
+    subtitle = "Tracking Status 1 (Event of Interest) vs Status 2 (Competing Event) for each iteration",
+    x = "Simulation Iteration",
+    y = "Proportion of Events",
+    color = "Event Status",
+    caption = "100 iterations"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r}
+scenario2_proportions <- get_status_proportions(scenario2_sims)
+
+plot_scenario2_outcomes <- scenario2_proportions %>%
+  # Make sure iteration is numeric (especially if you used purrr and it made it a character)
+  mutate(iteration = as.numeric(iteration)) %>% 
+  pivot_longer(
+    cols = c(prop_status_1, prop_status_2), 
+    names_to = "status_type", 
+    values_to = "proportion"
+  )
+
+# 2. Create the plot
+ggplot(plot_scenario2_outcomes, aes(x = iteration, y = proportion, color = status_type)) +
+  geom_line(alpha = 0.7) +   # Add lines connecting the iterations
+  geom_point(size = 1.5) +   # Add points for each specific iteration
+  scale_y_continuous(limits = c(0, 1)) + # Proportions always fall between 0 and 1
+  scale_color_manual(
+    values = c("prop_status_1" = "#1b9e77", "prop_status_2" = "#d95f02"),
+    labels = c("Status 1", "Status 2")
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Stability of Event Rates Across Simulations: Scenario 2",
+    subtitle = "Tracking Status 1 (Event of Interest) vs Status 2 (Competing Event) for each iteration",
+    x = "Simulation Iteration",
+    y = "Proportion of Events",
+    color = "Event Status",
+    caption = "100 iterations"
+  ) +
+  theme(legend.position = "bottom")
+```
+
+## Modeling
+
+### Functions
+
+```{r}
+cs_ssl_sim_func <- function(sim){
+  # Predictors
+  df <- as.data.frame(sim$X)
+  event1_df <- as.data.frame(sim$X[,sim$truth$cause1])
+  event2_df <- as.data.frame(sim$X[,sim$truth$cause2])
+
+  # Cause specific hazard with true variables
+  cs_event1_df <- event1_df
+  cs_event1_df$timing <- sim$time
+  cs_event1_df$status <- sim$status
+  cs_event1_df$status[cs_event1_df$status == 2] <- 0
+  
+  cs_event2_df <- event2_df
+  cs_event2_df$timing <- sim$time
+  cs_event2_df$status <- sim$status
+  cs_event2_df$status[cs_event2_df$status == 1] <- 0
+  cs_event2_df$status[cs_event2_df$status == 2] <- 1
+  
+  # # PSDH 
+  # psdh_timing <- sim$time
+  # psdh_status1 <- sim$status
+  # psdh_status2 <- sim$status/2
+  # psdh_status2[psdh_status2 == 0.5] <- 2
+  
+  
+  
+  # cs_event1_oracle <- cs_oracle_func(cs_event1_df)
+  # cs_event2_oracle <- cs_oracle_func(cs_event2_df)
+  
+  
+  
+  # Competing risks hazard with true variables
+  
+  # psdh_event1_oracle <- psdh_oracle_func(event1_df, psdh_timing, psdh_status1, 1)
+  # 
+  # psdh_event2_oracle <- psdh_oracle_func(event2_df, psdh_timing, psdh_status2, 1)
+  
+  
+  #Cause-specific 
+  
+  cs_event1_ssl <- cs_ssl_func(sim$X, Surv(cs_event1_df$timing, 
+                                           cs_event1_df$status))
+  
+  cs_event2_ssl <- cs_ssl_func(sim$X, Surv(cs_event2_df$timing, 
+                                           cs_event2_df$status))
+  
+  #PSDH
+  # psdh_event1_ssl <- suppressWarnings(
+  #   suppressMessages( psdh_ssl_func(sim$X, cbind(psdh_timing, 
+  #                                          psdh_status1))
+  #   ))
+  # 
+  # psdh_event2_ssl <- suppressWarnings(
+  #   suppressMessages(psdh_ssl_func(sim$X, cbind(psdh_timing, 
+  #                                          psdh_status2))
+  #   ))
+  
+
+ 
+ # Wrapper
+  
+  models <- list(#"CS_Oracle_Event1" = cs_event1_oracle$CS_Oracle_Model,
+                 #"CS_Oracle_Event2" = cs_event2_oracle$CS_Oracle_Model,
+                 #"PSDH_Oracle_Event1" = psdh_event1_oracle$PSDH_Oracle_Model,
+                 #"PSDH_Oracle_Event2" = psdh_event2_oracle$PSDH_Oracle_Model,
+                 "CS_SSL_Event1" = cs_event1_ssl,
+                 "CS_SSL_Event2" = cs_event2_ssl)#,
+                 #"PSDH_SSL_Event1" = psdh_event1_ssl,
+                 ##"PSDH_SSL_Event2" = psdh_event2_ssl)
+  
+  selected_features_summary_event1 <- data.frame(Features = names(event1_df),
+                                True_Effects = sim$truth$effects$effects1$betas1)|>
+    dplyr::mutate(Overlap = case_when(Features %in% names(df[,sim$truth$shared_predictors])~ "Yes", 
+                                     TRUE ~ ""))|>
+    select(Features, Overlap, True_Effects)|>
+    # full_join(cs_event1_oracle$CS_Oracle_Summary ,
+    #         by = "Features")|>
+    # full_join(psdh_event1_oracle$PSDH_Oracle_Summary ,
+    #         by = "Features")|>
+    full_join(data.frame(Features = rownames(cs_event1_ssl$beta),
+                        CS_SSL = cs_event1_ssl$beta[,1])|>
+               dplyr::filter(abs(CS_SSL) > 0),
+    by = "Features")#|>
+    # full_join(data.frame(Features = colnames(df),
+    #                     PSDH_SSL = psdh_event1_ssl$coef[,1])|>
+    #            dplyr::filter(abs(PSDH_SSL) > 0),
+    # by = "Features")
+  
+  selected_features_summary_event2 <- data.frame(Features = names(event2_df),
+                                True_Effects = sim$truth$effects$effects2$betas2)|>
+    dplyr::mutate(Overlap = case_when(Features %in% names(df[,sim$truth$shared_predictors])~ "Yes", 
+                                     TRUE ~ ""))|>
+    select(Features, Overlap, True_Effects)|>
+    # full_join(cs_event2_oracle$CS_Oracle_Summary ,
+    #         by = "Features")|>
+    # full_join(psdh_event2_oracle$PSDH_Oracle_Summary ,
+    #         by = "Features")|>
+    full_join(data.frame(Features = rownames(cs_event2_ssl$beta),
+                        CS_SSL = cs_event2_ssl$beta[,1])|>
+               dplyr::filter(abs(CS_SSL) > 0),
+    by = "Features")#|>
+    # full_join(data.frame(Features = colnames(df),
+    #                     PSDH_SSL = psdh_event2_ssl$coef[,1])|>
+    #            dplyr::filter(abs(PSDH_SSL) > 0),
+    # by = "Features")
+  
+  ret <- list("Models" = models,
+              "Selected_Features_Event1" = selected_features_summary_event1,
+              "Selected_Features_Event2" = selected_features_summary_event2
+              )
+  
+  ret
+  
+ 
+
+  
+}
+
+parse_cs_ssl_simulation_results <- function(results_list, event) {
+  str <- paste0("Selected_Features_Event", event)
+  
+  # Combine the list into one massive data frame, keeping track of the iteration
+  all_data <- results_list %>%
+  purrr::map(str)%>%
+  bind_rows(.id = "iteration")
+  
+  # Define model names dynamically (excluding the metadata columns)
+  model_names <- c("CS_SSL") #c("CS_Oracle",
+                   #"PSDH_Oracle", 
+                  # "CS_SSL", 
+                  #"PSDH_SSL") 
+  
+  # Pivot the data so we have one row per model per feature per iteration
+  long_data <- all_data %>%
+     tidyr::pivot_longer(cols = all_of(model_names), names_to = "model", values_to = "estimate")%>%
+     mutate(
+       # 1. Logic for Signal Detection
+       is_true_effect = !is.na(True_Effects),
+       is_detected    = !is.na(estimate),
+       is_special     = !is.na(Overlap) & Overlap == "Yes",
+       
+       # 2. Logic for Sign Consistency
+       # Only relevant if both true_effect and estimate exist
+       correct_sign = ifelse(is_true_effect & is_detected, 
+                             sign(True_Effects) == sign(estimate), 
+                             NA)
+     )%>%
+    transform(estimate = ifelse(is.na(estimate), 0, estimate))%>%
+    transform(True_Effects = ifelse(is.na(True_Effects), 0, True_Effects))
+  
+  #print(head(long_data))
+  
+#   # Calculate Metrics per Model per Iteration
+  summary_stats <- long_data %>%
+    group_by(iteration, model) %>%
+    summarise(
+      sensitivity = sum(is_detected & is_true_effect) / sum(is_true_effect),
+      specificity = sum(!is_detected & !is_true_effect) / sum(!is_true_effect),
+
+      # Precision/Detection for 'Special' features
+      special_recall = sum(is_detected & is_special) / sum(is_special),
+
+      # Sign Accuracy (among true signals that were actually detected)
+      sign_accuracy = sum(correct_sign, na.rm = TRUE) / sum(is_detected & is_true_effect),
+      
+      MSE = mean((estimate - True_Effects)^2),
+
+      .groups = 'drop'
+    )
+  
+  #print(head(summary_stats))
+
+  return(summary_stats)
+ }
+```
+
+### Running Simulation
+
+```{r}
+library(future.apply)
+```
+
+```{r}
+# 1. Set up the parallel backend
+# 'multisession' works on all operating systems and creates background R sessions.
+# We leave one core free for system stability.
+plan(multisession, workers = availableCores() - 1) 
+```
+
+```{r}
+
+# ==========================================
+# Scenario 1
+# ==========================================
+
+# Replace the for-loop with future_lapply
+scenario1_output <- future_lapply(1:100, function(i) {
+  # Note: Standard print() won't show up in the main console during parallel execution
+  #message(paste("Starting Scenario 1, iteration", i, "at", Sys.time()))
+  
+  # Run the simulation
+  cs_ssl_sim_func(scenario1_sims[[i]])
+  
+}, future.seed = TRUE) # IMPORTANT: Use future.seed = TRUE for safe random number generation in simulations
+
+# Keep your existing parsing code...
+scenario1a_results <- parse_cs_ssl_simulation_results(scenario1_output, "1")
+scenario1a_results$Event = rep("Event1", nrow(scenario1a_results))
+scenario1b_results <- parse_cs_ssl_simulation_results(scenario1_output, "2")
+scenario1b_results$Event = rep("Event2", nrow(scenario1b_results))
+scenario1_results <- rbind(scenario1a_results, scenario1b_results)
+scenario1_results$Scenario = "Disjoint Predictors"
+
+
+# ==========================================
+# Scenario 2
+# ==========================================
+
+# Replace the for-loop with future_lapply
+scenario2_output <- future_lapply(1:100, function(i) {
+  #message(paste("Starting Scenario 2, iteration", i, "at", Sys.time()))
+  
+  # Run the simulation
+  cs_ssl_sim_func(scenario2_sims[[i]])
+  
+}, future.seed = TRUE)
+
+# Keep your existing parsing code...
+scenario2a_results <- parse_cs_ssl_simulation_results(scenario2_output, "1")
+scenario2a_results$Event = rep("Event1", nrow(scenario2a_results))
+scenario2b_results <- parse_cs_ssl_simulation_results(scenario2_output, "2")
+scenario2b_results$Event = rep("Event2", nrow(scenario2b_results))
+scenario2_results <- rbind(scenario2a_results, scenario2b_results)
+scenario2_results$Scenario = "Mutual Predictors"
+
+
+# ==========================================
+# Joining
+# ==========================================
+hypothesis1 <- rbind(scenario1_results, scenario2_results)
+
+
+# plan(sequential)
+```
+
+## Plotting
+
+```{r}
+ggplot(hypothesis1 %>%
+         filter(Event == "Event1"), aes(x = sensitivity,
+                        color = Scenario,
+                        fill = Scenario))+
+  geom_density(alpha = 0.2)+
+  labs(title = "Distribution of sensitivity scores across simulations for \n
+detecting prognostic variables for the event of interest: \n
+cause-specific spike-and-slab LASSO cox model",
+       x = "Sensitivity score",
+       y = "Proportion of simulations",
+       caption = "100 iterations")+
+  theme_classic()
+```
+
+```{r}
+ggplot(hypothesis1 %>%
+         filter(Event == "Event1"), aes(x = sensitivity,
+                        color = Scenario,
+                        fill = Scenario))+
+  geom_histogram(alpha = 0.2, position = "dodge")+
+  labs(title = "Distribution of sensitivity scores across simulations for \n
+detecting prognostic variables for the event of interest: \n
+cause-specific spike-and-slab LASSO cox model",
+       x = "Sensitivity score",
+       y = "Number of simulations",
+       caption = "100 iterations")+
+  theme_classic()
+```
+
+```{r}
+ggplot(hypothesis1 %>%
+         filter(Event == "Event2"), aes(x = sensitivity,
+                        color = Scenario,
+                        fill = Scenario))+
+  geom_density(alpha = 0.2)+
+  labs(title = "Distribution of sensitivity scores across simulations for \n
+detecting prognostic variables for the competing event: \n
+cause-specific spike-and-slab LASSO cox model",
+       x = "Sensitivity score",
+       y = "Proportion of simulations",
+       caption = "100 iterations")+
+  theme_classic()
+```
+
+```{r}
+ggplot(hypothesis1 %>%
+         filter(Event == "Event2"), aes(x = sensitivity,
+                        color = Scenario,
+                        fill = Scenario))+
+  geom_histogram(alpha = 0.2, position = "dodge")+
+  labs(title = "Distribution of sensitivity scores across simulations for \n
+detecting prognostic variables for the competing event: \n
+cause-specific spike-and-slab LASSO cox model",
+       x = "Sensitivity score",
+       y = "Number of simulations",
+       caption = "100 iterations")+
+  theme_classic()
+```
