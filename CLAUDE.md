@@ -54,4 +54,32 @@ Application of bhCRR to the harmonized ODSiData cohort.
 ## Git Conventions
 - Project 1 commits: "[Study] brief description" e.g. "[Liu2017] fix DADA2 params"
 - Project 2 commits: "feat/fix/docs/test: brief description"
-- Always run devtools::check() before pushing bhCRR
+- Always run devtools::check(vignettes=FALSE) before pushing bhCRR
+
+## Prompt Requests (IMPORTANT)
+When Sophie asks for a "prompt", says something like "help me with a prompt",
+"write me a prompt", "draft a prompt", or otherwise requests a prompt, this
+ALWAYS means a prompt for **Claude Code** running in the **Positron terminal**.
+
+Formatting rules for these prompts:
+- Deliver the prompt as plain text in a fenced code block so it can be copied
+  and pasted directly into the Claude Code CLI in the Positron terminal.
+- Do NOT wrap the prompt in shell commands, quotes, or `claude` invocations —
+  just the raw prompt text Sophie will paste at the Claude Code prompt.
+- Keep each prompt self-contained: include relevant file paths (absolute or
+  repo-relative), the project context (Project 1 ODSiData vs. Project 2 bhCRR),
+  and any conventions Claude Code should follow (e.g., commit style,
+  devtools::check() before pushing, renv usage).
+- Avoid surrounding commentary inside the code block. Any explanation,
+  rationale, or usage notes go OUTSIDE the code block.
+
+Complex / multi-step tasks:
+- If the request is complex or multi-step, break it into MULTIPLE separate
+  prompts, one per code block, in the order Sophie should run them.
+- Number them (Prompt 1, Prompt 2, ...) and give each a short heading
+  describing its goal.
+- Between prompts, note any expected checkpoint (e.g., "review the diff before
+  running Prompt 2", "commit after this step", "run tests here") so Sophie
+  knows when to pause.
+- Prefer small, reviewable steps over one giant prompt, especially for changes
+  that touch package internals, tests, or manuscripts.

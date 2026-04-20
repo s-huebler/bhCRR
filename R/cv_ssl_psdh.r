@@ -1,16 +1,47 @@
-#' cv_ssl_psdh
+#' Cross-validate a spike-and-slab PSDH model
 #'
-#' @param object
-#' @param foldid
-#' @param s0
-#' @param s1
-#' @param ncv
-#' @param eval_quantile
+#' Evaluates a specific spike-and-slab scale pair \code{(s0, s1)} via
+#' \eqn{k}-fold cross-validation, using the IPCW concordance index
+#' (from \code{\link{measure_ssl_psdh}}) as the performance metric.
+#' Optionally repeats cross-validation \code{ncv} times with different
+#' random splits and averages the results.
 #'
-#' @returns
+#' @param object A fitted model object returned by \code{\link{fit_ssl_psdh}},
+#'   used to extract \code{$x} (feature matrix) and \code{$y} (outcome
+#'   matrix) for re-fitting on each training fold.
+#' @param foldid Integer matrix of dimensions \eqn{n \times \code{ncv}}.
+#'   Each column assigns observations to one of \code{nfolds} folds for one
+#'   CV repetition; typically produced by \code{\link{generate_foldid}}.
+#' @param s0 Numeric scalar. Spike scale parameter (small value enforcing
+#'   shrinkage toward zero for inactive features).
+#' @param s1 Numeric scalar. Slab scale parameter (larger value permitting
+#'   non-zero effects for active features). Must satisfy \code{s1 > s0}.
+#' @param ncv Integer. Number of independent cross-validation repetitions
+#'   over which results are averaged. Default \code{1}.
+#' @param eval_quantile Numeric in \code{(0, 1)}. Quantile of observed
+#'   event times used as the evaluation horizon for the C-index.
+#'   Default \code{0.5} (median event time).
+#'
+#' @returns A list with one element:
+#'   \describe{
+#'     \item{\code{measures}}{A \eqn{2 \times 1} matrix with rows
+#'       \code{"mean"} and \code{"sd"} giving the mean and standard
+#'       deviation of the C-index across the \code{ncv} repetitions.}
+#'   }
+#'
+#' @importFrom stats quantile
+#'
+#' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{tune_ssl_psdh}},
+#'   \code{\link{measure_ssl_psdh}}, \code{\link{generate_foldid}}
+#'
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' fit  <- fit_ssl_psdh(x, y)
+#' fols <- generate_foldid(nobs = nrow(x), nfolds = 5)
+#' cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
+#' }
 cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
   # Extract data
   y <- object$y

@@ -1,17 +1,53 @@
-#' fit_ssl_psdh
+#' Fit a spike-and-slab lasso competing-risks model
 #'
-#' @param x
-#' @param y
-#' @param ss
-#' @param initial_sparsity
-#' @param maxit
-#' @param epsilon
+#' Estimates regression coefficients for cause-specific competing risks via
+#' an EM algorithm that alternates between updating posterior inclusion
+#' probabilities (E-step) and refitting a penalised subdistribution hazard
+#' model (M-step).  The penalty uses a Laplace spike-and-slab prior
+#' parameterised by scale pair \code{ss = c(s0, s1)}.
 #'
-#' @returns
+#' @param x Numeric matrix of dimensions \eqn{n \times p}. Feature/design
+#'   matrix (no intercept column).
+#' @param y Two-column numeric matrix of dimensions \eqn{n \times 2}.
+#'   Column 1 contains observed event/censoring times; column 2 contains
+#'   event status codes (\code{0} = censored, \code{1} = event of interest,
+#'   \code{2} = competing event).
+#' @param ss Length-2 numeric vector \code{c(s0, s1)}. Spike (\code{s0})
+#'   and slab (\code{s1}) scale parameters of the Laplace prior.
+#'   Must satisfy \code{s1 > s0 > 0}. Default \code{c(0.04, 0.5)}.
+#' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
+#'   global mixture probability (prior proportion of active features).
+#'   Default \code{0.05}.
+#' @param maxit Integer. Maximum number of EM iterations. Default \code{50}.
+#' @param epsilon Numeric. Convergence threshold: iteration stops when the
+#'   relative change in log-likelihood falls below this value (after at
+#'   least 5 iterations). Default \code{1e-04}.
+#'
+#' @returns A \code{fastCrrp} model object augmented with additional fields:
+#'   \describe{
+#'     \item{\code{$x}}{The feature matrix supplied as \code{x}.}
+#'     \item{\code{$y}}{The outcome matrix supplied as \code{y}.}
+#'     \item{\code{$coefficients}}{Data frame with columns \code{Variable}
+#'       and \code{Estimate} giving the final coefficient for each feature.}
+#'     \item{\code{$penalty.factor}}{Numeric vector of final per-feature
+#'       penalty weights from the last EM iteration.}
+#'     \item{\code{$lambda}}{Numeric. The LASSO tuning parameter used at
+#'       convergence.}
+#'     \item{\code{$ss}}{The \code{ss} argument as supplied.}
+#'   }
+#'
+#' @seealso \code{\link{tune_ssl_psdh}}, \code{\link{cv_ssl_psdh}},
+#'   \code{\link{predict_from_ssl_psdh}}, \code{\link{update_betas}},
+#'   \code{\link{expected_inclusion_probs}},
+#'   \code{\link{expected_penalty_weights}}
+#'
 #' @export
 #'
 #' @examples
-#'
+#' \dontrun{
+#' fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05)
+#' fit$coefficients
+#' }
 fit_ssl_psdh <- function(x, y,
                          ss=c(0.04, 0.5),
                          initial_sparsity = 0.05,
@@ -35,8 +71,8 @@ fit_ssl_psdh <- function(x, y,
                            timing_vector = y[,1],
                            status_vector = y[,2],
                            feature_matrix = x,
-                           cencode = 0,
-                           failcode = 1,
+                           cencode_num = 0,
+                           failcode_num = 1,
                            lambda = init_lambda)
   current_betas <- init_mod$coef
   #print(current_betas)
@@ -66,8 +102,8 @@ fit_ssl_psdh <- function(x, y,
     current_lambda <- sum(Pf)/(nrow(x) * ncol(x))
     mod <- update_betas(Pf,
                         y[,1], y[,2], x,
-                        cencode = 0,
-                        failcode = 1,
+                        cencode_num = 0,
+                        failcode_num = 1,
                         lambda = current_lambda)
 
 

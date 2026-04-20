@@ -1,16 +1,45 @@
-#' tune_ssl_psdh
+#' Grid-search tuning for spike-and-slab PSDH scale parameters
 #'
-#' @param object
-#' @param s0_seq
-#' @param s1_seq
-#' @param nfolds
-#' @param ncv
-#' @param foldid
+#' Searches over all valid \code{(s0, s1)} combinations in the Cartesian
+#' product of \code{s0_seq} and \code{s1_seq} (filtering out pairs where
+#' \code{s1 <= s0}), evaluating each via \code{\link{cv_ssl_psdh}}.  The
+#' same fold assignments are reused across all hyperparameter pairs so that
+#' performance differences reflect only the scale parameters.
 #'
-#' @returns
+#' @param object A fitted model object returned by \code{\link{fit_ssl_psdh}},
+#'   supplying \code{$x} and \code{$y} for cross-validation re-fitting.
+#' @param s0_seq Numeric vector. Candidate spike scale values to search over.
+#'   All values should be small and positive (e.g. \code{seq(0.005, 0.1,
+#'   length.out = 20)}).
+#' @param s1_seq Numeric vector. Candidate slab scale values to search over.
+#'   Values must be larger than the corresponding \code{s0} (pairs violating
+#'   \code{s1 > s0} are silently dropped).
+#' @param nfolds Integer. Number of cross-validation folds. Default \code{10}.
+#' @param ncv Integer. Number of independent CV repetitions per
+#'   hyperparameter pair. Default \code{1}.
+#' @param foldid Integer matrix (\eqn{n \times \code{ncv}}) of pre-specified
+#'   fold assignments.  If \code{NULL} (default) folds are generated
+#'   internally by \code{\link{generate_foldid}} and shared across all
+#'   hyperparameter pairs.
+#'
+#' @returns A data frame with one row per valid \code{(s0, s1)} pair and
+#'   columns \code{s0}, \code{s1}, and one or more performance-metric
+#'   columns (e.g. \code{score_mean}, \code{score_sd}) from
+#'   \code{\link{cv_ssl_psdh}}.
+#'
+#' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{cv_ssl_psdh}},
+#'   \code{\link{generate_foldid}}
+#'
 #' @export
 #'
 #' @examples
+#' \dontrun{
+#' fit   <- fit_ssl_psdh(x, y)
+#' tunes <- tune_ssl_psdh(fit,
+#'                        s0_seq = seq(0.005, 0.1, length.out = 10),
+#'                        s1_seq = seq(0.3,   0.9, length.out = 10))
+#' tunes[which.max(tunes$score_mean), ]
+#' }
 tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL) {
 
   # 1. Generate folds once so every hyperparameter is tested on identical splits
