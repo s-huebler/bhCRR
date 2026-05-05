@@ -202,7 +202,7 @@ Here, we consider a right censored survival scenario with two possible failure e
 
  The cummulative incidence function (CIF) of the event of interest, conditional on covariates $\mathbf{z}$, is $F_1(t;\mathbf{z}) = P(T \leq t, \epsilon = 1 | \mathbf{z})$. Understanding how covariates affect this quantity is the modeling goal. The framework developed by \cite{FineGray1999} constructs a subdistribution hazard function $h_1$ for an artificially defined population such that the proportional hazards specification of $h_1$ directly relates to the true CIF of the event of interest through the $J \times 1$ vector of regression coefficients $\boldsymbol{\beta}$ and a baseline hazards function $h_{10}$:
  \begin{align*}
-     h_1(t ; \mathbf{z}) & = \lim_{\Delta t \rightarrow \infty} \frac{1}{\Delta t} \Pr(t \leq T \leq t + \Delta t, \epsilon = 1 | T \geq t \cup (T \leq t \cap \epsilon \ne 1), \mathbf{z})\\
+     h_1(t ; \mathbf{z}) & = \lim_{\Delta t \rightarrow 0} \frac{1}{\Delta t} \Pr(t \leq T \leq t + \Delta t, \epsilon = 1 | T \geq t \cup (T \leq t \cap \epsilon \ne 1), \mathbf{z})\\
      & = \{dF_1(t;\mathbf{z})/dt\}/(1-F_1(t;\mathbf{z}))\\
      & = h_{10}(t) \exp (\mathbf{z}^T\boldsymbol{\beta})
  \end{align*}

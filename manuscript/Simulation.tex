@@ -1,0 +1,137 @@
+% Header: Here are all packages used and some additional definitions
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[onehalfspacing]{setspace}
+\usepackage{graphicx} % zum Einbinden von Graphiken
+\usepackage[breaklinks=true,colorlinks=true,linkcolor=blue,urlcolor=blue,citecolor=blue]{hyperref} % f. Referenzen
+\usepackage{amsmath,amsthm,amssymb} % Mathematik Umgebung 
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+
+\usepackage{icomma} % Intelligentes Komma, das den richtigen Abstand zwischen Dezimalzahlen als auch in Formeln wählt.
+%\usepackage[ngerman]{babel} % Deutsche Bezeichnungen bei Inhaltsangabe etc
+\usepackage[T1]{fontenc}    % andere Schriftsatzkodierung für richtige Silbentrennung bei Umlauten
+\usepackage[locale = DE,space-before-unit=true,per-mode = symbol]{siunitx} % Bessere Einheiten
+\usepackage{placeins} % Definiert den Befehl “\FloatBarrier”, der die Ausgabe der davor eingebundenen Bilder erzwingt, befor der Text weiter geht. (Mit vorsicht zu verwenden)
+%\usepackage[natbib,abbreviate=true,doi=false,style=numeric-comp,giveninits=true,sorting=none]{biblatex} % Modernes Paket zur Erzeugung von Bibliografien (benötigt biber!)
+\usepackage[normalem]{ulem}
+%\addbibresource{MyBibliography.bib} % Ort der .bib Datei, die die Datenbank für Literatur/Referenzen enthält.
+\usepackage[ruled,vlined]{algorithm2e}
+\SetKwInput{KwInput}{Input} % Set the Input
+\SetKwInput{KwOutput}{Output} % set the Output
+\graphicspath{{Bilder/}}
+
+%\DeclareSIUnit{\dBm}{dBm}
+%\DeclareSIUnit[per-mode=reciprocal]\WN{\per\centi\meter}
+
+
+%Bibliography and citations
+\usepackage[backend=biber, style=authoryear, sorting=nyt, maxnames = 10, maxcitenames = 2]{biblatex}
+\addbibresource{references.bib}
+
+
+\DeclareFieldFormat{citehyperref}{%
+  \DeclareFieldAlias{bibhyperref}{noformat}%
+  \bibhyperref{#1}}
+\savebibmacro{cite}
+\renewbibmacro*{cite}{%
+  \printtext[citehyperref]{%
+    \restorebibmacro{cite}%
+    \usebibmacro{cite}}}
+
+\let\cite\parencite
+
+\AtBeginBibliography{\renewbibmacro*{begentry}{\printnames{author}}}
+\AtEveryBibitem{\clearfield{note}}
+
+\setlength{\bibhang}{1em}
+%\defbibenvironment{bibliography}
+%  {\list
+%     {\printtext[labelnumberwidth]{%
+%        \printfield{labelprefix}%
+%        \printfield{labelnumber}}}
+%     {\setlength{\labelwidth}{\labelnumberwidth}%
+%     \setlength{\leftmargin}{\bibhang}
+%     % \setlength{\leftmargin}{\labelwidth}%
+%      \setlength{\labelsep}{\biblabelsep}%
+%      \setlength{\itemsep}{\bibitemsep}%
+%      \setlength{\parsep}{\bibparsep}%
+%      \addtolength{\leftmargin}{\labelsep}%
+%      \setlength{\itemindent}{-\bibhang}
+%      %\setlength{\itemindent}{0pt}%
+%      \renewcommand*{\makelabel}[1]{\hss##1}%
+%      \raggedright}}
+%  {\endlist}
+%  {\item}
+
+ 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{document}
+%
+\title{Bayesian Hierarchical CRR}
+\author{Sophie Huebler \thanks{\href{mailto:sophie.huebler@utah.edu}{sophie.huebler@utah.edu}}}
+\date{\today}
+\maketitle
+%\vfill
+\pagenumbering{arabic} 
+\tableofcontents
+
+\newpage
+\section{Thoughts}
+\begin{itemize}
+    \item Should the goal of the simulation scenario be based on the model itself, examining robustness and situations, or should it be matching the motivating problem?
+    \item If showing the bounds, maintain variable selection as the main parameter of interest. Move towards incorporating correlation structure, different types of censoring, joint vs mutual predictor sets.
+    \item If interested in the motivating problem, consider a copula model with known joint distribution. However, competing risks not exactly met. Come up with a better motivating scenario and find template paper?
+    \item Proportional hazards assumption always broken in high dimension. 
+\end{itemize}
+
+\section{Separable Effects}
+Background is competing risks. This is used to study the causal effect of a treatment on the event of interest. Separable is the direct effect on the treatment not mediated by the competing event.  \cite{Stensrud2019}.
+
+\section{Subdistribution vs cause specific vs marginal}
+\begin{itemize}
+    \item \cite{Emura2020}
+    \item Subhazard is always less than or equal to the marginal hazard.
+    \item Non-identifiability of marginal distributions of two outcomes from observed data alone \cite{Tsiatis1975}
+    \item Identifiable if assumed independence.
+    \item Copula models bivariate survival distributions. Continuous bivariate on 0 to 1. Uniform marginals. 
+\end{itemize}
+
+\section{Example simulation}
+\begin{itemize}
+\item \cite{Binder2009}
+    \begin{itemize}
+    \item Fixed p, n, correlation structure, number of active covariates
+    \item Informative covariates located in different correlation blocks
+    \item Different informative covariates may or may not effect both events in either directin
+    \item Event times generated from cause specific hazards (cox exponential)
+    \item Censoring times from a uniform distribution
+    \end{itemize}
+\item \cite{EmuraChen2016}
+\begin{itemize}
+    \item Suggested alternatives: \cite{Binder2009, Chen2010}, random forest \cite{MogensenGerds2013}, univariate
+    \item Copula model for dependent censoring (Frank or Clayton)
+    \item Similar covariate structure to Binder
+\end{itemize}
+\end{itemize}
+
+\section{Planning}
+\begin{itemize}
+    \item 
+\end{itemize}
+
+
+
+\newpage
+\printbibliography[heading=bibintoc]
+
+
+
+
+
+\end{document}
+
