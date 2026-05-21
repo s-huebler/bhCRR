@@ -1,0 +1,266 @@
+\documentclass[final]{beamer}
+\usepackage[size=custom,height=36in,width=48in,scale=1.0,orientation=landscape]{beamerposter}
+
+% Color and font packages
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multicol}
+\usepackage{lmodern}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage[most]{tcolorbox}
+\usepackage{amsmath,amssymb}
+
+% Set colors
+\definecolor{UUred}{RGB}{140,21,21}
+\definecolor{UUgold}{RGB}{204,148,69}
+\setbeamercolor{block title}{fg=white,bg=UUred}
+\setbeamercolor{block body}{fg=black,bg=white}
+\setbeamercolor{title in headline}{fg=UUred}
+
+% Fonts
+\setbeamerfont{block title}{size=\Large,series=\bfseries}
+\setbeamerfont{block body}{size=\normalsize}
+\setbeamerfont{title}{series=\bfseries,size=\LARGE}
+\setbeamerfont{author}{size=\Large}
+\renewcommand{\normalsize}{\fontsize{38}{48}\selectfont}
+\renewcommand{\Large}{\fontsize{50}{52}\selectfont}
+\renewcommand{\LARGE}{\fontsize{80}{52}\selectfont}
+\setlist[itemize]{before=\fontsize{38}{48}\selectfont, label=\textbullet,
+  topsep=2pt, itemsep=2pt, parsep=0pt, leftmargin=*}
+
+% Tighter blocks
+\setbeamertemplate{block begin}{%
+  \begin{beamercolorbox}[ht=2.4em,colsep*=.5em]{block title}%
+    \usebeamerfont*{block title}\insertblocktitle%
+  \end{beamercolorbox}%
+  \nointerlineskip%
+  \begin{beamercolorbox}[colsep*=.75em,vmode]{block body}%
+}
+\setbeamertemplate{block end}{\end{beamercolorbox}\vskip0.5em}
+
+% Poster info
+\title{Addressing Competing Risks in High-Dimensional Survival Analysis: \\a Bayesian Spike-and-Slab LASSO Approach}
+\author{Sophia Huebler, Xi Qiao, Boyi Guo}
+\date{April 2026}
+\institute{Population Health Sciences Department, University of Utah}
+
+\begin{document}
+\begin{frame}[t]
+
+% ============================
+% TITLE + LOGO HEADER
+% ============================
+\begin{columns}
+  \begin{column}{0.10\textwidth}
+    \includegraphics[height=8.5cm]{Designer.png}
+  \end{column}
+  \begin{column}{0.75\textwidth}
+    \centering
+    {\usebeamercolor[fg]{title in headline}
+     \LARGE \textbf{\inserttitle}\par}
+    \vspace{0.3em}
+    \Large \insertauthor \\
+    \Large \insertinstitute
+  \end{column}
+  \begin{column}{0.15\textwidth}
+    \vspace{-2em}
+    \includegraphics[width=0.95\linewidth]{UofU_Health_Logo.pdf}
+  \end{column}
+\end{columns}
+
+\vspace{1cm}
+
+% ============================
+% MAIN BODY
+% ============================
+\begin{columns}[t, onlytextwidth]
+
+% ============================
+% LEFT COLUMN  (Context + SSL)
+% ============================
+\begin{column}{0.29\textwidth}
+
+% --- Context ---
+\begin{block}{Context}
+\textbf{High-dimensional survival analysis can identify possible drug targets.}
+\vspace{0.5cm}
+\begin{columns}[c]
+  \begin{column}{0.45\textwidth}
+    \includegraphics[height=15cm]{Generic_Heatmap_Long.png}
+  \end{column}
+  \begin{column}{0.50\textwidth}
+    \begin{itemize}
+      \item $\#$ Samples $<\#$ Variables
+      \item Small signals
+      \item Meaningful correlation
+      \item Time-to-event outcomes
+      \item Censoring \& competing risks
+    \end{itemize}
+  \end{column}
+\end{columns}
+
+\vspace{0.6cm}
+\textbf{Interpretability $>$ Predictive Accuracy}
+\begin{itemize}
+  \item Hypothesis generation: \emph{all} important variables matter
+  \item Effect magnitude \& direction guide downstream prioritization
+\end{itemize}
+
+\vspace{0.6cm}
+\textbf{Bayesian variable selection encodes sparsity through priors.}
+\end{block}
+
+% --- SSL Priors ---
+\begin{block}{Spike-and-Slab LASSO Priors}
+\textbf{Mixture of two double-exponential (DE) priors:} spike scale $s_0<$ slab scale $s_1$.
+\begin{center}
+  \includegraphics[height=12cm]{SSL_wide.png}
+\end{center}
+\begin{tcolorbox}[colback=red!5!white, colframe=red!75!black, title=Model Hierarchy]
+\begin{align*}
+\beta_j \mid \gamma_j, s_0, s_1 &\sim (1-\gamma_j)\,\text{DE}(0,s_0) + \gamma_j\,\text{DE}(0,s_1) \\
+\gamma_j \mid \theta &\sim \text{Bernoulli}(\theta) \\
+\theta &\sim \text{Beta}(1,1)
+\end{align*}
+\end{tcolorbox}
+\end{block}
+
+\end{column}
+
+% ============================
+% RIGHT COLUMN (Comp Risks + CIF/PSH/Wolber's)
+% ============================
+\begin{column}{0.70\textwidth}
+
+% --- Competing Risks (top right) ---
+\begin{block}{Competing Risks}
+\begin{columns}[T]
+  \begin{column}{0.40\textwidth}
+    \textbf{A person who experiences a competing event cannot experience the event of interest.}
+    \vspace{0.4cm}
+    \begin{center}
+      \includegraphics[height=14cm]{Comprisk.png}
+    \end{center}
+  \end{column}
+  \begin{column}{0.58\textwidth}
+    \begin{itemize}
+      \item A variable can indirectly affect Event 1 by directly affecting Event 2
+    \end{itemize}
+    \vspace{0.3cm}
+    \begin{center}
+      \includegraphics[height=15cm]{placeholder.png}
+    \end{center}
+  \end{column}
+\end{columns}
+\end{block}
+
+% ============================================================
+% BOTTOM-RIGHT QUADRANT  --  the crux of the poster
+% Linking model construction (PSH) and tuning (Wolber's C)
+% through their shared target: the CIF
+% ============================================================
+\begin{block}{Linking Model and Tuning Through the Cumulative Incidence Function}
+
+% --- CIF banner: the shared target ---
+\begin{tcolorbox}[colback=UUgold!15!white, colframe=UUred!85!black,
+                  boxrule=1.2mm, sharp corners,
+                  left=4mm, right=4mm, top=2mm, bottom=2mm]
+\begin{center}
+\textbf{Shared target — the Cumulative Incidence Function:}\quad
+$F_1(t \mid \mathbf{z}) = \Pr(T \le t,\; \epsilon = 1 \mid \mathbf{z})$
+\end{center}
+\vspace{-0.3em}
+\begin{center}
+\fontsize{34}{40}\selectfont
+$\overbrace{\text{\textbf{PSH coefficients}}}^{\text{model structure}}
+\;\Longrightarrow\;
+\boxed{\;F_1(t\mid\mathbf{z})\;}
+\;\Longleftarrow\;
+\overbrace{\text{\textbf{Wolber's $C$-index}}}^{\text{model tuning}}$
+\end{center}
+\end{tcolorbox}
+
+\vspace{0.4cm}
+
+\begin{columns}[T]
+
+% ----- Left half: PSH -----
+\begin{column}{0.49\textwidth}
+\begin{block}{Proportional Subdistribution Hazards}
+\textbf{Fine \& Gray (JASA, 1999)}
+\begin{tcolorbox}[colback=red!5!white, colframe=red!75!black,
+                  title=Partial Pseudo Log-Likelihood]
+With $N_i(t)=\mathbb{I}(T_i\le t,\epsilon_i=1)$ and at-risk $Y_i(t)=1-N_i(t-)$:
+\vspace{-0.4em}
+\begin{align*}
+\ell_p(\boldsymbol\beta) = \sum_{i=1}^n \int_0^{\infty} \!\!&\!
+  \Bigl[\mathbf{z}_i^\top\!\boldsymbol\beta -
+   \log\!\bigl\{\!\textstyle\sum_q w_q(u)Y_q(u)e^{\mathbf{z}_q^\top\!\boldsymbol\beta}\bigr\}\Bigr] \\[-2pt]
+  &\times w_i(u)\,dN_i(u)
+\end{align*}
+\vspace{-0.6em}
+
+\noindent\textit{Time-dependent IPCW weights:}\;
+$w_i(t)=\dfrac{\mathbb{I}(C_i \ge \min(T_i,t))\,\hat{G}(t)}{\hat{G}(\min(T_i,t))}$
+\end{tcolorbox}
+\begin{itemize}
+  \item Subjects with the competing event \emph{stay} in the risk set
+  \item Coefficients are \textbf{monotonically tied} to $F_1(t\mid\mathbf{z})$
+\end{itemize}
+\textbf{$\Rightarrow$ Model fits on the CIF.}
+\end{block}
+\end{column}
+
+% ----- Right half: Wolber's C -----
+\begin{column}{0.49\textwidth}
+\begin{block}{Hyperparameter Tuning}
+\textbf{Pre-validated prognostic scores} via cross-validation give an independent score for every subject. ``Risk'' of Event~1 is partially ordered:
+\begin{itemize}
+  \item $A < D < C$, \quad $B < C$, \quad $E < D < C$
+\end{itemize}
+\textbf{Wolber's $C$-index (Biostatistics, 2014)}
+\begin{tcolorbox}[colback=red!5!white, colframe=red!75!black,
+                  title=CIF-Aligned Concordance]
+For prognostic model $M(t,\cdot)$ and pair $(i,j)$:
+\vspace{-0.4em}
+\begin{align*}
+C_1(t) = \Pr\bigl(\,& M(t,X_i) > M(t,X_j) \,\bigm|\, \\
+                   & \epsilon_i=1,\; T_i \le t,\; \\
+                   & (T_j > T_i \text{ or } \epsilon_j = 2)\bigr)
+\end{align*}
+\end{tcolorbox}
+\begin{itemize}
+  \item Competing-event subjects are the \emph{lowest-risk} pairs
+  \item Concordance is scored on the CIF's risk ordering
+\end{itemize}
+\textbf{$\Rightarrow$ Tuning evaluates on the CIF.}
+\end{block}
+\end{column}
+
+\end{columns}
+
+\vspace{0.3cm}
+
+% --- Closing punchline banner ---
+\begin{tcolorbox}[colback=UUred!90!black, colframe=UUred!90!black,
+                  coltext=white, boxrule=0mm, sharp corners,
+                  left=5mm, right=5mm, top=2mm, bottom=2mm]
+\begin{center}
+\textbf{Both model construction and tuning are anchored to $F_1(t\mid\mathbf{z})$ —
+making PSH + Wolber's $C$ the aligned pair for high-dimensional competing-risks variable selection.}
+\end{center}
+\end{tcolorbox}
+
+\end{block}
+
+% --- Funding ---
+\begin{block}{Funding and Acknowledgments}
+Supported by NIH/NCI T32CA291646. The content is solely the responsibility of the authors and does not necessarily represent the official views of the funders.
+\end{block}
+
+\end{column} % right column
+\end{columns}
+
+\end{frame}
+\end{document}

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 720 780" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, -apple-system, 'Helvetica Neue', sans-serif">
+<title>Subdistribution vs cause-specific selection geometry — nested subspace</title>
+<desc>Top: Venn diagram of candidate predictors. Below: a single nested-subspace figure. The outer parallelogram is the subdistribution span (Fine-Gray); the inner red parallelogram is the cause-specific span for event 1 — a strict subspace. Z1-beta-1 (red) and Z-shared-beta-shared (purple) live inside the inner plane and sum to eta-1. Z2-beta-2 (teal) leaves the inner plane and lives in the outer-only region, lifting eta-1 to eta. The cause-specific model never sees Z2.</desc>
+
+<rect width="720" height="780" fill="white"/>
+
+<defs>
+  <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#B91C1C"/></marker>
+  <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#6D28D9"/></marker>
+  <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#0F766E"/></marker>
+  <marker id="ad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#111827"/></marker>
+</defs>
+
+<!-- VENN -->
+<g>
+  <ellipse cx="360" cy="125" rx="300" ry="90" fill="#FAFAFA" stroke="#9CA3AF" stroke-width="1.5"/>
+  <text x="80" y="40" font-size="12" fill="#6B7280" font-style="italic">All candidate predictors</text>
+  <circle cx="280" cy="125" r="85" fill="#FECACA" fill-opacity="0.6" stroke="#B91C1C" stroke-width="2"/>
+  <circle cx="440" cy="125" r="85" fill="#A7F3D0" fill-opacity="0.6" stroke="#0F766E" stroke-width="2"/>
+  <path d="M 360 96.28 A 85 85 0 0 1 360 153.72 A 85 85 0 0 1 360 96.28 Z" fill="#DDD6FE" fill-opacity="0.85" stroke="#6D28D9" stroke-width="1.5"/>
+  <text x="218" y="132" font-size="22" font-style="italic" fill="#B91C1C" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif">Z&#185;</text>
+  <text x="360" y="132" font-size="22" font-style="italic" fill="#6D28D9" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif">Z&#7506;</text>
+  <text x="500" y="132" font-size="22" font-style="italic" fill="#0F766E" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif">Z&#178;</text>
+  <text x="218" y="158" font-size="11" fill="#B91C1C" text-anchor="middle">event 1 only</text>
+  <text x="360" y="158" font-size="11" fill="#6D28D9" text-anchor="middle">shared</text>
+  <text x="500" y="158" font-size="11" fill="#0F766E" text-anchor="middle">event 2 only</text>
+  <text x="360" y="240" font-size="13" text-anchor="middle">
+    <tspan font-weight="600">Active set</tspan> = Z&#185; &#8746; Z&#7506; &#8746; Z&#178;
+    <tspan font-style="italic" fill="#6B7280">  (any predictor that touches either event)</tspan>
+  </text>
+</g>
+
+<line x1="60" y1="265" x2="660" y2="265" stroke="#E5E7EB"/>
+
+<!-- HEADER -->
+<text x="80" y="290" font-size="13" font-weight="600" fill="#111827">
+  Cause-specific span is a <tspan text-decoration="underline">subspace</tspan> of the subdistribution span; Z&#178; lives in the gap.
+</text>
+
+<!-- OUTER PLANE: SUBDISTRIBUTION SPAN -->
+<g>
+  <polygon points="110,310 680,310 620,740 50,740" fill="#FAFAFA" stroke="#374151" stroke-width="2.5"/>
+  <text x="660" y="335" font-size="12" font-weight="600" fill="#374151" text-anchor="end" font-style="italic">
+    Subdistribution span &#8212; Fine&#8211;Gray
+  </text>
+  <text x="660" y="350" font-size="11" fill="#6B7280" text-anchor="end" font-style="italic">
+    Z&#185; &#8746; Z&#7506; &#8746; Z&#178;
+  </text>
+</g>
+
+<!-- INNER PLANE: CAUSE-SPECIFIC SPAN (event 1) -->
+<g>
+  <polygon points="140,540 440,540 380,720 80,720" fill="#FEE2E2" fill-opacity="0.7" stroke="#B91C1C" stroke-width="2"/>
+  <text x="370" y="565" font-size="12" font-weight="600" fill="#7F1D1D" text-anchor="end" font-style="italic">
+    Cause-specific span (event 1)
+  </text>
+  <text x="370" y="580" font-size="11" fill="#B91C1C" text-anchor="end" font-style="italic">
+    Z&#185; &#8746; Z&#7506;
+  </text>
+</g>
+
+<!-- VECTORS -->
+<g>
+  <!-- Origin O at lower-left corner of inner plane -->
+  <circle cx="80" cy="720" r="4" fill="#111827"/>
+  <text x="62" y="735" font-size="11" font-style="italic" fill="#374151">O</text>
+
+  <!-- Z1*beta1 (inside inner) -->
+  <line x1="80" y1="720" x2="180" y2="640" stroke="#B91C1C" stroke-width="2.5" marker-end="url(#ar)"/>
+  <text x="100" y="685" font-size="13" fill="#B91C1C" font-style="italic" font-family="Georgia, 'Times New Roman', serif">Z&#185;&#946;&#8321;</text>
+
+  <!-- ZS*betaS (inside inner) -->
+  <line x1="180" y1="640" x2="290" y2="555" stroke="#6D28D9" stroke-width="2.5" marker-end="url(#ap)"/>
+  <text x="225" y="595" font-size="13" fill="#6D28D9" font-style="italic" font-family="Georgia, 'Times New Roman', serif">Z&#7506;&#946;&#8347;</text>
+
+  <!-- eta_1 (cause-specific resultant, inside inner, ends on top edge) -->
+  <line x1="80" y1="720" x2="290" y2="555" stroke="#111827" stroke-width="3.5" marker-end="url(#ad)" stroke-linecap="round"/>
+  <text x="305" y="556" font-size="13" font-weight="600" font-style="italic" fill="#111827">&#951;&#8321; &#8594; log h&#8321;(t)</text>
+
+  <!-- Z2*beta2 (escape: from inner top edge, perpendicular up, into outer-only region) -->
+  <line x1="290" y1="555" x2="290" y2="395" stroke="#0F766E" stroke-width="2.5" marker-end="url(#at)"/>
+  <text x="302" y="478" font-size="13" fill="#0F766E" font-style="italic" font-family="Georgia, 'Times New Roman', serif">Z&#178;&#946;&#8322;</text>
+  <text x="302" y="495" font-size="11" fill="#0F766E" font-style="italic">outside event-1 span</text>
+
+  <!-- eta (full subdistribution resultant: from O to tip of Z2) -->
+  <line x1="80" y1="720" x2="290" y2="395" stroke="#111827" stroke-width="3.5" marker-end="url(#ad)" stroke-linecap="round" stroke-dasharray="0"/>
+  <text x="305" y="395" font-size="13" font-weight="600" font-style="italic" fill="#111827">&#951; &#8594; log h(t)</text>
+
+  <!-- Right-angle marker showing Z2 perpendicular to inner plane -->
+  <path d="M 290 565 L 280 565 L 280 555" fill="none" stroke="#374151" stroke-width="1"/>
+</g>
+
+<!-- TAKEAWAY -->
+<text x="360" y="765" font-size="12" text-anchor="middle" fill="#374151">
+  <tspan font-style="italic">Fine&#8211;Gray sees </tspan>
+  <tspan font-weight="600">all three</tspan>
+  <tspan font-style="italic">; cause-specific only sees what lies in the inner red plane &#8212; Z</tspan>
+  <tspan font-style="italic">&#178;</tspan>
+  <tspan font-style="italic"> drops out.</tspan>
+</text>
+
+</svg>

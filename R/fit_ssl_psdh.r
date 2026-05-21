@@ -58,7 +58,7 @@ fit_ssl_psdh <- function(x, y,
   ss1 <- ss[2]
 
   #Initial penalty weights
-  current_mixture_prob <- rep(initial_sparsity, nrow(x))
+  current_mixture_prob <- rep(initial_sparsity, ncol(x))
   init_mixture_scale <- (1-current_mixture_prob)*ss0+current_mixture_prob*ss1
 
   current_penalty_weights <- 1/init_mixture_scale
