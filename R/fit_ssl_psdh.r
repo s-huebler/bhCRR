@@ -90,7 +90,11 @@ fit_ssl_psdh <- function(x, y,
                                                         current_betas))
 
     # Update penalty weights (inverse S_j)
-    current_penalty_weights <- expected_penalty_weights(ss0, ss1,
+    # NOTE: expected_penalty_weights() takes (s1, s0, p) — slab first, then
+    # spike — matching expected_inclusion_probs(). Passing (ss0, ss1, ...) here
+    # silently inverts the prior: features with high inclusion probability get
+    # the spike penalty (huge) and inactive features get the slab penalty.
+    current_penalty_weights <- expected_penalty_weights(ss1, ss0,
                                                         current_inclusion_probs)
 
     # M-Step
