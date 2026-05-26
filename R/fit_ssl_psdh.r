@@ -79,10 +79,23 @@ fit_ssl_psdh <- function(x, y,
   current_betas <- init_mod$coef
   #print(current_betas)
 
-  #Initial devold
+  #Initial likelihood
   devold <- 0
 
+  overfit_count <- 0
   for(iter in 1:maxit){
+
+    # Temp resets incase deviance > 99
+    if(iter > 1){
+      temp_inclusion_probs <- current_inclusion_probs
+      temp_betas <- current_betas
+      temp_mixture_prob <- current_mixture_prob
+      temp_penalty_weights <- current_penalty_weights
+      temp_mod <- mod
+      temp_devold <- devold
+    }
+
+
     # E-Step
     # Update inclusion probabilites (gamma_j)
 
@@ -100,13 +113,13 @@ fit_ssl_psdh <- function(x, y,
                                                         current_inclusion_probs)
 
 
-    # print(paste("Iteration", iter, ":"))
-    # print("Betas")
-    # print(current_betas)
+   # print(paste("Iteration", iter, ":"))
+    #print("Betas")
+    #print(current_betas)
     # print("Inclusion probs")
     #  print(current_inclusion_probs)
     #  print("Penalty weights")
-    #  print(current_penalty_weights)
+   #   print(current_penalty_weights)
 
     # M-Step
     # Update mixture prob (pi)
@@ -125,17 +138,35 @@ fit_ssl_psdh <- function(x, y,
 
 
 
+    logLik <- mod$logLik
+    # # Overfit check
+    if(1-logLik/mod$logLik.null > 0.98 & overfit_count < 10 & iter > 1){
+      current_inclusion_probs <- temp_inclusion_probs
+      current_betas <- temp_betas
+      current_mixture_prob <- temp_mixture_prob
+      current_penalty_weights <- temp_penalty_weights
+      mod <- temp_mod
+      devold <- temp_devold
 
-
+      overfit_count <- overfit_count + 1
+    }
 
     # # Convergence check (using log-likelihood)
-    logLik <- mod$logLik
+
     if(abs(logLik - devold)/(0.1 + abs(logLik)) < epsilon & iter > 5) {
+      if(overfit_count<10){
       conv <- TRUE
       break
+      }else{
+        conv <- TRUE
+        print("Overfitting reset over 10")
+        break
+      }
     }
     devold <- logLik
-  }
+
+
+  }#end iter loop
 
   coefficients_df <- data.frame("Variable" = colnames(x),
                                 "Estimate" = mod$coef)

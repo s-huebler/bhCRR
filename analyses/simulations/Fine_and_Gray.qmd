@@ -55,6 +55,11 @@ easy_sim_data <- cbind(data.frame(ID = 1:50,
                        easy_sim$X)
 names(easy_sim_data)[4:8]<- c("X1", "X2", "X3", "X4", "X5")
 
+x <- as.matrix(easy_sim_data %>%select(starts_with("X")))
+y <- as.matrix(easy_sim_data %>%
+  mutate(Status = as.numeric(Status))%>%
+  select(TTE, Status))
+
 ggplot(easy_sim_data, aes(x = TTE, group = Status))+
   geom_density(aes(color = Status))
 ```
@@ -95,6 +100,121 @@ compare_betas$Fg = fg_model$coefficients
 compare_betas
 ```
 
+### Fastcmprsk
+
+We'll use the least penalized form of the model (lambda = 0.001).
+
+```{r}
+
+
+fstcmp_minPenalty <- fastcmprsk::fastCrrp(
+    Crisk(
+      y[,1],
+      y[,2],
+      cencode = 0,
+      failcode = 1
+    ) ~ x,
+    penalty = "LASSO",
+    lambda = 0.001
+  )
+```
+
+```{r}
+compare_betas$fstcmp_minPenalty = as.vector(fstcmp_minPenalty$coef)
+
+compare_betas
+```
+
+#### With Tuning
+
+From gemini.
+
+```{r}
+
+lam.path <- 10^seq(log10(0.1), log10(0.001), length = 25)
+
+
+#' K-Fold Cross Validation for fastCrrp (Updated for custom lambda paths & manual predictions)
+cv_fastCrrp <- function(x, time, status, k = 5, penalty = "LASSO", lambda_path = NULL) {
+  
+  n <- nrow(x)
+  set.seed(42) 
+  fold_ids <- sample(rep(1:k, length.out = n))
+  
+  # 1. Fit the full model
+  fit_full <- fastCrrp(Crisk(time, status, cencode = 0, failcode = 1) ~ x, 
+                       penalty = penalty,
+                       lambda = lambda_path)
+  
+  lambdas <- fit_full$lambda
+  n_lambda <- length(lambdas)
+  cv_metrics <- matrix(NA, nrow = k, ncol = n_lambda)
+  
+  for (i in 1:k) {
+    test_idx <- which(fold_ids == i)
+    
+    x_train <- x[-test_idx, , drop = FALSE]
+    time_train <- time[-test_idx]
+    status_train <- status[-test_idx]
+    
+    x_test <- x[test_idx, , drop = FALSE]
+    time_test <- time[test_idx]
+    status_test <- status[test_idx]
+    
+    # 2. Fit training folds
+    fit_train <- fastCrrp(Crisk(time_train, status_train, cencode = 0, failcode = 1) ~ x_train,
+                          penalty = penalty, 
+                          lambda = lambdas) 
+    
+    # 3. MANUALLY CALCULATE PREDICTIONS (X %*% beta)
+    # x_test is (n_test x p), fit_train$coef is (p x n_lambda)
+    # The result is an (n_test x n_lambda) matrix of risk scores
+    pred_risk <- as.matrix(x_test) %*% as.matrix(fit_train$coef)
+    
+    for (j in 1:n_lambda) {
+      risk_scores <- pred_risk[, j]
+      
+      tryCatch({
+        c_stat <- survival::concordance(Surv(time_test, status_test == 1) ~ risk_scores)$concordance
+        cv_metrics[i, j] <- c_stat
+      }, error = function(e) {
+        cv_metrics[i, j] <- NA 
+      })
+    }
+  }
+  
+  mean_cv_metrics <- colMeans(cv_metrics, na.rm = TRUE)
+  opt_idx <- which.max(mean_cv_metrics)
+  lambda_min <- lambdas[opt_idx]
+  
+  return(list(
+    lambda = lambdas,
+    cv_c_index = mean_cv_metrics,
+    lambda_min = lambda_min,
+    full_model = fit_full,
+    cv_raw_matrix = cv_metrics
+  ))
+}
+```
+
+```{r}
+fstcmp_Tuned <- cv_fastCrrp(x = x, time = y[,1], status = y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = lam.path)
+
+# Extract your optimal lambda
+fstcmp_Tuned_best_lambda <- fstcmp_Tuned$lambda_min
+
+
+```
+
+```{r}
+compare_betas$fstcmp_Tuned = as.vector(fstcmp_Tuned$full_model$coef[, 
+                which(fstcmp_Tuned$lambda == fstcmp_Tuned_best_lambda)])
+
+compare_betas
+```
+
 ## SSL
 
 ```{r}
@@ -112,6 +232,23 @@ source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/dedupe_warnings.r")
 ```
 
+Similarly, we'll use the least penalized form of the model.
+
+```{r}
+ssl_minPenalty <- fit_ssl_psdh(x,y, ss = c(0.01, 0.9),
+                            initial_sparsity = 1)
+```
+
+```{r}
+compare_betas$ssl_minPenalty = as.vector(ssl_minPenalty$coef)
+
+compare_betas
+```
+
+#### With Tuning
+
+Now we'll say we have no idea about sparsity, so naively we'll place 0.5 (in future we can tune this?)
+
 ```{r}
 psdh_ssl_func <- function(x,y, init_sparsity, ncv_count){
   x <- as.matrix(x)
@@ -120,16 +257,16 @@ psdh_ssl_func <- function(x,y, init_sparsity, ncv_count){
   
   tunes <- tryCatch({tune_ssl_psdh(fit, 
                          seq(0.005, 0.1, length.out = 20),
-                         seq(0.5, 0.5, length.out = 3),
+                         seq(0.5, 0.9, length.out = 10),
                          ncv = ncv_count,
                          initial_sparsity = init_sparsity
                          )
   }, error = function(msg){return(NA)})
   
-  print(head(tunes))
+  #print(head(tunes))
   max_tune <- tunes %>%
     dplyr::filter(score_mean == max(tunes$score_mean, na.rm = T))
-  print(max_tune)
+  #print(max_tune)
 
   #print(tunes)
 
@@ -143,64 +280,16 @@ psdh_ssl_func <- function(x,y, init_sparsity, ncv_count){
 ```
 
 ```{r}
-ssl_mod <- psdh_ssl_func(easy_sim_data %>%
+ssl_Tuned <- psdh_ssl_func(easy_sim_data %>%
                            select(starts_with("X")),
                          easy_sim_data %>%
                            mutate(Status = as.numeric(Status))%>%
-                           select(TTE, Status), init_sparsity = 0.9,
-                         ncv_count = 3)
+                           select(TTE, Status), init_sparsity = 0.5,
+                         ncv_count = 1)
 ```
 
 ```{r}
-compare_betas$ssl = as.vector(ssl_mod$coef)
+compare_betas$ssl_Tuned = as.vector(ssl_Tuned$coef)
 
 compare_betas
-```
-
-### Debugging
-
-```{r}
-
-x <- as.matrix(easy_sim_data %>%select(starts_with("X")))
-y <- as.matrix(easy_sim_data %>%
-  mutate(Status = as.numeric(Status))%>%
-  select(TTE, Status))
-
-fit  <- fit_ssl_psdh(x, y)
-fit2  <- fit_ssl_psdh(x, y, maxit = 30, initial_sparsity = .5, ss=c(0.05, 0.7))
-```
-
-```{r}
-fols <- generate_foldid(nobs = nrow(x), nfolds = 10, ncv = 1)$foldid
-
-debug_cv <- function(s0, s1) {
-  n <- nrow(y); nfolds <- max(fols)
-  lp_all <- rep(NA, n)
-  fails <- integer(0)
-  for (i in 1:nfolds) {
-    om <- which(fols[, 1] == i)
-    fit_k <- try(fit_ssl_psdh(x = x[-om, , drop = FALSE],
-                              y = as.matrix(y[-om, ]),
-                              ss = c(s0, s1),
-                              initial_sparsity = 0.05,
-                              maxit = 50, epsilon = 1e-04),
-                 silent = TRUE)
-    if (inherits(fit_k, "try-error")) { fails <- c(fails, i); next }
-    lp_all[om] <- predict_from_ssl_psdh(fit_k, newx = x[om, , drop = FALSE],
-                                        as.numeric(quantile(y[,1], 0.5)))
-  }
-  list(n_filled = sum(!is.na(lp_all)),
-       failed_folds = fails,
-       cindex = measure_ssl_psdh(y, lp_all, as.numeric(quantile(y[,1], 0.5))))
-}
-```
-
-```{r}
-suppressWarnings(debug_cv(0.005, 0.5)$cindex)
-suppressWarnings(debug_cv(0.05,  0.5)$cindex)
-suppressWarnings(debug_cv(0.1,   0.9)$cindex)
-```
-
-```{r}
-fit2  <- fit_ssl_psdh(x, y, maxit = 30, initial_sparsity = .8, ss=c(0.05, 0.7))
 ```
