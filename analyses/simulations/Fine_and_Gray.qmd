@@ -1,0 +1,190 @@
+---
+title: "Fine-and-Gray Simulation"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+```
+
+# Framework:
+
+Consider the clinTALL genome study that investigated 1362 children with childhood T-lineage acute lymphoblastic leukemia, of whom 61 underwent HSCT. There were 19 deaths in this group. Causes of death in this group include the primary disease, transplant related complications, and other complications.
+
+Prior work with the larger dataset (<https://www.biorxiv.org/content/10.64898/2026.01.28.701965v1.full>) showed that deep learning models trained on the gene expression data for risk stratification had nearly perfect separation for induction failure. Induction failure is associated with death from the primary disease. However, risk stratification was not nearly as accurate for other failure types. One potential explanation for this is that post transplantation complications like GVHD have been shown to be associated with the microbiome, so deaths from this category may be primarily driven by alternate but correlated phenomenon.
+
+Let us make the fairly reasonable assumption that the relationships between gene expression and induction failure and between induction failure and death by primary disease hold in this HSCT subpopulation as it did in the larger population.
+
+Our goal is to use the HSCT cohort to identify specific associations between gene expression and time to death by the primary disease. This could be useful in developing therapeutic targets or investigating disease mechanisms down the line. Particularly if the associations with gene expression turn out to be causal.
+
+In high dimensional setting, while it is unrealistic to assume proportional hazards holds, proportional hazards models can still be useful to identify the main effects of individual factors. However, we have competing risks from transplant complications, and we have reason to believe that these event times for are governed more strongly by other factors like the microbiome. The microbiome is unobserved, and not necessarily independent from gene expression data, but we do not expect the relationship between gene expression data and transplant complications to be so straightforward. Specifically, rather than gene expression data having a causal relationship with transplant outcomes, we think it is more likely that the starting point of the host microbiome might have a causal relationship with transplant outcomes, and also an associative or effect modifying relationship with gene expression data. In this way, we expect a proportional hazards model based on gene expression data to be extremely ill fitting for the transplant complications outcome.
+
+-   We assume the assumption violations to be mild in the case of the primary event, and severe in the case of the competing event.
+
+-   Under this scenario, it would not make sense to form multiple proportional hazard models for each event. Therefore, the potential issue with the cummulative CIF \> 1 that arises when fitting separate proportional subdistribution hazards models is not a problem here, because there is not a reason to fit a proportional subdistribution hazards model to the competing event.
+
+-   Similarly, it would not make sense to try to fit 2 cause specific hazards models to the separate events.
+
+This is an excellent case for a high dimensional competing risks model based on the proportional subdistribution hazards model. With this model, we are able to frame the problem focusing on death from the primary disease.
+
+-   We acknowledging that there is likely to be bias that would arise by treating censored patients and patients who fail from transplant outcomes event identically, but we do not have the microbiome data to model the failure from transplant outcomes.
+
+# Easiest Scenario:
+
+We'll use the simulation tool from the fast comp risk package. The design matrix is simulated from a multivariate normal (0,1) in 5 dimensions. We make umin=umax for administrative censoring, and currently we don't allow censoring so we make it much larger than the event time.
+
+```{r}
+set.seed(3149)
+easy_sim <- simulateTwoCauseFineGrayModel(nobs = 50,
+                                          beta1 = c(0.40, - 0.50, 0.60, 0.75, - 0.80),
+                                          beta2 = c(0, 0.3, 0, 0, -0.2),
+                                          X = NULL,
+                                          u.min = 100,
+                                          u.max = 100,
+                                          p = 0.5,
+                                          returnX = TRUE)
+
+compare_betas <- data.frame(Name = c("B1", "B2", "B3", "B4", "B5"),
+                            True_beta = c(0.40, - 0.50, 0.60, 0.75, - 0.80))
+
+easy_sim_data <- cbind(data.frame(ID = 1:50,
+                            TTE = easy_sim$ftime,
+                            Status = factor(easy_sim$fstatus)),
+                       easy_sim$X)
+names(easy_sim_data)[4:8]<- c("X1", "X2", "X3", "X4", "X5")
+
+ggplot(easy_sim_data, aes(x = TTE, group = Status))+
+  geom_density(aes(color = Status))
+```
+
+## Modeling:
+
+### Normal fine and gray
+
+```{r}
+# Install survival package if you haven't already: install.packages("survival")
+library(survival)
+
+# 1. Convert Status to a factor for the multi-state model.
+# CRITICAL: 0 (censored) must be the first level.
+easy_sim_data$Status_factor <- factor(easy_sim_data$Status, 
+                           levels = c(0, 1, 2), 
+                           labels = c("censor", "event", "competing"))
+
+# 2. Restructure the dataset for the Fine-Gray model
+# 'etype="event"' tells R that Status=1 is our risk of interest
+fg_data <- finegray(Surv(TTE, Status_factor) ~ ., data = easy_sim_data, etype = "event")
+
+# 3. Fit the model using coxph()
+# finegray() automatically creates 'fgstart', 'fgstop', 'fgstatus', and weights ('fgwt')
+fg_model <- coxph(Surv(fgstart, fgstop, fgstatus) ~ X1 + X2 + X3 + X4 + X5, 
+                  weight = fgwt, 
+                  data = fg_data)
+
+# 4. View results
+summary(fg_model)
+
+
+```
+
+```{r}
+compare_betas$Fg = fg_model$coefficients
+
+compare_betas
+```
+
+## SSL 
+
+```{r}
+source("/Users/sophiehuebler/Documents/bhCRR/R/cv_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/fit_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/update_betas.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/expected_inclusion_probs.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/expected_penalty_weights.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/update_mixture_prob.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/helpers.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/tune_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/measure_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
+```
+
+```{r}
+psdh_ssl_func <- function(x,y, init_sparsity){
+  x <- as.matrix(x)
+  y <- as.matrix(y)
+  fit <- fit_ssl_psdh(x,y, initial_sparsity = init_sparsity)
+  
+  tunes <- tryCatch({tune_ssl_psdh(fit, 
+                         seq(0.005, 0.1, length.out = 20),
+                         seq(0.4, 0.9, length.out = 3),
+                         ncv = 10
+                         )
+  }, error = function(msg){return(NA)})
+  max_tune <- tunes %>%
+    filter(score_mean == max(tunes$score_mean,na.rm = T))
+  print(max_tune)
+  
+  final_fit <- fit_ssl_psdh(x,y, ss = c(max_tune$s0[1], max_tune$s1[1]),
+                            initial_sparsity = init_sparsity)
+
+  
+  final_fit
+  
+}
+```
+
+```{r}
+ssl_mod <- psdh_ssl_func(easy_sim_data %>%
+                           select(starts_with("X")),
+                         easy_sim_data %>%
+                           mutate(Status = as.numeric(Status))%>%
+                           select(TTE, Status), init_sparsity = 0.999)
+```
+
+```{r}
+compare_betas$ssl = as.vector(ssl_mod$coef)
+
+compare_betas
+```
+
+### Debugging
+
+```{r}
+
+x <- as.matrix(easy_sim_data %>%select(starts_with("X")))
+y <- as.matrix(easy_sim_data %>%
+  mutate(Status = as.numeric(Status))%>%
+  select(TTE, Status))
+
+fit  <- fit_ssl_psdh(x, y)
+fols <- generate_foldid(nobs = nrow(x), nfolds = 10, ncv = 1)$foldid
+
+debug_cv <- function(s0, s1) {
+  n <- nrow(y); nfolds <- max(fols)
+  lp_all <- rep(NA, n)
+  fails <- integer(0)
+  for (i in 1:nfolds) {
+    om <- which(fols[, 1] == i)
+    fit_k <- try(fit_ssl_psdh(x = x[-om, , drop = FALSE],
+                              y = as.matrix(y[-om, ]),
+                              ss = c(s0, s1),
+                              initial_sparsity = 0.05,
+                              maxit = 50, epsilon = 1e-04),
+                 silent = TRUE)
+    if (inherits(fit_k, "try-error")) { fails <- c(fails, i); next }
+    lp_all[om] <- predict_from_ssl_psdh(fit_k, newx = x[om, , drop = FALSE],
+                                        as.numeric(quantile(y[,1], 0.5)))
+  }
+  list(n_filled = sum(!is.na(lp_all)),
+       failed_folds = fails,
+       cindex = measure_ssl_psdh(y, lp_all, as.numeric(quantile(y[,1], 0.5))))
+}
+
+# Run it for a few of the (s0, s1) pairs where you saw identical means
+debug_cv(0.005, 0.5)
+debug_cv(0.05,  0.5)
+debug_cv(0.1,   0.5)
+```

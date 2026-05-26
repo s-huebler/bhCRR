@@ -54,6 +54,8 @@ fit_ssl_psdh <- function(x, y,
                          maxit = 50,
                          epsilon=1e-04){
 
+  .dedupe_warnings({
+
   ss0 <- ss[1]
   ss1 <- ss[2]
 
@@ -136,6 +138,8 @@ fit_ssl_psdh <- function(x, y,
   mod$ss <- ss
 
   return(mod)
+
+  })
 
 }
 

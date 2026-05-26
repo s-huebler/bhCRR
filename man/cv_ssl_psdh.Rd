@@ -29,11 +29,25 @@ event times used as the evaluation horizon for the C-index.
 Default \code{0.5} (median event time).}
 }
 \value{
-A list with one element:
+A list with the following elements:
 \describe{
 \item{\code{measures}}{A \eqn{2 \times 1} matrix with rows
 \code{"mean"} and \code{"sd"} giving the mean and standard
-deviation of the C-index across the \code{ncv} repetitions.}
+deviation of the pooled cross-validated C-index across the
+\code{ncv} repetitions.  SD is \code{NA} when \code{ncv = 1}.}
+\item{\code{fold_scores}}{An \eqn{\code{ncv} \times \code{nfolds}}
+matrix of per-fold C-indices (one row per CV repetition).
+Entries may be \code{NA} for folds in which the fit failed or
+the held-out subset had no cause-1 events.}
+\item{\code{fold_sd}}{Numeric scalar.  Mean over \code{ncv}
+repetitions of the within-repetition SD of the per-fold
+C-indices.  Provides a measure of fold-to-fold variability
+even when \code{ncv = 1}.}
+\item{\code{failed_folds}}{Length-\code{ncv} list of integer
+vectors, each giving the fold indices in which
+\code{fit_ssl_psdh} failed (empty if all folds succeeded).}
+\item{\code{n_failed}}{Total number of (rep, fold) pairs in
+which \code{fit_ssl_psdh} failed.}
 }
 }
 \description{

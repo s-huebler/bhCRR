@@ -23,9 +23,19 @@
 #'   hyperparameter pairs.
 #'
 #' @returns A data frame with one row per valid \code{(s0, s1)} pair and
-#'   columns \code{s0}, \code{s1}, and one or more performance-metric
-#'   columns (e.g. \code{score_mean}, \code{score_sd}) from
-#'   \code{\link{cv_ssl_psdh}}.
+#'   columns:
+#'   \describe{
+#'     \item{\code{s0}, \code{s1}}{The hyperparameter pair.}
+#'     \item{\code{score_mean}}{Pooled cross-validated C-index averaged
+#'       over \code{ncv} repetitions.}
+#'     \item{\code{score_sd}}{SD of the pooled C-index across \code{ncv}
+#'       repetitions; \code{NA} when \code{ncv = 1}.}
+#'     \item{\code{score_fold_sd}}{Mean (over \code{ncv} repetitions) of
+#'       the within-repetition SD of the per-fold C-indices.  Captures
+#'       fold-to-fold variability even when \code{ncv = 1}.}
+#'     \item{\code{n_failed_folds}}{Total number of (rep, fold) pairs in
+#'       which \code{fit_ssl_psdh} failed for this hyperparameter pair.}
+#'   }
 #'
 #' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{cv_ssl_psdh}},
 #'   \code{\link{generate_foldid}}
@@ -41,6 +51,8 @@
 #' tunes[which.max(tunes$score_mean), ]
 #' }
 tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL) {
+
+  .dedupe_warnings({
 
   # 1. Generate folds once so every hyperparameter is tested on identical splits
   n <- NROW(object$y)
@@ -62,51 +74,55 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL)
   }
 
   # 3. Iterate over the valid combinations
-  # We loop through the rows of the valid_grid
   results_list <- lapply(1:nrow(valid_grid), function(i) {
 
     current_s0 <- valid_grid$s0[i]
     current_s1 <- valid_grid$s1[i]
 
-    # Call the CV function with the specific pair
-    # Note: Passed 'current_s1' to the cv function
-
-
     cv_res <- try(cv_ssl_psdh(object,
-                              foldid = foldid,
-                              s0 = current_s0,
-                              s1 = current_s1,
-                              ncv = ncv,
+                              foldid        = foldid,
+                              s0            = current_s0,
+                              s1            = current_s1,
+                              ncv           = ncv,
                               eval_quantile = 0.5))
 
-    if("try-error" %in% class(cv_res)){
-     # print(paste0("Failed when s0 = ", current_s0,
-    #               "; s1 = ", current_s1))
-
-
-      cv_res$measures <- c(NA,NA)
+    # If cv_ssl_psdh itself errored, surface it and return an explicit NA row
+    if (inherits(cv_res, "try-error")) {
+      err_msg <- attr(cv_res, "condition")$message
+      message(sprintf(
+        "[tune_ssl_psdh] cv_ssl_psdh failed at s0=%g, s1=%g: %s",
+        current_s0, current_s1, err_msg))
+      return(c(s0             = current_s0,
+               s1             = current_s1,
+               score_mean     = NA_real_,
+               score_sd       = NA_real_,
+               score_fold_sd  = NA_real_,
+               n_failed_folds = NA_real_))
     }
 
-    # Extract mean and sd from the results
-    stats <- as.vector(cv_res$measures)
-
-    # Handle cases where cv_res$measures might have different column names
-    # Assuming standard structure: columns are metrics, rows are "mean"/"sd"
-    if(is.null(colnames(cv_res$measures))) {
-      metric_names <- "score" # Fallback if no names
+    metric_names <- if (is.null(colnames(cv_res$measures))) {
+      "score"
     } else {
-      metric_names <- colnames(cv_res$measures)
+      colnames(cv_res$measures)
     }
 
-    names(stats) <- c(paste0(metric_names, "_mean"),
-                      paste0(metric_names, "_sd"))
+    means <- as.numeric(cv_res$measures["mean", ])
+    sds   <- as.numeric(cv_res$measures["sd",   ])
+    names(means) <- paste0(metric_names, "_mean")
+    names(sds)   <- paste0(metric_names, "_sd")
 
-    # Return vector including the parameters used
-    return(c(s0 = current_s0, s1 = current_s1, stats))
+    fold_sd <- setNames(cv_res$fold_sd, paste0(metric_names, "_fold_sd"))
+
+    c(s0 = current_s0,
+      s1 = current_s1,
+      means,
+      sds,
+      fold_sd,
+      n_failed_folds = cv_res$n_failed)
   })
 
   # 4. Combine and return results
-  results <- as.data.frame(do.call(rbind, results_list))
+  as.data.frame(do.call(rbind, results_list))
 
-  return(results)
+  })
 }

@@ -30,9 +30,19 @@ hyperparameter pairs.}
 }
 \value{
 A data frame with one row per valid \code{(s0, s1)} pair and
-columns \code{s0}, \code{s1}, and one or more performance-metric
-columns (e.g. \code{score_mean}, \code{score_sd}) from
-\code{\link{cv_ssl_psdh}}.
+columns:
+\describe{
+\item{\code{s0}, \code{s1}}{The hyperparameter pair.}
+\item{\code{score_mean}}{Pooled cross-validated C-index averaged
+over \code{ncv} repetitions.}
+\item{\code{score_sd}}{SD of the pooled C-index across \code{ncv}
+repetitions; \code{NA} when \code{ncv = 1}.}
+\item{\code{score_fold_sd}}{Mean (over \code{ncv} repetitions) of
+the within-repetition SD of the per-fold C-indices.  Captures
+fold-to-fold variability even when \code{ncv = 1}.}
+\item{\code{n_failed_folds}}{Total number of (rep, fold) pairs in
+which \code{fit_ssl_psdh} failed for this hyperparameter pair.}
+}
 }
 \description{
 Searches over all valid \code{(s0, s1)} combinations in the Cartesian

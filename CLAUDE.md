@@ -56,6 +56,16 @@ Application of bhCRR to the harmonized ODSiData cohort.
 - Project 2 commits: "feat/fix/docs/test: brief description"
 - Always run devtools::check(vignettes=FALSE) before pushing bhCRR
 
+## Editing Files (IMPORTANT)
+Always ASK before editing any file in this workspace, even when the fix seems
+obvious or the user has described a bug. Diagnose first, propose the change
+(show the diff or the exact edit you intend to make), and wait for Sophie's
+explicit go-ahead before invoking Edit/Write on package source, tests,
+manuscripts, or any other tracked file. This applies even mid-task: if a new
+edit becomes necessary partway through, pause and confirm before making it.
+Exceptions: scratch files Sophie has explicitly told you to treat as a
+scratchpad, or files Sophie has just asked you to modify in the current turn.
+
 ## Prompt Requests (IMPORTANT)
 When Sophie asks for a "prompt", says something like "help me with a prompt",
 "write me a prompt", "draft a prompt", or otherwise requests a prompt, this
