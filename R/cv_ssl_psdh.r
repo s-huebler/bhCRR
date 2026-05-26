@@ -21,6 +21,9 @@
 #' @param eval_quantile Numeric in \code{(0, 1)}. Quantile of observed
 #'   event times used as the evaluation horizon for the C-index.
 #'   Default \code{0.5} (median event time).
+#' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
+#'   global mixture probability (prior proportion of active features).
+#'   Default \code{0.05}.
 #'
 #' @returns A list with the following elements:
 #'   \describe{
@@ -56,7 +59,7 @@
 #' fols <- generate_foldid(nobs = nrow(x), nfolds = 5)
 #' cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
 #' }
-cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
+cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity) {
   # Extract data
   y <- object$y
   x <- object$x
@@ -85,7 +88,7 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5) {
       # RE-FIT (errors are captured rather than silenced so we can report them)
       suppressWarnings({
         fit <- try(fit_ssl_psdh(x = x_train, y = y_train, ss = c(s0, s1),
-                                initial_sparsity = 0.05,
+                                initial_sparsity = initial_sparsity,
                                 maxit = 50,
                                 epsilon = 1e-04), silent = TRUE)
       })

@@ -87,9 +87,9 @@ fit_ssl_psdh <- function(x, y,
     # Update inclusion probabilites (gamma_j)
 
 
-    current_inclusion_probs <- suppressWarnings(expected_inclusion_probs(ss1, ss0,
+    current_inclusion_probs <- expected_inclusion_probs(ss1, ss0,
                                                         current_mixture_prob,
-                                                        current_betas))
+                                                        current_betas)
 
     # Update penalty weights (inverse S_j)
     # NOTE: expected_penalty_weights() takes (s1, s0, p) — slab first, then
@@ -98,6 +98,15 @@ fit_ssl_psdh <- function(x, y,
     # the spike penalty (huge) and inactive features get the slab penalty.
     current_penalty_weights <- expected_penalty_weights(ss1, ss0,
                                                         current_inclusion_probs)
+
+
+    # print(paste("Iteration", iter, ":"))
+    # print("Betas")
+    # print(current_betas)
+    # print("Inclusion probs")
+    #  print(current_inclusion_probs)
+    #  print("Penalty weights")
+    #  print(current_penalty_weights)
 
     # M-Step
     # Update mixture prob (pi)
@@ -111,6 +120,8 @@ fit_ssl_psdh <- function(x, y,
                         cencode_num = 0,
                         failcode_num = 1,
                         lambda = current_lambda)
+
+    current_betas <- mod$coef
 
 
 

@@ -95,7 +95,7 @@ compare_betas$Fg = fg_model$coefficients
 compare_betas
 ```
 
-## SSL 
+## SSL
 
 ```{r}
 source("/Users/sophiehuebler/Documents/bhCRR/R/cv_ssl_psdh.r")
@@ -109,28 +109,34 @@ source("/Users/sophiehuebler/Documents/bhCRR/R/tune_ssl_psdh.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/measure_ssl_psdh.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/dedupe_warnings.r")
 ```
 
 ```{r}
-psdh_ssl_func <- function(x,y, init_sparsity){
+psdh_ssl_func <- function(x,y, init_sparsity, ncv_count){
   x <- as.matrix(x)
   y <- as.matrix(y)
   fit <- fit_ssl_psdh(x,y, initial_sparsity = init_sparsity)
   
   tunes <- tryCatch({tune_ssl_psdh(fit, 
                          seq(0.005, 0.1, length.out = 20),
-                         seq(0.4, 0.9, length.out = 3),
-                         ncv = 10
+                         seq(0.5, 0.5, length.out = 3),
+                         ncv = ncv_count,
+                         initial_sparsity = init_sparsity
                          )
   }, error = function(msg){return(NA)})
-  max_tune <- tunes %>%
-    filter(score_mean == max(tunes$score_mean,na.rm = T))
-  print(max_tune)
   
+  print(head(tunes))
+  max_tune <- tunes %>%
+    dplyr::filter(score_mean == max(tunes$score_mean, na.rm = T))
+  print(max_tune)
+
+  #print(tunes)
+
   final_fit <- fit_ssl_psdh(x,y, ss = c(max_tune$s0[1], max_tune$s1[1]),
                             initial_sparsity = init_sparsity)
 
-  
+
   final_fit
   
 }
@@ -141,7 +147,8 @@ ssl_mod <- psdh_ssl_func(easy_sim_data %>%
                            select(starts_with("X")),
                          easy_sim_data %>%
                            mutate(Status = as.numeric(Status))%>%
-                           select(TTE, Status), init_sparsity = 0.999)
+                           select(TTE, Status), init_sparsity = 0.9,
+                         ncv_count = 3)
 ```
 
 ```{r}
@@ -160,6 +167,10 @@ y <- as.matrix(easy_sim_data %>%
   select(TTE, Status))
 
 fit  <- fit_ssl_psdh(x, y)
+fit2  <- fit_ssl_psdh(x, y, maxit = 30, initial_sparsity = .5, ss=c(0.05, 0.7))
+```
+
+```{r}
 fols <- generate_foldid(nobs = nrow(x), nfolds = 10, ncv = 1)$foldid
 
 debug_cv <- function(s0, s1) {
@@ -182,9 +193,14 @@ debug_cv <- function(s0, s1) {
        failed_folds = fails,
        cindex = measure_ssl_psdh(y, lp_all, as.numeric(quantile(y[,1], 0.5))))
 }
+```
 
-# Run it for a few of the (s0, s1) pairs where you saw identical means
-debug_cv(0.005, 0.5)
-debug_cv(0.05,  0.5)
-debug_cv(0.1,   0.5)
+```{r}
+suppressWarnings(debug_cv(0.005, 0.5)$cindex)
+suppressWarnings(debug_cv(0.05,  0.5)$cindex)
+suppressWarnings(debug_cv(0.1,   0.9)$cindex)
+```
+
+```{r}
+fit2  <- fit_ssl_psdh(x, y, maxit = 30, initial_sparsity = .8, ss=c(0.05, 0.7))
 ```

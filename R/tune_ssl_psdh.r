@@ -21,6 +21,9 @@
 #'   fold assignments.  If \code{NULL} (default) folds are generated
 #'   internally by \code{\link{generate_foldid}} and shared across all
 #'   hyperparameter pairs.
+#' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
+#'   global mixture probability (prior proportion of active features).
+#'   Default \code{0.05}.
 #'
 #' @returns A data frame with one row per valid \code{(s0, s1)} pair and
 #'   columns:
@@ -50,7 +53,7 @@
 #'                        s1_seq = seq(0.3,   0.9, length.out = 10))
 #' tunes[which.max(tunes$score_mean), ]
 #' }
-tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL) {
+tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity) {
 
   .dedupe_warnings({
 
@@ -84,7 +87,8 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL)
                               s0            = current_s0,
                               s1            = current_s1,
                               ncv           = ncv,
-                              eval_quantile = 0.5))
+                              eval_quantile = 0.5,
+                              initial_sparsity = initial_sparsity))
 
     # If cv_ssl_psdh itself errored, surface it and return an explicit NA row
     if (inherits(cv_res, "try-error")) {
