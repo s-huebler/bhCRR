@@ -10,11 +10,12 @@
 #'   (larger value; controls the spread of the active-feature distribution).
 #' @param s0 Numeric scalar. Spike scale parameter of the Laplace prior
 #'   (small value; concentrates inactive features near zero).
-#' @param pi Numeric scalar or vector broadcastable to length \eqn{p}.
-#'   Current global mixture probability — the prior probability that any
+#' @param pips Numeric vector of length \eqn{p}.
+#'   Set of current prior probability that any
 #'   given feature is active (\eqn{\pi = \Pr(\gamma_j = 1)}).
 #' @param betas Numeric vector of length \eqn{p}. Current coefficient
 #'   estimates \eqn{\hat{\beta}} from the previous M-step.
+#' @param exact If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.
 #'
 #' @returns Numeric vector of length \eqn{p}. Posterior inclusion
 #'   probability \eqn{E[\gamma_j \mid \beta_j]} for each feature; values
@@ -29,18 +30,31 @@
 #' betas <- c(0.5, 0.0, -0.3, 0.0, 0.1)
 #' expected_inclusion_probs(s1 = 0.5, s0 = 0.04, pi = 0.1, betas = betas)
 #' }
-expected_inclusion_probs <- function(s1, s0, pi, betas) {
+expected_inclusion_probs <- function(s1, s0, pi, betas,
+                                     exact = FALSE) {
 
-  #p(betaj | gammaj = 1, s1)
-  dens_Slab <- dlaplace(betas, mu = 0, b = s1)
-  #p(betaj | gammaj = 0, s0)
-  dens_Spike <- dlaplace(betas, mu = 0, b = s0)
 
-  #p(gammaj = 1 | pi)
-  #p(gammaj = 0 | pi)
-  prior_Slab <- pi
-  prior_Spike <- 1-pi
+  # #p(betaj | gammaj = 1, s1)
+  # dens_Slab <- dlaplace(betas, mu = 0, b = s1)
+  # #p(betaj | gammaj = 0, s0)
+  # dens_Spike <- dlaplace(betas, mu = 0, b = s0)
+  #
+  # #p(gammaj = 1 | pi)
+  # #p(gammaj = 0 | pi)
+  # prior_Slab <- pi
+  # prior_Spike <- 1-pi
+  #
+  # dens_Slab * prior_Slab / (dens_Spike * prior_Spike + dens_Slab * prior_Slab)
 
-  dens_Slab * prior_Slab / (dens_Spike * prior_Spike + dens_Slab * prior_Slab)
+  thetas <- leave_one_out_mean(pips)
+    ret <- NULL
+    for(x in 1:length(betas)){
+      denom <- 1 + (1-thetas[x])/thetas[x] *
+        (s1/s0)*exp(-abs(betas[x])*(1/s0-1/s1))
+      ret[x]<- 1/denom
+    }
+    ret
 }
+
+
 

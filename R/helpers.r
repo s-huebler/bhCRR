@@ -78,3 +78,7 @@ rlaplace <- function(n, mu = 0, b = 1) {
   u <- runif(n)
   qlaplace(u, mu = mu, b = b)
 }
+
+leave_one_out_mean <- function(x) {
+  (sum(x) - x) / (length(x) - 1)
+}
