@@ -30,7 +30,7 @@
 #' betas <- c(0.5, 0.0, -0.3, 0.0, 0.1)
 #' expected_inclusion_probs(s1 = 0.5, s0 = 0.04, pi = 0.1, betas = betas)
 #' }
-expected_inclusion_probs <- function(s1, s0, pi, betas,
+expected_inclusion_probs <- function(s1, s0, pips, betas,
                                      exact = FALSE) {
 
 

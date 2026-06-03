@@ -22,6 +22,8 @@
 #' @param epsilon Numeric. Convergence threshold: iteration stops when the
 #'   relative change in log-likelihood falls below this value (after at
 #'   least 5 iterations). Default \code{1e-04}.
+#' @param init_lam_path Numeric sequence vector. Path to define global shrinkage parameter for the initializing model.
+#' @param fixed_global_shrinkage NULL or numeric. If not null, the global shrinkage parameter is coerced to the supplied value for each step in the model.
 #'
 #' @returns A \code{fastCrrp} model object augmented with additional fields:
 #'   \describe{
@@ -52,138 +54,130 @@ fit_ssl_psdh <- function(x, y,
                          ss=c(0.04, 0.5),
                          initial_sparsity = 0.05,
                          maxit = 50,
-                         epsilon=1e-04){
+                         epsilon=1e-04,
+                         init_lam_path = 10^seq(log10(0.1),
+                                                log10(0.001),
+                                                length = 25),
+                         fixed_global_shrinkage = NULL){
 
   .dedupe_warnings({
 
-  ss0 <- ss[1]
-  ss1 <- ss[2]
+    ss0 <- ss[1]
+    ss1 <- ss[2]
 
-  #Initial penalty weights
-  current_mixture_prob <- rep(initial_sparsity, ncol(x))
-  init_mixture_scale <- (1-current_mixture_prob)*ss0+current_mixture_prob*ss1
-
-  current_penalty_weights <- 1/init_mixture_scale
-
-
-  #Initial betas
-  init_lambda <- mean(current_penalty_weights)/length(y[,2])/ncol(x)
-  #print(init_lambda)
-  init_mod <- update_betas(penalty_weights = current_penalty_weights,
-                           timing_vector = y[,1],
-                           status_vector = y[,2],
-                           feature_matrix = x,
-                           cencode_num = 0,
-                           failcode_num = 1,
-                           lambda = init_lambda)
-  current_betas <- init_mod$coef
-  #print(current_betas)
-
-  #Initial likelihood
-  devold <- 0
-
-  overfit_count <- 0
-  for(iter in 1:maxit){
-
-    # Temp resets incase deviance > 99
-    if(iter > 1){
-      temp_inclusion_probs <- current_inclusion_probs
-      temp_betas <- current_betas
-      temp_mixture_prob <- current_mixture_prob
-      temp_penalty_weights <- current_penalty_weights
-      temp_mod <- mod
-      temp_devold <- devold
-    }
-
-
-    # E-Step
-    # Update inclusion probabilites (gamma_j)
-
-
-    current_inclusion_probs <- expected_inclusion_probs(ss1, ss0,
-                                                        current_mixture_prob,
-                                                        current_betas)
-
-    # Update penalty weights (inverse S_j)
-    # NOTE: expected_penalty_weights() takes (s1, s0, p) — slab first, then
-    # spike — matching expected_inclusion_probs(). Passing (ss0, ss1, ...) here
-    # silently inverts the prior: features with high inclusion probability get
-    # the spike penalty (huge) and inactive features get the slab penalty.
-    current_penalty_weights <- expected_penalty_weights(ss1, ss0,
+    #Initial penalty weights
+     ##expected inclusion probs all equal to initial sparsity
+    current_mixture_prob <- initial_sparsity
+    current_inclusion_probs <- rep(initial_sparsity, ncol(x))
+    current_penalty_weights <- expected_penalty_weights(ss1,
+                                                        ss0,
                                                         current_inclusion_probs)
 
 
-   # print(paste("Iteration", iter, ":"))
-    #print("Betas")
-    #print(current_betas)
-    # print("Inclusion probs")
-    #  print(current_inclusion_probs)
-    #  print("Penalty weights")
-   #   print(current_penalty_weights)
 
-    # M-Step
-    # Update mixture prob (pi)
-    current_mixture_prob <- mean(current_inclusion_probs)
+    #Initial model with non-adaptive lasso
+    init_mod_search <- cv_fastCrrp(x, y[,1], y[,2], k = 5,
+                                   penalty = "LASSO",
+                                   lambda_path = init_lam_path,
+                                   tuning = "wolbers",
+                                   eval_quantile = 0.5)
+    current_lambda <- init_mod_search$lambda_min
 
-    # Update betas
-    Pf <- ifelse(abs(current_penalty_weights) < 1e-10, 1e-10, current_penalty_weights)
-    current_lambda <- sum(Pf)/(nrow(x) * ncol(x))
-    mod <- update_betas(Pf,
-                        y[,1], y[,2], x,
-                        cencode_num = 0,
-                        failcode_num = 1,
-                        lambda = current_lambda)
-
-    current_betas <- mod$coef
+    init_mod <- fastcmprsk::fastCrrp(
+      Crisk(
+        y[,1],
+        y[,2],
+        cencode = 0,
+        failcode = 1
+      ) ~ x,
+      penalty = "LASSO",
+      lambda = current_lambda
+    )
+    current_betas <- init_mod$coef
 
 
+    #Initial likelihood
+    devold <- 0
 
-    logLik <- mod$logLik
-    # # Overfit check
-    if(1-logLik/mod$logLik.null > 0.98 & overfit_count < 10 & iter > 1){
-      current_inclusion_probs <- temp_inclusion_probs
-      current_betas <- temp_betas
-      current_mixture_prob <- temp_mixture_prob
-      current_penalty_weights <- temp_penalty_weights
-      mod <- temp_mod
-      devold <- temp_devold
+    outer_convergence <- FALSE
+    iterations <- 0
+    for(iter in 1:maxit){
 
-      overfit_count <- overfit_count + 1
-    }
 
-    # # Convergence check (using log-likelihood)
 
-    if(abs(logLik - devold)/(0.1 + abs(logLik)) < epsilon & iter > 5) {
-      if(overfit_count<10){
-      conv <- TRUE
-      break
-      }else{
-        conv <- TRUE
-        print("Overfitting reset over 10")
+      # E-Step
+      # Update inclusion probabilites (gamma_j)
+
+
+      current_inclusion_probs <- expected_inclusion_probs(ss1, ss0,
+                                                        current_inclusion_probs,
+                                                        current_betas)
+
+
+
+      # Update penalty weights (inverse S_j)
+      current_penalty_weights <- expected_penalty_weights(ss1,
+                                                       ss0,
+                                                       current_inclusion_probs)
+      penalties <- ifelse(abs(current_penalty_weights) < 1e-10,
+                          1e-10,
+                          current_penalty_weights)
+
+
+
+
+      # M-Step
+      # Update mixture prob (pi)
+      current_mixture_prob <- mean(current_inclusion_probs)
+
+
+      # Update shrinkage (lambda)
+      current_lambda <- 1/(ncol(x)*nrow(x))
+      if(!is.null(fixed_global_shrinkage)){
+        current_lambda <- fixed_global_shrinkage}
+
+
+
+      # Update regression coefficients (betas)
+      mod <- update_betas(penalties,
+                          y[,1], y[,2], x,
+                          cencode_num = 0,
+                          failcode_num = 1,
+                          lambda = current_lambda)
+
+      current_betas <- mod$coef
+
+      logLik <- mod$logLik
+
+      # # Convergence check (using log-likelihood)
+
+      if(iter > 5 && abs(logLik - devold)/(0.1 + abs(logLik)) < epsilon) {
+        outer_convergence <- TRUE
         break
       }
-    }
-    devold <- logLik
+      devold <- logLik
+      iterations <- iterations+1
 
 
-  }#end iter loop
+    }#end iter loop
 
-  coefficients_df <- data.frame("Variable" = colnames(x),
-                                "Estimate" = mod$coef)
+    coefficients_df <- data.frame("Variable" = colnames(x),
+                                  "Estimate" = mod$coef)
 
+    ret <- list()
+    ret$x <- x
+    ret$y <- y
+    ret$coefficients <- coefficients_df
+    ret$penalty.factor <- penalties
+    ret$lambda <- mod$lambda.path
+    ret$ss <- ss
+    ret$conv <- outer_convergence
+    ret$iterations <- iterations
+    ret$pips <- current_inclusion_probs
+    ret$final_model_object <-mod
 
-  mod$x <- x
-  mod$y <- y
-  mod$coefficients <- coefficients_df
-  mod$penalty.factor <- Pf
-  mod$lambda <- mod$lambda.path
-  mod$ss <- ss
-
-  return(mod)
+    return(ret)
 
   })
 
 }
-
-
-

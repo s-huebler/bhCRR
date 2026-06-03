@@ -35,7 +35,7 @@
 predict_from_ssl_psdh <- function(object, newx, prediction_time) {
 
   # 1) Calculate linear predictor
-  beta <- as.vector(object$coef)
+  beta <- as.vector(object$final_model_object$coef)
   lp <- as.vector(newx %*% beta)
 
   # 2) Extract baseline cumulative hazard

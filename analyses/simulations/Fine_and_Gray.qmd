@@ -7,6 +7,7 @@ editor: visual
 ```{r}
 library(tidyverse)
 library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+library(survival)
 ```
 
 ```{r}
@@ -22,6 +23,7 @@ source("/Users/sophiehuebler/Documents/bhCRR/R/measure_ssl_psdh.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
 source("/Users/sophiehuebler/Documents/bhCRR/R/dedupe_warnings.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/cv_fastCrrp.r")
 ```
 
 # Framework:
@@ -46,79 +48,214 @@ This is an excellent case for a high dimensional competing risks model based on 
 
 -   We acknowledging that there is likely to be bias that would arise by treating censored patients and patients who fail from transplant outcomes event identically, but we do not have the microbiome data to model the failure from transplant outcomes.
 
-# Easiest Scenario:
+# Simulating Easy Scenarios:
 
 We'll use the simulation tool from the fast comp risk package. The design matrix is simulated from a multivariate normal (0,1) in 5 dimensions. We make umin=umax for administrative censoring, and currently we don't allow censoring so we make it much larger than the event time.
 
 ```{r}
-set.seed(3149)
-easy_sim <- simulateTwoCauseFineGrayModel(nobs = 50,
-                                          beta1 = c(0.40, - 0.50, 0.60, 0.75, - 0.80),# 0, 0, 0, 0, 0),
-                                          beta2 = c(0, 0.3, 0, 0, -0.2),#, 0, 0 , 0, 0 ,0 ),
+easy_sim <- function(nobs, beta1, beta2){
+  sim <- simulateTwoCauseFineGrayModel(nobs = 50,
+                                          beta1 = beta1,
+                                          beta2 = beta2,
                                           X = NULL,
                                           u.min = 100,
                                           u.max = 100,
                                           p = 0.5,
                                           returnX = TRUE)
-
-compare_betas <- data.frame(Name = c("B1", "B2", "B3", "B4", "B5"),#, "B6", "B7", "B8", "B9", "B10"),
-                            True_beta = c(0.40, - 0.50, 0.60, 0.75, - 0.80)#,
-                                          #0,0,0,0,0)
-                            )
-
-easy_sim_data <- cbind(data.frame(ID = 1:50,
-                            TTE = easy_sim$ftime,
-                            Status = factor(easy_sim$fstatus)),
-                       easy_sim$X)
-names(easy_sim_data)[4:8]<- c("X1", "X2", "X3", "X4", "X5")#, "X6", "X7", "X8", "X9", "X10")
-
-x <- as.matrix(easy_sim_data %>%select(starts_with("X")))
-y <- as.matrix(easy_sim_data %>%
+  
+  sim_data <- cbind(data.frame(ID = nobs,
+                            TTE = sim$ftime,
+                            Status = as.integer(sim$fstatus)),
+                       sim$X)
+  
+  names(sim_data)<- c("ID", "TTE", "Status", paste0("X_", 1:(ncol(sim_data)-3)))
+  
+  x <- as.matrix(sim_data %>%select(starts_with("X")))
+  y <- as.matrix(sim_data %>%
   mutate(Status = as.numeric(Status))%>%
   select(TTE, Status))
+  
+  return(list("dataframe" = sim_data,
+              "x" = x,
+              "y" = y))
+}
+```
 
-ggplot(easy_sim_data, aes(x = TTE, group = Status))+
-  geom_density(aes(color = Status))+
+```{r}
+set.seed(3149)
+p5 <- easy_sim(50,
+               c(0.40, - 0.50, 0.60, 0.75, - 0.80),
+               c(0, 0.3, 0, 0, -0.2)
+               )
+
+p5_comparisons <- data.frame(Name = c("B1", "B2", "B3", "B4", "B5"),
+                             True_beta = c(0.40, - 0.50, 0.60, 0.75, - 0.80))
+
+p10 <- easy_sim(50,
+               c(0.40, - 0.50, 0.60, 0.75, - 0.80, 0, 0, 0, 0, 0),
+               c(0, 0.3, 0, 0, -0.2, 0, 0, 0, 0, 0)
+               )
+
+p10_comparisons <- data.frame(Name = c("B1", "B2", "B3", "B4", "B5", 
+                                       "B6", "B7", "B8", "B9", "B10"),
+                            True_beta = c(0.40, - 0.50, 0.60, 0.75, - 0.80, 0, 0, 0, 0, 0)
+                            )
+```
+
+```{r}
+
+
+ggplot(p5$dataframe, aes(x = TTE, group = as.factor(Status)))+
+  geom_density(aes(color = as.factor(Status)))+
   scale_color_manual(name = "Failure",
                      labels = c("Primary",
                                 "Competing"),
                      values = c("red", "blue"))+
   xlab("Time to Event")+
-  ylab("Density")
+  ylab("Density")+
+  ggtitle("P5 Scenario (5 active predictors)")
+
+ggplot(p10$dataframe, aes(x = TTE, group = as.factor(Status)))+
+  geom_density(aes(color = as.factor(Status)))+
+  scale_color_manual(name = "Failure",
+                     labels = c("Primary",
+                                "Competing"),
+                     values = c("red", "blue"))+
+  xlab("Time to Event")+
+  ylab("Density")+
+  ggtitle("P10 Scenario (5 active predictors, 5 inactive predictors)")
 ```
+
+# Functions
+
+## Viz
+
+```{r}
+viz_comparison <- function(comp_df, viztype = "full"){
+  if(viztype == "full"){
+  df <- comp_df %>%
+    pivot_longer(cols = -Name,
+               names_to = "Model",
+               values_to = "Estimate")%>%
+  mutate(Model_Type = case_when(Model %in% c("True_beta", "Fg") ~ Model,
+                                Model %in% c("fstcmp_minPenalty",
+                                             "fstcmp_normalTuned",
+                                             "fstcmp_wolbersTuned") ~ "FastCmp",
+                                Model %in% c("ssl_minPenalty",
+                                             "ssl_normalTuned",
+                                             "ssl_wolbersTuned")~ "SSL"))%>%
+  mutate(Tuning_Type = case_when(Model %in% c("True_beta", "Fg") ~ "None",
+                                 Model %in% c("fstcmp_minPenalty",
+                                              "ssl_minPenalty") ~ "Known Sparsity",
+                                Model %in% c("fstcmp_normalTuned",
+                                             "ssl_normalTuned") ~ "C-index",
+                                Model %in% c("ssl_wolbersTuned",
+                                             "fstcmp_wolbersTuned")~ "Wolbers")) %>%
+  mutate(Model = factor(Model,
+                        levels = c("True_beta", "Fg",
+                                  "fstcmp_minPenalty",
+                                             "fstcmp_normalTuned",
+                                             "fstcmp_wolbersTuned",
+                                  "ssl_minPenalty",
+                                             "ssl_normalTuned",
+                                             "ssl_wolbersTuned"),
+                        labels = c("True", "Fine-Gray",
+                                   "FastCmp: Known Sparsity",
+                                   "FastCmp: Cindex",
+                                   "FastCmp: Wolbers",
+                                   "SSL: Known Sparsity",
+                                   "SSL: Cindex",
+                                   "SSL: Wolbers")))
+  
+  true_vals <- df %>%
+  filter(Model_Type == "True_beta") %>%
+  select(Name, TrueValue = Estimate)
+
+  p <- ggplot(df ,
+       aes(x = Model, y = Estimate, color = Name)) +
+  geom_point() +
+  geom_hline(data = true_vals,
+             aes(yintercept = TrueValue, color = Name),
+             linetype = "dotted") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }else if(viztype == "difference"){
+   df <- comp_df %>%
+  pivot_longer(cols = -c(Name, True_beta),
+               names_to = "Model",
+               values_to = "Estimate")%>%
+  mutate(Model_Type = case_when(Model %in% c( "Fg") ~ Model,
+                                Model %in% c("fstcmp_minPenalty",
+                                             "fstcmp_normalTuned",
+                                             "fstcmp_wolbersTuned") ~ "FastCmp",
+                                Model %in% c("ssl_minPenalty",
+                                             "ssl_normalTuned",
+                                             "ssl_wolbersTuned")~ "SSL"))%>%
+  mutate(Tuning_Type = case_when(Model %in% c( "Fg") ~ "None",
+                                 Model %in% c("fstcmp_minPenalty",
+                                              "ssl_minPenalty") ~ "Known Sparsity",
+                                Model %in% c("fstcmp_normalTuned",
+                                             "ssl_normalTuned") ~ "C-index",
+                                Model %in% c("ssl_wolbersTuned",
+                                             "fstcmp_wolbersTuned")~ "Wolbers")) %>%
+  mutate(Model = factor(Model,
+                        levels = c( "Fg",
+                                  "fstcmp_minPenalty",
+                                             "fstcmp_normalTuned",
+                                             "fstcmp_wolbersTuned",
+                                  "ssl_minPenalty",
+                                             "ssl_normalTuned",
+                                             "ssl_wolbersTuned"),
+                        labels = c( "Fine-Gray",
+                                   "FastCmp: Known Sparsity",
+                                   "FastCmp: Cindex",
+                                   "FastCmp: Wolbers",
+                                   "SSL: Known Sparsity",
+                                   "SSL: Cindex",
+                                   "SSL: Wolbers")))%>%
+  mutate(Error = True_beta -Estimate)
+   
+  p <-  ggplot(df, aes(x = Model, y = Error, color = Name))+
+  geom_point()+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  
+  }
+  
+  p
+}
+```
+
+# P5
 
 ## Fine and Gray
 
 ```{r}
-# Install survival package if you haven't already: install.packages("survival")
-library(survival)
 
 # 1. Convert Status to a factor for the multi-state model.
 # CRITICAL: 0 (censored) must be the first level.
-easy_sim_data$Status_factor <- factor(easy_sim_data$Status, 
+p5$dataframe$Status_factor <- factor(p5$dataframe$Status, 
                            levels = c(0, 1, 2), 
                            labels = c("censor", "event", "competing"))
 
 # 2. Restructure the dataset for the Fine-Gray model
 # 'etype="event"' tells R that Status=1 is our risk of interest
-fg_data <- finegray(Surv(TTE, Status_factor) ~ ., data = easy_sim_data, etype = "event")
+p5_fg_data <- finegray(Surv(TTE, Status_factor) ~ ., data = p5$dataframe, etype = "event")
 
 # 3. Fit the model using coxph()
 # finegray() automatically creates 'fgstart', 'fgstop', 'fgstatus', and weights ('fgwt')
-fg_model <- coxph(Surv(fgstart, fgstop, fgstatus) ~ X1 + X2 + X3 + X4 + X5, 
+p5_fg_model <- coxph(Surv(fgstart, fgstop, fgstatus) ~ X_1 + X_2 + X_3 + X_4 + X_5, 
                   weight = fgwt, 
-                  data = fg_data)
+                  data = p5_fg_data)
 
 # 4. View results
-summary(fg_model)
+summary(p5_fg_model)
 
 
 ```
 
 ```{r}
-compare_betas$Fg = fg_model$coefficients
+p5_comparisons$Fg = p5_fg_model$coefficients
 
-compare_betas
+p5_comparisons
 ```
 
 ## Fastcmprsk
@@ -130,138 +267,48 @@ We'll use the least penalized form of the model (lambda = 0.001).
 ```{r}
 
 
-fstcmp_minPenalty <- fastcmprsk::fastCrrp(
+p5_fstcmp_minPenalty <- fastcmprsk::fastCrrp(
     Crisk(
-      y[,1],
-      y[,2],
+      p5$y[,1],
+      p5$y[,2],
       cencode = 0,
       failcode = 1
-    ) ~ x,
+    ) ~ p5$x,
     penalty = "LASSO",
     lambda = 0.001
   )
 ```
 
 ```{r}
-compare_betas$fstcmp_minPenalty = as.vector(fstcmp_minPenalty$coef)
+p5_comparisons$fstcmp_minPenalty = as.vector(p5_fstcmp_minPenalty$coef)
 
-compare_betas
+p5_comparisons
 ```
 
 ### Tuning
-
-```{r}
-lam.path <- 10^seq(log10(0.1), log10(0.001), length = 25)
-
-
-#' K-Fold Cross Validation for fastCrrp (Updated for custom lambda paths & manual predictions)
-#'
-#' `tuning` selects the held-out performance metric:
-#'   - "normal"  : standard Harrell-style C-index via survival::concordance()
-#'                 on the linear predictor x_test %*% beta.
-#'   - "wolbers" : IPCW competing-risks C-index via measure_ssl_psdh(),
-#'                 evaluated at the `eval_quantile`-th quantile of the
-#'                 training event times.
-cv_fastCrrp <- function(x, time, status, k = 5, penalty = "LASSO",
-                        lambda_path = NULL, tuning = "normal",
-                        eval_quantile = 0.5) {
-
-  n <- nrow(x)
-  set.seed(42)
-  fold_ids <- sample(rep(1:k, length.out = n))
-
-  # 1. Fit the full model
-  fit_full <- fastCrrp(Crisk(time, status, cencode = 0, failcode = 1) ~ x,
-                       penalty = penalty,
-                       lambda  = lambda_path)
-
-  lambdas    <- fit_full$lambda
-  n_lambda   <- length(lambdas)
-  cv_metrics <- matrix(NA, nrow = k, ncol = n_lambda)
-
-  for (i in 1:k) {
-    test_idx <- which(fold_ids == i)
-
-    x_train      <- x[-test_idx, , drop = FALSE]
-    time_train   <- time[-test_idx]
-    status_train <- status[-test_idx]
-
-    x_test       <- x[test_idx, , drop = FALSE]
-    time_test    <- time[test_idx]
-    status_test  <- status[test_idx]
-
-    # 2. Fit training folds
-    fit_train <- fastCrrp(Crisk(time_train, status_train, cencode = 0, failcode = 1) ~ x_train,
-                          penalty = penalty,
-                          lambda  = lambdas)
-
-    # 3. MANUALLY CALCULATE PREDICTIONS (X %*% beta)
-    # x_test is (n_test x p), fit_train$coef is (p x n_lambda)
-    # The result is an (n_test x n_lambda) matrix of risk scores
-    pred_risk <- as.matrix(x_test) %*% as.matrix(fit_train$coef)
-
-    if (tuning == "normal") {
-      for (j in 1:n_lambda) {
-        risk_scores <- pred_risk[, j]
-        cv_metrics[i, j] <- tryCatch(
-          survival::concordance(
-            Surv(time_test, status_test == 1) ~ risk_scores
-          )$concordance,
-          error = function(e) NA_real_
-        )
-      }
-    } else if (tuning == "wolbers") {
-      eval_time  <- as.numeric(quantile(time_train, eval_quantile))
-      y_test_mat <- cbind(time_test, status_test)
-      for (j in 1:n_lambda) {
-        risk_scores <- pred_risk[, j]
-        cv_metrics[i, j] <- tryCatch(
-          measure_ssl_psdh(y_true          = y_test_mat,
-                           risk_score      = risk_scores,
-                           evaluation_time = eval_time),
-          error = function(e) NA_real_
-        )
-      }
-    } else {
-      stop("`tuning` must be 'normal' or 'wolbers'.")
-    }
-  }
-
-  mean_cv_metrics <- colMeans(cv_metrics, na.rm = TRUE)
-  opt_idx    <- which.max(mean_cv_metrics)
-  lambda_min <- lambdas[opt_idx[1]]
-
-  return(list(
-    lambda        = lambdas,
-    cv_c_index    = mean_cv_metrics,
-    lambda_min    = lambda_min,
-    full_model    = fit_full,
-    cv_raw_matrix = cv_metrics
-  ))
-}
-```
 
 #### Normal C-index
 
 This is straight from the survival package
 
 ```{r}
-fstcmp_normalTuned <- cv_fastCrrp(x = x, time = y[,1], status = y[,2],
+
+p5_fstcmp_normalTuned <- cv_fastCrrp(x = p5$x, time = p5$y[,1], status = p5$y[,2],
                             k = 5, penalty = "LASSO",
-                            lambda = lam.path,
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
                             tuning = "normal")
 
 # Extract your optimal lambda
-fstcmp_normalTuned_best_lambda <- fstcmp_normalTuned$lambda_min
+p5_fstcmp_normalTuned_best_lambda <- p5_fstcmp_normalTuned$lambda_min
 
 
 ```
 
 ```{r}
-compare_betas$fstcmp_normalTuned = as.vector(fstcmp_normalTuned$full_model$coef[, 
-                which(fstcmp_normalTuned$lambda == fstcmp_normalTuned_best_lambda)])
+p5_comparisons$fstcmp_normalTuned = as.vector(p5_fstcmp_normalTuned$full_model$coef[, 
+                which(p5_fstcmp_normalTuned$lambda == p5_fstcmp_normalTuned_best_lambda)])
 
-compare_betas
+p5_comparisons
 ```
 
 #### Wolbers C-index
@@ -269,188 +316,39 @@ compare_betas
 This is the time dependent competing risks aware c-index. We are evaluating at the median of event times.
 
 ```{r}
-fstcmp_wolbersTuned <- cv_fastCrrp(x = x, time = y[,1], status = y[,2],
+p5_fstcmp_wolbersTuned <- cv_fastCrrp(x = p5$x, time = p5$y[,1], status = p5$y[,2],
                             k = 5, penalty = "LASSO",
-                            lambda = lam.path,
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
                             tuning = "wolbers")
 
 # Extract your optimal lambda
-fstcmp_wolbersTuned_best_lambda <- fstcmp_wolbersTuned$lambda_min
+p5_fstcmp_wolbersTuned_best_lambda <- p5_fstcmp_wolbersTuned$lambda_min
 ```
 
 ```{r}
-compare_betas$fstcmp_wolbersTuned = as.vector(fstcmp_wolbersTuned$full_model$coef[, 
-                which(fstcmp_wolbersTuned$lambda == fstcmp_wolbersTuned_best_lambda)])
+p5_comparisons$fstcmp_wolbersTuned = as.vector(p5_fstcmp_wolbersTuned$full_model$coef[, 
+                which(p5_fstcmp_wolbersTuned$lambda == p5_fstcmp_wolbersTuned_best_lambda)])
 
-compare_betas
+p5_comparisons
 ```
 
 ## SSL
 
-```{r}
-fit_ssl_psdh2 <- function(x, y,
-                         ss=c(0.04, 0.5),
-                         initial_sparsity = 0.05,
-                         maxit = 50,
-                         epsilon=1e-04,
-                         my_lambda = NULL){
-
-  .dedupe_warnings({
-
-  ss0 <- ss[1]
-  ss1 <- ss[2]
-
-  #Initial penalty weights
-  current_mixture_prob <- rep(initial_sparsity, ncol(x))
-  init_mixture_scale <- (1-current_mixture_prob)*ss0+current_mixture_prob*ss1
-
-  current_penalty_weights <- 1/init_mixture_scale
-
-
-  #Initial betas
-  init_lambda <-1/sum(current_penalty_weights)
-    #sum(current_penalty_weights)/ncol(x)
-    #mean(current_penalty_weights)/length(y[,2])/ncol(x)
-  #print(init_lambda)
-  init_mod <- update_betas(penalty_weights = current_penalty_weights,
-                           timing_vector = y[,1],
-                           status_vector = y[,2],
-                           feature_matrix = x,
-                           cencode_num = 0,
-                           failcode_num = 1,
-                           lambda = init_lambda)
-  current_betas <- init_mod$coef
-  #print(current_betas)
-
-  #Initial likelihood
-  devold <- 0
-
-  outer_convergence <- FALSE
-  iterations <- 0
-  for(iter in 1:maxit){
-    print(paste("ITERATION:", iter))
-
-
-    # E-Step
-    # Update inclusion probabilites (gamma_j)
-
-
-    current_inclusion_probs <- expected_inclusion_alt(ss1, ss0,
-                                                        current_mixture_prob,
-                                                        current_betas)
-    print("Current_inclusion_probs")
-    print(current_inclusion_probs)
-
-    # Update penalty weights (inverse S_j)
-    # NOTE: expected_penalty_weights() takes (s1, s0, p) — slab first, then
-    # spike — matching expected_inclusion_probs(). Passing (ss0, ss1, ...) here
-    # silently inverts the prior: features with high inclusion probability get
-    # the spike penalty (huge) and inactive features get the slab penalty.
-    current_penalty_weights <- expected_penalty_weights(ss1, ss0,
-                                                        current_inclusion_probs)
-    
-    print("Current_penalty_weights")
-    print(current_penalty_weights)
-
-
-   # print(paste("Iteration", iter, ":"))
-    #print("Betas")
-    #print(current_betas)
-    # print("Inclusion probs")
-    #  print(current_inclusion_probs)
-    #  print("Penalty weights")
-   #   print(current_penalty_weights)
-
-    # M-Step
-    # Update mixture prob (pi)
-    current_mixture_prob <- mean(current_inclusion_probs)
-    
-    print("Current_mixture_prob")
-    print(current_mixture_prob)
-
-    # Update betas
-    penalties <- ifelse(abs(current_penalty_weights) < 1e-10, 1e-10, current_penalty_weights)
-    
-    print("penalties")
-    print(penalties)
-    current_lambda <- 1/sum(penalties)
-      #sum(penalties)/ncol(x)
-    
-    print("Current_lambda calculated")
-    print(current_lambda)
-      #sum(Pf)/(nrow(x) * ncol(x))
-    if(!is.null(my_lambda)){current_lambda <- my_lambda}
-    
-    print("Current_lambda used")
-    print(current_lambda)
-    mod <- update_betas(penalties,
-                        y[,1], y[,2], x,
-                        cencode_num = 0,
-                        failcode_num = 1,
-                        lambda = current_lambda)
-
-    current_betas <- mod$coef
-
-
-
-    
-    logLik <- mod$logLik
-
-    # # Convergence check (using log-likelihood)
-
-    if(iter > 5 && abs(logLik - devold)/(0.1 + abs(logLik)) < epsilon) {
-      outer_convergence <- TRUE
-      break
-    }
-    devold <- logLik
-    iterations <- iterations+1
-
-
-  }#end iter loop
-
-  coefficients_df <- data.frame("Variable" = colnames(x),
-                                "Estimate" = mod$coef)
-
-
-  mod$x <- x
-  mod$y <- y
-  mod$coefficients <- coefficients_df
-  mod$penalty.factor <- penalties
-  mod$lambda <- mod$lambda.path
-  mod$ss <- ss
-  mod$conv <- outer_convergence
-  mod$iterations <- iterations
-  mod$pips <- current_inclusion_probs
-
-  return(mod)
-
-  })
-
-}
-```
-
 ### Known sparsity
 
-Similarly, we'll use the least penalized form of the model.
+Similarly, we'll use the least penalized form of the model. We could do this either by fixing the global shrinkage to that of what we saw in the fastcmprsk, or we can just set the hyperparameter scales to extreme values. We'll set the hyperparameter scales to extreme values here.
 
 ```{r}
-ssl_minPenalty <- fit_ssl_psdh2(x,y, ss = c(0.01, 0.9),
+p5_ssl_minPenalty <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 1),
                             initial_sparsity = 0.5,
-                            my_lambda = fstcmp_minPenalty$lambda.path)
+                            fixed_global_shrinkage  = p5_fstcmp_minPenalty$lambda.path)
 ```
 
 ```{r}
 
+p5_comparisons$ssl_minPenalty = as.vector(p5_ssl_minPenalty$final_model_object$coef)
 
-ssl_minPenalty2 <- fit_ssl_psdh2(x,y, ss = c(0.01, 0.9),
-                            initial_sparsity = 0.5,
-                            my_lambda = NULL)
-```
-
-```{r}
-compare_betas$ssl_minPenalty = as.vector(ssl_minPenalty$coef)
-
-compare_betas
+p5_comparisons
 ```
 
 ### Tuning
@@ -463,10 +361,10 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
                           s0_seq = seq(0.005, 0.1, length.out = 20),
                           s1_seq = seq(0.5,   0.9, length.out = 10),
                           nfolds = 10,
-                          my_lambda = NULL) {
+                          fixed_global_shrinkage = NULL) {
   x <- as.matrix(x)
   y <- as.matrix(y)
-  fit <- fit_ssl_psdh2(x, y, initial_sparsity = init_sparsity, my_lambda = my_lambda)
+  fit <- fit_ssl_psdh(x, y, initial_sparsity = init_sparsity, fixed_global_shrinkage = fixed_global_shrinkage)
 
   if (tuning == "wolbers") {
     tunes <- tryCatch(
@@ -505,17 +403,17 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
           x_train  <- as.matrix(x[-omit_idx, , drop = FALSE])
 
           sub_fit <- try(suppressWarnings(
-            fit_ssl_psdh2(x = x_train, y = y_train,
+            fit_ssl_psdh(x = x_train, y = y_train,
                          ss = c(s0_p, s1_p),
                          initial_sparsity = init_sparsity,
                          maxit = 50, epsilon = 1e-04,
-                         my_lambda = my_lambda)
+                         fixed_global_shrinkage = fixed_global_shrinkage)
           ), silent = TRUE)
           if (inherits(sub_fit, "try-error")) next
 
           x_test <- x[omit_idx, , drop = FALSE]
           lp_all[omit_idx] <- as.vector(
-            x_test %*% as.vector(sub_fit$coef)
+            x_test %*% as.vector(sub_fit$final_model_object$coef)
           )
         }
 
@@ -545,10 +443,10 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
 
   #print(tunes)
 
-  final_fit <- fit_ssl_psdh2(x, y,
+  final_fit <- fit_ssl_psdh(x, y,
                             ss = c(max_tune$s0[1], max_tune$s1[1]),
                             initial_sparsity = init_sparsity,
-                            my_lambda = my_lambda)
+                            fixed_global_shrinkage = fixed_global_shrinkage)
 
   final_fit
 }
@@ -557,159 +455,130 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
 #### Normal C-index
 
 ```{r}
-ssl_normalTuned <- psdh_ssl_func(easy_sim_data %>%
-                           select(starts_with("X")),
-                         easy_sim_data %>%
-                           mutate(Status = as.numeric(Status))%>%
-                           select(TTE, Status), init_sparsity = 0.5,
-                         ncv_count = 1,
-                         tuning = "normal",
-                         my_lambda = fstcmp_normalTuned$lambda_min)
+p5_ssl_normalTuned <- psdh_ssl_func( p5$x, p5$y, 0.5, 1,
+                          tuning = "normal",
+                          s0_seq = seq(0.005, 0.1, length.out = 20),
+                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL)
 ```
 
 ```{r}
-compare_betas$ssl_normalTuned = as.vector(ssl_normalTuned$coef)
+p5_comparisons$ssl_normalTuned = as.vector(p5_ssl_normalTuned$final_model_object$coef)
 
-compare_betas
+p5_comparisons
 ```
 
 #### Wolbers C-index
 
 ```{r}
-ssl_wolbersTuned <- psdh_ssl_func(easy_sim_data %>%
-                           select(starts_with("X")),
-                         easy_sim_data %>%
-                           mutate(Status = as.numeric(Status))%>%
-                           select(TTE, Status), init_sparsity = 0.5,
-                         ncv_count = 1,
-                         tuning = "wolbers",
-                         my_lambda = fstcmp_wolbersTuned_best_lambda)
+
+p5_ssl_wolbersTuned <- psdh_ssl_func( p5$x, p5$y, 0.5, 1,
+                          tuning = "wolbers",
+                          s0_seq = seq(0.005, 0.1, length.out = 20),
+                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL)
 ```
 
 ```{r}
-compare_betas$ssl_wolbersTuned = as.vector(ssl_wolbersTuned$coef)
+p5_comparisons$ssl_wolbersTuned = as.vector(p5_ssl_wolbersTuned$final_model_object$coef)
 
-compare_betas
+p5_comparisons
 ```
 
-# Visualizing
+## Visualizing
 
 ```{r}
-viz_betas <- compare_betas %>%
-  pivot_longer(cols = -Name,
-               names_to = "Model",
-               values_to = "Estimate")%>%
-  mutate(Model_Type = case_when(Model %in% c("True_beta", "Fg") ~ Model,
-                                Model %in% c("fstcmp_minPenalty",
-                                             "fstcmp_normalTuned",
-                                             "fstcmp_wolbersTuned") ~ "FastCmp",
-                                Model %in% c("ssl_minPenalty",
-                                             "ssl_normalTuned",
-                                             "ssl_wolbersTuned")~ "SSL"))%>%
-  mutate(Tuning_Type = case_when(Model %in% c("True_beta", "Fg") ~ "None",
-                                 Model %in% c("fstcmp_minPenalty",
-                                              "ssl_minPenalty") ~ "Known Sparsity",
-                                Model %in% c("fstcmp_normalTuned",
-                                             "ssl_normalTuned") ~ "C-index",
-                                Model %in% c("ssl_wolbersTuned",
-                                             "fstcmp_wolbersTuned")~ "Wolbers")) %>%
-  mutate(Model = factor(Model,
-                        levels = c("True_beta", "Fg",
-                                  "fstcmp_minPenalty",
-                                             "fstcmp_normalTuned",
-                                             "fstcmp_wolbersTuned",
-                                  "ssl_minPenalty",
-                                             "ssl_normalTuned",
-                                             "ssl_wolbersTuned"),
-                        labels = c("True", "Fine-Gray",
-                                   "FastCmp: Known Sparsity",
-                                   "FastCmp: Cindex",
-                                   "FastCmp: Wolbers",
-                                   "SSL: Known Sparsity",
-                                   "SSL: Cindex",
-                                   "SSL: Wolbers")))
-
-head(viz_betas)
+viz_comparison(p5_comparisons, viztype = "full")
+viz_comparison(p5_comparisons, viztype = "difference")
 ```
 
-```{r}
-true_vals <- viz_betas %>%
-  filter(Model_Type == "True_beta") %>%
-  select(Name, TrueValue = Estimate)
+# P10
 
-ggplot(viz_betas ,
-       aes(x = Model, y = Estimate, color = Name)) +
-  geom_point() +
-  geom_hline(data = true_vals,
-             aes(yintercept = TrueValue, color = Name),
-             linetype = "dotted") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```{r}
+
+####################FINE AND GRAY ##########################################################
+p10$dataframe$Status_factor <- factor(p10$dataframe$Status, 
+                           levels = c(0, 1, 2), 
+                           labels = c("censor", "event", "competing"))
+
+
+p10_fg_data <- finegray(Surv(TTE, Status_factor) ~ ., data = p10$dataframe, etype = "event")
+
+
+p10_fg_model <- coxph(Surv(fgstart, fgstop, fgstatus) ~ X_1 + X_2 + X_3 + X_4 + X_5 +
+                       X_6 + X_7 + X_8 + X_9 + X_10, 
+                  weight = fgwt, 
+                  data = p10_fg_data)
+p10_comparisons$Fg = p10_fg_model$coefficients
+
+####################FASTCMPRSK ##########################################################
+####################NO SPARSITY
+p10_fstcmp_minPenalty <- fastcmprsk::fastCrrp(
+    Crisk(
+      p10$y[,1],
+      p10$y[,2],
+      cencode = 0,
+      failcode = 1
+    ) ~ p10$x,
+    penalty = "LASSO",
+    lambda = 0.001
+  )
+p10_comparisons$fstcmp_minPenalty = as.vector(p10_fstcmp_minPenalty$coef)
+
+####################NORMAL
+p10_fstcmp_normalTuned <- cv_fastCrrp(x = p10$x, time = p10$y[,1], status = p10$y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
+                            tuning = "normal")
+
+p10_fstcmp_normalTuned_best_lambda <- p10_fstcmp_normalTuned$lambda_min
+p10_comparisons$fstcmp_normalTuned = as.vector(p10_fstcmp_normalTuned$full_model$coef[, 
+                which(p10_fstcmp_normalTuned$lambda == p10_fstcmp_normalTuned_best_lambda)])
+
+
+####################WOLBERS
+p10_fstcmp_wolbersTuned <- cv_fastCrrp(x = p10$x, time = p10$y[,1], status = p10$y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
+                            tuning = "wolbers")
+p10_fstcmp_wolbersTuned_best_lambda <- p10_fstcmp_wolbersTuned$lambda_min
+p10_comparisons$fstcmp_wolbersTuned = as.vector(p10_fstcmp_wolbersTuned$full_model$coef[, 
+                which(p10_fstcmp_wolbersTuned$lambda == p10_fstcmp_wolbersTuned_best_lambda)])
+
+
+####################SSL ##########################################################
+####################NO SPARSITY
+p10_ssl_minPenalty <- fit_ssl_psdh(p10$x,p10$y, ss = c(0.001, 1),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = p10_fstcmp_minPenalty$lambda.path)
+p10_comparisons$ssl_minPenalty = as.vector(p10_ssl_minPenalty$final_model_object$coef)
+
+####################NORMAL
+p10_ssl_normalTuned <- psdh_ssl_func( p10$x, p10$y, 0.5, 1,
+                          tuning = "normal",
+                          s0_seq = seq(0.005, 0.1, length.out = 20),
+                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL)
+p10_comparisons$ssl_normalTuned = as.vector(p10_ssl_normalTuned$final_model_object$coef)
+
+####################WOLBERS
+p10_ssl_wolbersTuned <- psdh_ssl_func( p10$x, p10$y, 0.5, 1,
+                          tuning = "wolbers",
+                          s0_seq = seq(0.005, 0.1, length.out = 20),
+                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL)
+p10_comparisons$ssl_wolbersTuned = as.vector(p10_ssl_wolbersTuned$final_model_object$coef)
+
+p10_comparisons
 ```
 
-```{r}
-viz2_betas <- compare_betas %>%
-  pivot_longer(cols = -c(Name, True_beta),
-               names_to = "Model",
-               values_to = "Estimate")%>%
-  mutate(Model_Type = case_when(Model %in% c( "Fg") ~ Model,
-                                Model %in% c("fstcmp_minPenalty",
-                                             "fstcmp_normalTuned",
-                                             "fstcmp_wolbersTuned") ~ "FastCmp",
-                                Model %in% c("ssl_minPenalty",
-                                             "ssl_normalTuned",
-                                             "ssl_wolbersTuned")~ "SSL"))%>%
-  mutate(Tuning_Type = case_when(Model %in% c( "Fg") ~ "None",
-                                 Model %in% c("fstcmp_minPenalty",
-                                              "ssl_minPenalty") ~ "Known Sparsity",
-                                Model %in% c("fstcmp_normalTuned",
-                                             "ssl_normalTuned") ~ "C-index",
-                                Model %in% c("ssl_wolbersTuned",
-                                             "fstcmp_wolbersTuned")~ "Wolbers")) %>%
-  mutate(Model = factor(Model,
-                        levels = c( "Fg",
-                                  "fstcmp_minPenalty",
-                                             "fstcmp_normalTuned",
-                                             "fstcmp_wolbersTuned",
-                                  "ssl_minPenalty",
-                                             "ssl_normalTuned",
-                                             "ssl_wolbersTuned"),
-                        labels = c( "Fine-Gray",
-                                   "FastCmp: Known Sparsity",
-                                   "FastCmp: Cindex",
-                                   "FastCmp: Wolbers",
-                                   "SSL: Known Sparsity",
-                                   "SSL: Cindex",
-                                   "SSL: Wolbers")))%>%
-  mutate(Error = True_beta -Estimate)
-```
+## Visualizing
 
 ```{r}
-ggplot(viz2_betas, aes(x = Model, y = Error, color = Name))+
-  geom_point()+
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  
-```
-
-# Trouble shooting
-
-## Function
-
-```{r}
-testing<-psdh_ssl_func(easy_sim_data %>%
-                           select(starts_with("X")),
-                         easy_sim_data %>%
-                           mutate(Status = as.numeric(Status))%>%
-                           select(TTE, Status), init_sparsity = 0.5,
-                         ncv_count = 1,
-                         tuning = "wolbers",
-                         my_lambda = NULL)
-```
-
-```{r}
-expected_inclusion_probs(0.5, 0.005, 0.05, c(.001,2,3, -10))
-expected_inclusion_alt(0.5, 0.005, 0.05, c(.001,2,3, -10))
-```
-
-```{r}
-expected_penalty
+viz_comparison(p10_comparisons, viztype = "full")
+viz_comparison(p10_comparisons, viztype = "difference")
 ```
