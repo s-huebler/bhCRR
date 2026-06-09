@@ -24,6 +24,15 @@
 #' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
 #'   global mixture probability (prior proportion of active features).
 #'   Default \code{0.05}.
+#' @param fixed_global_shrinkage \code{NULL} or a numeric matrix of
+#'   dimensions \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL}
+#'   (default) each fold tunes its own global shrinkage via the
+#'   \code{cv_fastCrrp} search inside \code{\link{fit_ssl_psdh}}. When a
+#'   matrix is supplied, entry \code{[k, i]} is passed as the fixed global
+#'   shrinkage for repetition \code{k}, fold \code{i}, skipping that search;
+#'   \code{NA} entries fall back to per-fold tuning. Used by
+#'   \code{\link{tune_ssl_psdh}} to reuse a tuned lambda across \code{s1}
+#'   values for a fixed \code{s0}.
 #'
 #' @returns A list with the following elements:
 #'   \describe{
@@ -44,6 +53,11 @@
 #'       \code{fit_ssl_psdh} failed (empty if all folds succeeded).}
 #'     \item{\code{n_failed}}{Total number of (rep, fold) pairs in
 #'       which \code{fit_ssl_psdh} failed.}
+#'     \item{\code{fold_lambdas}}{An \eqn{\code{ncv} \times \code{nfolds}}
+#'       matrix of the initial global shrinkage lambda used in each
+#'       (rep, fold) fit (\code{fit_ssl_psdh}'s \code{$tuned_lambda}).
+#'       \code{NA} where the fold failed. Can be fed back as
+#'       \code{fixed_global_shrinkage} to reuse the tuned values.}
 #'   }
 #'
 #' @importFrom stats quantile sd
@@ -59,7 +73,7 @@
 #' fols <- generate_foldid(nobs = nrow(x), nfolds = 5)
 #' cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
 #' }
-cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity) {
+cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity, fixed_global_shrinkage = NULL) {
   # Extract data
   y <- object$y
   x <- object$x
@@ -71,6 +85,8 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
   pooled_measures <- rep(NA_real_, ncv)
   fold_measures_list <- vector("list", ncv)
   failed_folds_list <- vector("list", ncv)
+  # Initial global shrinkage lambda actually used in each (rep, fold) fit
+  fold_lambdas <- matrix(NA_real_, nrow = ncv, ncol = nfolds)
 
   for (k in 1:ncv) {
     lp_all       <- rep(NA_real_, n)
@@ -85,12 +101,23 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
       y_train <- as.matrix(y[-omit_indices, ])
       x_train <- as.matrix(x[-omit_indices, , drop = FALSE])
 
+      # Per-fold fixed shrinkage: reuse a cached lambda when supplied (and
+      # not NA), otherwise let this fold tune its own via cv_fastCrrp.
+      fold_fixed <- if (is.null(fixed_global_shrinkage)) {
+        NULL
+      } else {
+        val <- fixed_global_shrinkage[k, i]
+        if (is.na(val)) NULL else val
+      }
+
       # RE-FIT (errors are captured rather than silenced so we can report them)
       suppressWarnings({
         fit <- try(fit_ssl_psdh(x = x_train, y = y_train, ss = c(s0, s1),
                                 initial_sparsity = initial_sparsity,
                                 maxit = 50,
-                                epsilon = 1e-04), silent = TRUE)
+                                epsilon = 1e-04,
+                                fixed_global_shrinkage = fold_fixed),
+                   silent = TRUE)
       })
 
       if (inherits(fit, "try-error")) {
@@ -101,6 +128,9 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
         failed <- c(failed, i)
         next  # try the remaining folds rather than aborting the repetition
       }
+
+      # Record the initial shrinkage lambda used by this fold for reuse
+      fold_lambdas[k, i] <- fit$tuned_lambda
 
       # PREDICT on hold-out set
       x_test  <- x[omit_indices, , drop = FALSE]
@@ -141,5 +171,6 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
        fold_scores   = fold_mat,
        fold_sd       = fold_sd_mean,
        failed_folds  = failed_folds_list,
-       n_failed      = sum(lengths(failed_folds_list)))
+       n_failed      = sum(lengths(failed_folds_list)),
+       fold_lambdas  = fold_lambdas)
 }

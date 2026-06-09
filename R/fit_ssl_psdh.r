@@ -23,7 +23,14 @@
 #'   relative change in log-likelihood falls below this value (after at
 #'   least 5 iterations). Default \code{1e-04}.
 #' @param init_lam_path Numeric sequence vector. Path to define global shrinkage parameter for the initializing model.
-#' @param fixed_global_shrinkage NULL or numeric. If not null, the global shrinkage parameter is coerced to the supplied value for each step in the model.
+#' @param fixed_global_shrinkage NULL or numeric. If not null, the global
+#'   shrinkage parameter is coerced to the supplied value for each step in the
+#'   model, AND the (expensive) \code{cv_fastCrrp} search for the initializing
+#'   model is skipped: the supplied value is used directly as the initial
+#'   lambda. The tuned initial lambda (whether searched or supplied) is
+#'   returned in \code{$tuned_lambda}, so callers can capture it from one fit
+#'   and reuse it via \code{fixed_global_shrinkage} on subsequent fits to avoid
+#'   re-running the search.
 #'
 #' @returns A \code{fastCrrp} model object augmented with additional fields:
 #'   \describe{
@@ -35,6 +42,11 @@
 #'       penalty weights from the last EM iteration.}
 #'     \item{\code{$lambda}}{Numeric. The LASSO tuning parameter used at
 #'       convergence.}
+#'     \item{\code{$tuned_lambda}}{Numeric. The initial global shrinkage
+#'       lambda used to seed the EM algorithm: the \code{cv_fastCrrp}
+#'       \code{lambda_min} when \code{fixed_global_shrinkage} is \code{NULL},
+#'       otherwise the supplied \code{fixed_global_shrinkage}. Intended for
+#'       caching and reuse across fits with the same data folds.}
 #'     \item{\code{$ss}}{The \code{ss} argument as supplied.}
 #'   }
 #'
@@ -76,12 +88,24 @@ fit_ssl_psdh <- function(x, y,
 
 
     #Initial model with non-adaptive lasso
-    init_mod_search <- cv_fastCrrp(x, y[,1], y[,2], k = 5,
-                                   penalty = "LASSO",
-                                   lambda_path = init_lam_path,
-                                   tuning = "wolbers",
-                                   eval_quantile = 0.5)
-    current_lambda <- init_mod_search$lambda_min
+    # When a single fixed global shrinkage value is supplied, skip the
+    # expensive cv_fastCrrp search and use it directly as the initial lambda.
+    # A vector fixed_global_shrinkage (e.g. a lambda path) preserves the old
+    # behaviour: the search still seeds the initial model.
+    if(is.null(fixed_global_shrinkage) || length(fixed_global_shrinkage) > 1){
+      init_mod_search <- cv_fastCrrp(x, y[,1], y[,2], k = 5,
+                                     penalty = "LASSO",
+                                     lambda_path = init_lam_path,
+                                     tuning = "wolbers",
+                                     eval_quantile = 0.5)
+      current_lambda <- init_mod_search$lambda_min
+    } else {
+      current_lambda <- fixed_global_shrinkage
+    }
+
+    # The tuned (or supplied) initial lambda; returned so it can be cached
+    # and reused as fixed_global_shrinkage on subsequent fits.
+    tuned_lambda <- current_lambda
 
     init_mod <- fastcmprsk::fastCrrp(
       Crisk(
@@ -170,6 +194,7 @@ fit_ssl_psdh <- function(x, y,
     ret$coefficients <- coefficients_df
     ret$penalty.factor <- penalties
     ret$lambda <- mod$lambda.path
+    ret$tuned_lambda <- tuned_lambda
     ret$ss <- ss
     ret$conv <- outer_convergence
     ret$iterations <- iterations

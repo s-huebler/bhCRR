@@ -40,8 +40,8 @@ predict_from_ssl_psdh <- function(object, newx, prediction_time) {
 
   # 2) Extract baseline cumulative hazard
   # from fastCrrp: breslowJump (hazard increments) and uftime (event times)
-  base_haz_jumps <- object$breslowJump[, 2]
-  failure_times <- object$uftime
+  base_haz_jumps <- object$final_model_object$breslowJump[, 2]
+  failure_times <- object$final_model_object$uftime
 
   # Lambda_0(t) = Sum of jumps where time <= prediction_time
   valid_indices <- which(failure_times <= prediction_time)

@@ -4,7 +4,16 @@
 \alias{cv_ssl_psdh}
 \title{Cross-validate a spike-and-slab PSDH model}
 \usage{
-cv_ssl_psdh(object, foldid, s0, s1, ncv = 1, eval_quantile = 0.5)
+cv_ssl_psdh(
+  object,
+  foldid,
+  s0,
+  s1,
+  ncv = 1,
+  eval_quantile = 0.5,
+  initial_sparsity,
+  fixed_global_shrinkage = NULL
+)
 }
 \arguments{
 \item{object}{A fitted model object returned by \code{\link{fit_ssl_psdh}},
@@ -27,6 +36,20 @@ over which results are averaged. Default \code{1}.}
 \item{eval_quantile}{Numeric in \code{(0, 1)}. Quantile of observed
 event times used as the evaluation horizon for the C-index.
 Default \code{0.5} (median event time).}
+
+\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
+global mixture probability (prior proportion of active features).
+Default \code{0.05}.}
+
+\item{fixed_global_shrinkage}{\code{NULL} or a numeric matrix of
+dimensions \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL}
+(default) each fold tunes its own global shrinkage via the
+\code{cv_fastCrrp} search inside \code{\link{fit_ssl_psdh}}. When a
+matrix is supplied, entry \code{[k, i]} is passed as the fixed global
+shrinkage for repetition \code{k}, fold \code{i}, skipping that search;
+\code{NA} entries fall back to per-fold tuning. Used by
+\code{\link{tune_ssl_psdh}} to reuse a tuned lambda across \code{s1}
+values for a fixed \code{s0}.}
 }
 \value{
 A list with the following elements:
@@ -48,6 +71,11 @@ vectors, each giving the fold indices in which
 \code{fit_ssl_psdh} failed (empty if all folds succeeded).}
 \item{\code{n_failed}}{Total number of (rep, fold) pairs in
 which \code{fit_ssl_psdh} failed.}
+\item{\code{fold_lambdas}}{An \eqn{\code{ncv} \times \code{nfolds}}
+matrix of the initial global shrinkage lambda used in each
+(rep, fold) fit (\code{fit_ssl_psdh}'s \code{$tuned_lambda}).
+\code{NA} where the fold failed. Can be fed back as
+\code{fixed_global_shrinkage} to reuse the tuned values.}
 }
 }
 \description{

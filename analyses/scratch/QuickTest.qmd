@@ -1,0 +1,291 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+# Loading
+
+```{r}
+library(tidyverse)
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+```
+
+```{r}
+source("/Users/sophiehuebler/Documents/bhCRR/R/cv_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/fit_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/update_betas.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/expected_inclusion_probs.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/expected_penalty_weights.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/update_mixture_prob.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/helpers.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/tune_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/measure_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/dedupe_warnings.r")
+source("/Users/sophiehuebler/Documents/bhCRR/R/cv_fastCrrp.r")
+```
+
+# Setting up easy simulations
+
+```{r}
+easy_sim <- function(nobs, beta1, beta2){
+  sim <- simulateTwoCauseFineGrayModel(nobs = 50,
+                                          beta1 = beta1,
+                                          beta2 = beta2,
+                                          X = NULL,
+                                          u.min = 100,
+                                          u.max = 100,
+                                          p = 0.5,
+                                          returnX = TRUE)
+  
+  sim_data <- cbind(data.frame(ID = nobs,
+                            TTE = sim$ftime,
+                            Status = as.integer(sim$fstatus)),
+                       sim$X)
+  
+  names(sim_data)<- c("ID", "TTE", "Status", paste0("X_", 4:ncol(sim_data)))
+  
+  x <- as.matrix(sim_data %>%select(starts_with("X")))
+  y <- as.matrix(sim_data %>%
+  mutate(Status = as.numeric(Status))%>%
+  select(TTE, Status))
+  
+  return(list("dataframe" = sim_data,
+              "x" = x,
+              "y" = y))
+}
+```
+
+```{r}
+set.seed(3149)
+p5 <- easy_sim(50,
+               c(0.40, - 0.50, 0.60, 0.75, - 0.80),
+               c(0, 0.3, 0, 0, -0.2)
+               )
+
+p10 <- easy_sim(50,
+               c(0.40, - 0.50, 0.60, 0.75, - 0.80, 0, 0, 0, 0, 0),
+               c(0, 0.3, 0, 0, -0.2, 0, 0, 0, 0, 0)
+               )
+```
+
+```{r}
+init_mod <- fit_ssl_psdh(p10$x,p10$y, ss = c(0.001, 1),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = NULL)
+
+
+```
+
+```{r}
+tuned_mod <- tune_ssl_psdh(init_mod, s0_seq = c(0.001, 0.1, length.out=5), 
+                           s1_seq = c(0.5, 0.75, 1),
+              nfolds = 5, initial_sparsity = 0.5, ncv = 5)
+```
+
+```{r}
+test <- tune_ssl_psdh(p10_ssl_minPenalty, s0_seq = seq(0.005, 0.1, length.out = 20),
+                      s1_seq = seq(0.5,   0.9, length.out = 10),
+                      nfolds = 5, initial_sparsity = 0.5, ncv = 5)
+```
+
+```{r}
+library(ggridges, lib.loc = "~/Library/Caches/org.R-project.R/R/renv/library/bhCRR-a14c522f/macos/R-4.5/aarch64-apple-darwin20")
+```
+
+```{r}
+ggplot(test, aes(x = s1, y = as.factor(s0), height = score_mean)) +
+  # geom_ridgeline is used when you already have the exact height values
+  geom_ridgeline(fill = "lightblue", alpha = 0.7, scale = 1) +
+  theme_ridges() +
+  labs(
+    x = "s1", 
+    y = "s0", 
+    height = "Score Mean",
+    title = "Score Mean across s1 and s0"
+  )
+```
+
+```{r}
+ggplot(test, aes(x = score_mean, y = as.factor(s0))) +
+  # Here, it automatically calculates the density of score_mean for each s0 group
+  geom_density_ridges2(fill = "lightblue", alpha = 0.7) +
+  theme_ridges() +
+  labs(
+    x = "Score Mean", 
+    y = "s0", 
+    title = "Distribution of Score Means by s0"
+  )
+```
+
+```{r}
+ggplot(test, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+```{r}
+ggplot(test, aes(x = s1, y = score_mean, color = as.factor(s0))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  # Add error bars to show the +/- 1 standard deviation
+  geom_errorbar(aes(ymin = score_mean - score_sd, 
+                    ymax = score_mean + score_sd), 
+                width = 0.02, alpha = 0.6) +
+  # Faceting by s0 makes it much easier to read than a spaghetti plot
+  facet_wrap(~ s0, labeller = label_both) +
+  theme_bw() +
+  labs(
+    title = "Score Trends and Fold Volatility",
+    subtitle = "Shorter error bars indicate a more stable, reliable model",
+    x = "Parameter s1",
+    y = "Score Mean (+/- 1 SD)",
+    color = "s0"
+  ) +
+  theme(legend.position = "none") # Facets already tell us the s0 value
+```
+
+```{r}
+library(ggrepel) # Optional: helps prevent text labels from overlapping
+
+ggplot(test, aes(x = score_sd, y = score_mean, color = as.factor(s0))) +
+  geom_point(size = 3, alpha = 0.8) +
+  # Optional: label the top 5 models so you know which settings they are
+  geom_text_repel(
+    data = subset(test, score_mean > quantile(score_mean, 0.90)), # labels top 10%
+    aes(label = paste("s0:", s0, "\ns1:", s1)),
+    size = 3
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Performance vs. Stability Trade-off",
+    subtitle = "Ideal models are in the top-left (High Mean, Low Variance)",
+    x = "Score Standard Deviation (Lower is better)",
+    y = "Mean Score (Higher is better)",
+    color = "s0"
+  )
+```
+
+# BB-SSL
+
+```{r}
+#source("~/Documents/bhCRR/analyses/scratch/bb_ssl.r")
+```
+
+```{r}
+bb_ssl <- function(x, y,
+                   NSample,
+                   ss = c(0.04, 0.5),
+                   lambda = 1 / ss,
+                   alpha = 3,
+                   theta = 0.5,
+                   jitter = TRUE,
+                   discard = FALSE,
+                   progress = TRUE,
+                   ...) {
+
+  x <- as.matrix(x)
+  y <- as.matrix(y)
+  n <- nrow(x)
+  p <- ncol(x)
+
+  lambda0 <- lambda[1]   # spike rate (large)
+  lambda1 <- lambda[2]   # slab  rate (small)
+  if (lambda0 <= lambda1) {
+    warning("Expected lambda0 (spike) >> lambda1 (slab); got lambda = c(",
+            lambda0, ", ", lambda1, ").")
+  }
+
+  # Mean-zero Laplace sampler with scale b  (difference of two Exp(rate = 1/b))
+  rlaplace0 <- function(m, b) {
+    stats::rexp(m, rate = 1 / b) - stats::rexp(m, rate = 1 / b)
+  }
+
+  beta  <- matrix(NA_real_, nrow = NSample, ncol = p)
+  gamma <- matrix(0L,       nrow = NSample, ncol = p)
+  pips <- matrix(0L,       nrow = NSample, ncol = p)
+
+  pb <- if (progress) utils::txtProgressBar(min = 0, max = NSample, style = 3)
+
+  i <- 1L
+  while (i <= NSample) {
+
+    # (a) sample weights  w ~ n * Dirichlet(alpha, ..., alpha)
+    w <- stats::rgamma(n, shape = alpha, rate = 1)
+    w <- w * (n / sum(w))
+
+    # (b) sample jitter   mu_j ~ Laplace(0, scale = 1/lambda0)  [the spike]
+    mu <- if (jitter) rlaplace0(p, b = 1 / lambda0) else rep(0, p)
+
+    # (c) optimise tilde-beta_t.
+    #     Bayesian-bootstrap resample of rows with probabilities w / n,
+    #     then refit fit_ssl_psdh (replacing SSLASSO_2) on the resample.
+    idx     <- sample.int(n, size = n, replace = TRUE, prob = w / n)
+    fit     <- fit_ssl_psdh(x[idx, , drop = FALSE],
+                            y[idx, , drop = FALSE],
+                            ss = ss, ...)
+
+    if (isTRUE(discard) && isFALSE(fit$conv)) next  # redraw if EM didn't converge
+
+    beta_hat <- fit$coefficients[,2]
+    beta[i, ] <- beta_hat + mu                      # post-hoc location shift
+    pips[i,] <- fit$pips
+
+
+    # threshold beta -> gamma  (posterior inclusion under the SSL prior)
+    #   p* = 1 / (1 + (1-theta)/theta * (lambda0/lambda1) * exp(-(lambda0-lambda1)|beta|))
+    odds <- (1 - theta) / theta *
+            (lambda0 / lambda1) * exp(-(lambda0 - lambda1) * abs(beta[i, ]))
+    pstar <- 1 / (1 + odds)
+    pstar[is.na(pstar)] <- 1
+    gamma[i, ] <- as.integer(pstar > 0.5)
+
+    if (progress) {
+      utils::setTxtProgressBar(pb, i)
+      if (i == NSample) close(pb)
+    }
+    i <- i + 1L
+  }
+
+  colnames(beta) <- colnames(gamma) <-
+    if (is.null(colnames(x))) paste0("V", seq_len(p)) else colnames(x)
+
+  list(beta           = beta,
+       gamma          = gamma,
+       pips = pips,
+       inclusion_prob = colMeans(pips),
+       post_mean      = colMeans(beta),
+       ss             = ss,
+       lambda         = c(lambda0 = lambda0, lambda1 = lambda1),
+       alpha          = alpha)
+}
+
+```
+
+```{r}
+post2 <- bb_ssl(
+  p10$x, p10$y,
+  NSample = 50,
+  ss      = c(0.005, 0.5),   # scales -> fit_ssl_psdh
+  alpha   = 3,
+  initial_sparsity = 0.5,  # ... forwarded to fit_ssl_psdh
+  maxit   = 50,
+  fixed_global_shrinkage = NULL
+)
+```
+
+```{r}
+hist(post$beta[,2])
+```

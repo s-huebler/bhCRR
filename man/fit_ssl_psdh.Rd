@@ -10,7 +10,9 @@ fit_ssl_psdh(
   ss = c(0.04, 0.5),
   initial_sparsity = 0.05,
   maxit = 50,
-  epsilon = 1e-04
+  epsilon = 1e-04,
+  init_lam_path = 10^seq(log10(0.1), log10(0.001), length = 25),
+  fixed_global_shrinkage = NULL
 )
 }
 \arguments{
@@ -35,6 +37,17 @@ Default \code{0.05}.}
 \item{epsilon}{Numeric. Convergence threshold: iteration stops when the
 relative change in log-likelihood falls below this value (after at
 least 5 iterations). Default \code{1e-04}.}
+
+\item{init_lam_path}{Numeric sequence vector. Path to define global shrinkage parameter for the initializing model.}
+
+\item{fixed_global_shrinkage}{NULL or numeric. If not null, the global
+shrinkage parameter is coerced to the supplied value for each step in the
+model, AND the (expensive) \code{cv_fastCrrp} search for the initializing
+model is skipped: the supplied value is used directly as the initial
+lambda. The tuned initial lambda (whether searched or supplied) is
+returned in \code{$tuned_lambda}, so callers can capture it from one fit
+and reuse it via \code{fixed_global_shrinkage} on subsequent fits to avoid
+re-running the search.}
 }
 \value{
 A \code{fastCrrp} model object augmented with additional fields:
@@ -47,6 +60,11 @@ and \code{Estimate} giving the final coefficient for each feature.}
 penalty weights from the last EM iteration.}
 \item{\code{$lambda}}{Numeric. The LASSO tuning parameter used at
 convergence.}
+\item{\code{$tuned_lambda}}{Numeric. The initial global shrinkage
+lambda used to seed the EM algorithm: the \code{cv_fastCrrp}
+\code{lambda_min} when \code{fixed_global_shrinkage} is \code{NULL},
+otherwise the supplied \code{fixed_global_shrinkage}. Intended for
+caching and reuse across fits with the same data folds.}
 \item{\code{$ss}}{The \code{ss} argument as supplied.}
 }
 }

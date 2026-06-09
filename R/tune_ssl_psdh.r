@@ -24,6 +24,13 @@
 #' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
 #'   global mixture probability (prior proportion of active features).
 #'   Default \code{0.05}.
+#' @param reuse_lambda Logical. When \code{TRUE} (default), the expensive
+#'   \code{cv_fastCrrp} global-shrinkage search is run only once per \code{s0}
+#'   value: it is tuned at that \code{s0}'s smallest valid \code{s1}, and the
+#'   resulting per-fold lambdas are reused (via \code{fixed_global_shrinkage})
+#'   for the remaining \code{s1} values at the same \code{s0}. Set to
+#'   \code{FALSE} to tune the shrinkage independently for every \code{(s0, s1)}
+#'   pair (the previous behaviour).
 #'
 #' @returns A data frame with one row per valid \code{(s0, s1)} pair and
 #'   columns:
@@ -53,7 +60,7 @@
 #'                        s1_seq = seq(0.3,   0.9, length.out = 10))
 #' tunes[which.max(tunes$score_mean), ]
 #' }
-tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity) {
+tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity, reuse_lambda = TRUE) {
 
   .dedupe_warnings({
 
@@ -76,21 +83,16 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
     stop("No valid hyperparameter combinations found. Ensure at least one value in 's1_seq' is greater than a value in 's0_seq'.")
   }
 
-  # 3. Iterate over the valid combinations
-  results_list <- lapply(1:nrow(valid_grid), function(i) {
+  # 3. Iterate over the valid combinations, grouped by s0.
+  #
+  # For each s0 (in s0_seq order) the valid s1 values are visited in
+  # ascending order.  When reuse_lambda is TRUE, the first (smallest) s1
+  # tunes the global shrinkage via cv_fastCrrp and the resulting per-fold
+  # lambdas are cached, then reused for the remaining s1 values at that s0
+  # so the expensive search runs only once per s0.
 
-    current_s0 <- valid_grid$s0[i]
-    current_s1 <- valid_grid$s1[i]
-
-    cv_res <- try(cv_ssl_psdh(object,
-                              foldid        = foldid,
-                              s0            = current_s0,
-                              s1            = current_s1,
-                              ncv           = ncv,
-                              eval_quantile = 0.5,
-                              initial_sparsity = initial_sparsity))
-
-    # If cv_ssl_psdh itself errored, surface it and return an explicit NA row
+  # Helper: turn a cv_ssl_psdh result (or try-error) into a result row.
+  build_row <- function(current_s0, current_s1, cv_res) {
     if (inherits(cv_res, "try-error")) {
       err_msg <- attr(cv_res, "condition")$message
       message(sprintf(
@@ -123,7 +125,43 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
       sds,
       fold_sd,
       n_failed_folds = cv_res$n_failed)
-  })
+  }
+
+  # Unique s0 values, in the order they appear in s0_seq
+  s0_levels <- unique(valid_grid$s0)
+
+  results_list <- list()
+
+  for (current_s0 in s0_levels) {
+    # s1 values valid for this s0, ascending
+    s1_for_s0 <- sort(valid_grid$s1[valid_grid$s0 == current_s0])
+
+    cached_lambdas <- NULL  # per-fold (ncv x nfolds) lambdas from first s1
+
+    for (j in seq_along(s1_for_s0)) {
+      current_s1 <- s1_for_s0[j]
+
+      # First s1 of this s0 always tunes; later s1 reuse cached lambdas
+      fixed_fgs <- if (reuse_lambda && j > 1) cached_lambdas else NULL
+
+      cv_res <- try(cv_ssl_psdh(object,
+                                foldid        = foldid,
+                                s0            = current_s0,
+                                s1            = current_s1,
+                                ncv           = ncv,
+                                eval_quantile = 0.5,
+                                initial_sparsity = initial_sparsity,
+                                fixed_global_shrinkage = fixed_fgs))
+
+      # Cache the per-fold lambdas tuned at the first s1 for reuse
+      if (reuse_lambda && j == 1 && !inherits(cv_res, "try-error")) {
+        cached_lambdas <- cv_res$fold_lambdas
+      }
+
+      results_list[[length(results_list) + 1L]] <-
+        build_row(current_s0, current_s1, cv_res)
+    }
+  }
 
   # 4. Combine and return results
   as.data.frame(do.call(rbind, results_list))

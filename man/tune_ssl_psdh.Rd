@@ -4,7 +4,16 @@
 \alias{tune_ssl_psdh}
 \title{Grid-search tuning for spike-and-slab PSDH scale parameters}
 \usage{
-tune_ssl_psdh(object, s0_seq, s1_seq, nfolds = 10, ncv = 1, foldid = NULL)
+tune_ssl_psdh(
+  object,
+  s0_seq,
+  s1_seq,
+  nfolds = 10,
+  ncv = 1,
+  foldid = NULL,
+  initial_sparsity,
+  reuse_lambda = TRUE
+)
 }
 \arguments{
 \item{object}{A fitted model object returned by \code{\link{fit_ssl_psdh}},
@@ -27,6 +36,18 @@ hyperparameter pair. Default \code{1}.}
 fold assignments.  If \code{NULL} (default) folds are generated
 internally by \code{\link{generate_foldid}} and shared across all
 hyperparameter pairs.}
+
+\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
+global mixture probability (prior proportion of active features).
+Default \code{0.05}.}
+
+\item{reuse_lambda}{Logical. When \code{TRUE} (default), the expensive
+\code{cv_fastCrrp} global-shrinkage search is run only once per \code{s0}
+value: it is tuned at that \code{s0}'s smallest valid \code{s1}, and the
+resulting per-fold lambdas are reused (via \code{fixed_global_shrinkage})
+for the remaining \code{s1} values at the same \code{s0}. Set to
+\code{FALSE} to tune the shrinkage independently for every \code{(s0, s1)}
+pair (the previous behaviour).}
 }
 \value{
 A data frame with one row per valid \code{(s0, s1)} pair and
