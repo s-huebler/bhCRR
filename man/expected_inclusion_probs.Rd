@@ -4,7 +4,7 @@
 \alias{expected_inclusion_probs}
 \title{E-step: posterior inclusion probabilities}
 \usage{
-expected_inclusion_probs(s1, s0, pi, betas)
+expected_inclusion_probs(s1, s0, pips, betas, exact = FALSE)
 }
 \arguments{
 \item{s1}{Numeric scalar. Slab scale parameter of the Laplace prior
@@ -13,12 +13,14 @@ expected_inclusion_probs(s1, s0, pi, betas)
 \item{s0}{Numeric scalar. Spike scale parameter of the Laplace prior
 (small value; concentrates inactive features near zero).}
 
-\item{pi}{Numeric scalar or vector broadcastable to length \eqn{p}.
-Current global mixture probability — the prior probability that any
+\item{pips}{Numeric vector of length \eqn{p}.
+Set of current prior probability that any
 given feature is active (\eqn{\pi = \Pr(\gamma_j = 1)}).}
 
 \item{betas}{Numeric vector of length \eqn{p}. Current coefficient
 estimates \eqn{\hat{\beta}} from the previous M-step.}
+
+\item{exact}{If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.}
 }
 \value{
 Numeric vector of length \eqn{p}. Posterior inclusion

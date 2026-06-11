@@ -33,6 +33,16 @@
 #'   \code{NA} entries fall back to per-fold tuning. Used by
 #'   \code{\link{tune_ssl_psdh}} to reuse a tuned lambda across \code{s1}
 #'   values for a fixed \code{s0}.
+#' @param initial_shrinkage \code{NULL} or a numeric matrix of dimensions
+#'   \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL} (default) each
+#'   fold seeds its initializing model via the \code{cv_fastCrrp} search
+#'   inside \code{\link{fit_ssl_psdh}}. When a matrix is supplied, entry
+#'   \code{[k, i]} is passed as the warm-start initial lambda for repetition
+#'   \code{k}, fold \code{i}, skipping that search; \code{NA} entries fall
+#'   back to per-fold tuning. Unlike \code{fixed_global_shrinkage}, this only
+#'   warm-starts the initial model and does not pin lambda across EM
+#'   iterations. Used by \code{\link{tune_ssl_psdh}} to reuse per-fold tuned
+#'   lambdas across \code{s1} values for a fixed \code{s0}.
 #'
 #' @returns A list with the following elements:
 #'   \describe{
@@ -73,7 +83,7 @@
 #' fols <- generate_foldid(nobs = nrow(x), nfolds = 5)
 #' cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
 #' }
-cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity, fixed_global_shrinkage = NULL) {
+cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity, fixed_global_shrinkage = NULL, initial_shrinkage = NULL) {
   # Extract data
   y <- object$y
   x <- object$x
@@ -110,13 +120,24 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
         if (is.na(val)) NULL else val
       }
 
+      # Per-fold warm start: reuse a cached initial lambda for this fold (and
+      # not NA) to seed the initializing model only, otherwise let this fold
+      # tune its own via cv_fastCrrp.
+      fold_initial <- if (is.null(initial_shrinkage)) {
+        NULL
+      } else {
+        val <- initial_shrinkage[k, i]
+        if (is.na(val)) NULL else val
+      }
+
       # RE-FIT (errors are captured rather than silenced so we can report them)
       suppressWarnings({
         fit <- try(fit_ssl_psdh(x = x_train, y = y_train, ss = c(s0, s1),
                                 initial_sparsity = initial_sparsity,
                                 maxit = 50,
                                 epsilon = 1e-04,
-                                fixed_global_shrinkage = fold_fixed),
+                                fixed_global_shrinkage = fold_fixed,
+                                initial_shrinkage = fold_initial),
                    silent = TRUE)
       })
 

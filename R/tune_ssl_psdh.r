@@ -24,13 +24,14 @@
 #' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
 #'   global mixture probability (prior proportion of active features).
 #'   Default \code{0.05}.
-#' @param reuse_lambda Logical. When \code{TRUE} (default), the expensive
-#'   \code{cv_fastCrrp} global-shrinkage search is run only once per \code{s0}
+#' @param reuse_lambda Logical. When \code{TRUE}, the expensive
+#'   \code{cv_fastCrrp} initial-model search is run only once per \code{s0}
 #'   value: it is tuned at that \code{s0}'s smallest valid \code{s1}, and the
-#'   resulting per-fold lambdas are reused (via \code{fixed_global_shrinkage})
-#'   for the remaining \code{s1} values at the same \code{s0}. Set to
-#'   \code{FALSE} to tune the shrinkage independently for every \code{(s0, s1)}
-#'   pair (the previous behaviour).
+#'   resulting per-fold lambdas are reused as warm starts (via
+#'   \code{initial_shrinkage}) for the remaining \code{s1} values at the same
+#'   \code{s0}. This only warm-starts each fold's initial model; the EM
+#'   iterations still update lambda normally. Set to \code{FALSE} (default) to
+#'   tune the initial model independently for every \code{(s0, s1)} pair.
 #'
 #' @returns A data frame with one row per valid \code{(s0, s1)} pair and
 #'   columns:
@@ -60,7 +61,7 @@
 #'                        s1_seq = seq(0.3,   0.9, length.out = 10))
 #' tunes[which.max(tunes$score_mean), ]
 #' }
-tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity, reuse_lambda = TRUE) {
+tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity, reuse_lambda = FALSE) {
 
   .dedupe_warnings({
 
@@ -87,9 +88,10 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
   #
   # For each s0 (in s0_seq order) the valid s1 values are visited in
   # ascending order.  When reuse_lambda is TRUE, the first (smallest) s1
-  # tunes the global shrinkage via cv_fastCrrp and the resulting per-fold
-  # lambdas are cached, then reused for the remaining s1 values at that s0
-  # so the expensive search runs only once per s0.
+  # tunes the initial model via cv_fastCrrp and the resulting per-fold
+  # lambdas are cached, then reused as warm starts (initial_shrinkage) for
+  # the remaining s1 values at that s0 so the expensive search runs only
+  # once per s0.
 
   # Helper: turn a cv_ssl_psdh result (or try-error) into a result row.
   build_row <- function(current_s0, current_s1, cv_res) {
@@ -141,9 +143,8 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
     for (j in seq_along(s1_for_s0)) {
       current_s1 <- s1_for_s0[j]
 
-      # First s1 of this s0 always tunes; later s1 reuse cached lambdas
-      fixed_fgs <- if (reuse_lambda && j > 1) cached_lambdas else NULL
-
+      # First s1 of this s0 always tunes; later s1 reuse the cached per-fold
+      # lambdas as warm starts for their initial models only.
       cv_res <- try(cv_ssl_psdh(object,
                                 foldid        = foldid,
                                 s0            = current_s0,
@@ -151,7 +152,7 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
                                 ncv           = ncv,
                                 eval_quantile = 0.5,
                                 initial_sparsity = initial_sparsity,
-                                fixed_global_shrinkage = fixed_fgs))
+                                initial_shrinkage = if (reuse_lambda && j > 1) cached_lambdas else NULL))
 
       # Cache the per-fold lambdas tuned at the first s1 for reuse
       if (reuse_lambda && j == 1 && !inherits(cv_res, "try-error")) {

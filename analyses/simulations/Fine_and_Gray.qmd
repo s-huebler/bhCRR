@@ -224,6 +224,71 @@ viz_comparison <- function(comp_df, viztype = "full"){
 }
 ```
 
+## Outcomes
+
+```{r}
+calculate_metrics <- function(predicted, true_val) {
+  
+  # Replace NA values with 0 (assuming NA means the variable was not selected)
+  predicted <- ifelse(is.na(predicted), 0, predicted)
+  true_val <- ifelse(is.na(true_val), 0, true_val)
+  
+  # Determine selection status (non-zero coefficient means selected)
+  pred_selected <- predicted != 0
+  true_selected <- true_val != 0
+  
+  # Calculate Confusion Matrix elements
+  TP <- sum(pred_selected & true_selected)
+  TN <- sum(!pred_selected & !true_selected)
+  FP <- sum(pred_selected & !true_selected)
+  FN <- sum(!pred_selected & true_selected)
+  
+  # Calculate Metrics (with safeguards against division by zero)
+  sensitivity <- ifelse((TP + FN) == 0, NA, TP / (TP + FN))
+  specificity <- ifelse((TN + FP) == 0, NA, TN / (TN + FP))
+  ppv <- ifelse((TP + FP) == 0, NA, TP / (TP + FP))
+  
+  # F1 Score: 2 * (Precision * Recall) / (Precision + Recall)
+  # Note: PPV is Precision, Sensitivity is Recall
+  f1 <- ifelse((ppv + sensitivity) == 0 | is.na(ppv) | is.na(sensitivity), 
+               NA, 
+               2 * (ppv * sensitivity) / (ppv + sensitivity))
+  
+  # Mean Squared Error
+  mse <- mean((predicted - true_val)^2)
+  
+  # Return as a single-row dataframe
+  return(data.frame(
+    Sensitivity = sensitivity,
+    Specificity = specificity,
+    PPV = ppv,
+    F1 = f1,
+    MSE = mse
+  ))
+}
+
+# Identify the columns that contain model predictions
+# We exclude 'Name' and 'True_beta'
+metrics_summary <- function(df){
+model_cols <- setdiff(names(df), c("Name", "True_beta"))
+
+# Apply the function to each model column and bind the results
+results_list <- lapply(model_cols, function(model) {
+  metrics <- calculate_metrics(df[[model]], df$True_beta)
+  metrics$Model <- model
+  return(metrics)
+})
+
+# Combine everything into a clean summary table
+results_df <- bind_rows(results_list) %>%
+  select(Model, Sensitivity, Specificity, PPV, F1, MSE) # Reorder columns for readability
+
+results_df
+}
+
+
+```
+
 # P5
 
 ## Fine and Gray
@@ -246,8 +311,7 @@ p5_fg_model <- coxph(Surv(fgstart, fgstop, fgstatus) ~ X_1 + X_2 + X_3 + X_4 + X
                   weight = fgwt, 
                   data = p5_fg_data)
 
-# 4. View results
-summary(p5_fg_model)
+
 
 
 ```
@@ -361,10 +425,14 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
                           s0_seq = seq(0.005, 0.1, length.out = 20),
                           s1_seq = seq(0.5,   0.9, length.out = 10),
                           nfolds = 10,
-                          fixed_global_shrinkage = NULL) {
+                          initial_shrinkage = NULL,
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = NULL) {
+  
+  start_time <- Sys.time()
   x <- as.matrix(x)
   y <- as.matrix(y)
-  fit <- fit_ssl_psdh(x, y, initial_sparsity = init_sparsity, fixed_global_shrinkage = fixed_global_shrinkage)
+  fit <- fit_ssl_psdh(x, y, initial_sparsity = init_sparsity, fixed_global_shrinkage = fixed_global_shrinkage, initial_shrinkage = NULL)
 
   if (tuning == "wolbers") {
     tunes <- tryCatch(
@@ -439,14 +507,19 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
   #print(head(tunes))
   max_tune <- tunes %>%
     dplyr::filter(score_mean == max(tunes$score_mean, na.rm = TRUE))
-  #print(max_tune)
+  
+  if(!is.null(save_tunes)){
+    assign(x = save_tunes, value = tunes, envir = .GlobalEnv)
+  }
 
-  #print(tunes)
 
   final_fit <- fit_ssl_psdh(x, y,
                             ss = c(max_tune$s0[1], max_tune$s1[1]),
                             initial_sparsity = init_sparsity,
                             fixed_global_shrinkage = fixed_global_shrinkage)
+  
+  end_time <-Sys.time()
+  print(end_time - start_time)
 
   final_fit
 }
@@ -457,10 +530,11 @@ psdh_ssl_func <- function(x, y, init_sparsity, ncv_count,
 ```{r}
 p5_ssl_normalTuned <- psdh_ssl_func( p5$x, p5$y, 0.5, 1,
                           tuning = "normal",
-                          s0_seq = seq(0.005, 0.1, length.out = 20),
-                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          s0_seq = seq(0.003, 0.1, length.out = 5),
+                          s1_seq = seq(0.5,   0.9, length.out =5),
                           nfolds = 10,
-                          fixed_global_shrinkage = NULL)
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p5_ssl_normalTuned_tunes")
 ```
 
 ```{r}
@@ -475,10 +549,11 @@ p5_comparisons
 
 p5_ssl_wolbersTuned <- psdh_ssl_func( p5$x, p5$y, 0.5, 1,
                           tuning = "wolbers",
-                          s0_seq = seq(0.005, 0.1, length.out = 20),
-                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          s0_seq = seq(0.005, 0.1, length.out = 5),
+                          s1_seq = seq(0.45,   0.9, length.out = 5),
                           nfolds = 10,
-                          fixed_global_shrinkage = NULL)
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p5_ssl_wolbersTuned_tunes")
 ```
 
 ```{r}
@@ -487,11 +562,31 @@ p5_comparisons$ssl_wolbersTuned = as.vector(p5_ssl_wolbersTuned$final_model_obje
 p5_comparisons
 ```
 
+```{r}
+ggplot(p5_ssl_wolbersTuned_tunes, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
 ## Visualizing
 
 ```{r}
 viz_comparison(p5_comparisons, viztype = "full")
 viz_comparison(p5_comparisons, viztype = "difference")
+```
+
+```{r}
+metrics_summary(p5_comparisons)
 ```
 
 # P10
@@ -558,19 +653,21 @@ p10_comparisons$ssl_minPenalty = as.vector(p10_ssl_minPenalty$final_model_object
 ####################NORMAL
 p10_ssl_normalTuned <- psdh_ssl_func( p10$x, p10$y, 0.5, 1,
                           tuning = "normal",
-                          s0_seq = seq(0.005, 0.1, length.out = 20),
-                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          s0_seq = seq(0.005, 0.1, length.out = 10),
+                          s1_seq = seq(0.5,   1, length.out = 6),
                           nfolds = 10,
-                          fixed_global_shrinkage = NULL)
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p10_ssl_normalTuned_tunes")
 p10_comparisons$ssl_normalTuned = as.vector(p10_ssl_normalTuned$final_model_object$coef)
 
 ####################WOLBERS
 p10_ssl_wolbersTuned <- psdh_ssl_func( p10$x, p10$y, 0.5, 1,
                           tuning = "wolbers",
-                          s0_seq = seq(0.005, 0.1, length.out = 20),
-                          s1_seq = seq(0.5,   0.9, length.out = 10),
+                          s0_seq = seq(0.005, 0.6, length.out =10),
+                          s1_seq = seq(0.8,   1, length.out = 6 ),
                           nfolds = 10,
-                          fixed_global_shrinkage = NULL)
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p10_ssl_wolbersTuned_tunes")
 p10_comparisons$ssl_wolbersTuned = as.vector(p10_ssl_wolbersTuned$final_model_object$coef)
 
 p10_comparisons
@@ -579,6 +676,183 @@ p10_comparisons
 ## Visualizing
 
 ```{r}
-viz_comparison(p10_comparisons, viztype = "full")
-viz_comparison(p10_comparisons, viztype = "difference")
+viz_comparison(p10_comparisons%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty")), viztype = "full")
+viz_comparison(p10_comparisons%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty")), viztype = "difference")
+metrics_summary(p10_comparisons%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty"))
+```
+
+```{r}
+ggplot(p10_ssl_normalTuned_tunes, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+ggplot(p10_ssl_wolbersTuned_tunes, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+# P100
+
+```{r}
+
+p100 <- easy_sim(50,
+               c(c(0.40, - 0.50, 0.60, 0.75, - 0.80), rep(0, 95)),
+               c(c(0, 0.3, 0, 0, -0.2), rep(0, 95))
+               )
+
+p100_comparisons <- data.frame(Name = c(paste("B", 1:100, sep = "")),
+                            True_beta = c(c(0.40, - 0.50, 0.60, 0.75, - 0.80), rep(0, 95))
+                            )
+####################FINE AND GRAY ##########################################################
+p100$dataframe$Status_factor <- factor(p100$dataframe$Status, 
+                           levels = c(0, 1, 2), 
+                           labels = c("censor", "event", "competing"))
+
+
+p100_fg_data <- finegray(Surv(TTE, Status_factor) ~ ., data = p100$dataframe, etype = "event")
+
+fg_form <- paste("Surv(fgstart, fgstop, fgstatus)~", 
+                 paste(paste("X", 1:5, sep = "_"), collapse = "+"))
+p100_fg_model <- coxph(as.formula(fg_form), 
+                  weight = fgwt, 
+                  data = p100_fg_data)
+p100_comparisons$Fg = c(p100_fg_model$coefficients, rep(NA, 95))
+
+####################FASTCMPRSK ##########################################################
+####################NO SPARSITY
+p100_fstcmp_minPenalty <- fastcmprsk::fastCrrp(
+    Crisk(
+      p100$y[,1],
+      p100$y[,2],
+      cencode = 0,
+      failcode = 1
+    ) ~ p100$x,
+    penalty = "LASSO",
+    lambda = 0.001
+  )
+p100_comparisons$fstcmp_minPenalty = as.vector(p100_fstcmp_minPenalty$coef)
+
+####################NORMAL
+p100_fstcmp_normalTuned <- cv_fastCrrp(x = p100$x, time = p100$y[,1], status = p100$y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
+                            tuning = "normal")
+
+p100_fstcmp_normalTuned_best_lambda <- p100_fstcmp_normalTuned$lambda_min
+p100_comparisons$fstcmp_normalTuned = as.vector(p100_fstcmp_normalTuned$full_model$coef[,
+                which(p100_fstcmp_normalTuned$lambda == p100_fstcmp_normalTuned_best_lambda)])
+
+
+####################WOLBERS
+p100_fstcmp_wolbersTuned <- cv_fastCrrp(x = p100$x, time = p100$y[,1], status = p100$y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
+                            tuning = "wolbers")
+p100_fstcmp_wolbersTuned_best_lambda <- p100_fstcmp_wolbersTuned$lambda_min
+p100_comparisons$fstcmp_wolbersTuned = as.vector(p100_fstcmp_wolbersTuned$full_model$coef[, 
+                which(p100_fstcmp_wolbersTuned$lambda == p100_fstcmp_wolbersTuned_best_lambda)])
+
+
+####################SSL ##########################################################
+####################NO SPARSITY
+p100_ssl_minPenalty <- fit_ssl_psdh(p100$x,p100$y, ss = c(0.001, 1),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = p100_fstcmp_minPenalty$lambda.path)
+p100_comparisons$ssl_minPenalty = as.vector(p100_ssl_minPenalty$final_model_object$coef)
+
+####################NORMAL
+p100_ssl_normalTuned <- psdh_ssl_func( p100$x, p100$y, 0.5, 1,
+                          tuning = "normal",
+                          s0_seq = seq(0.005, 0.07, length.out = 5),
+                          s1_seq = seq(0.8,   1, length.out = 5),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p100_ssl_normalTuned_tunes")
+p100_comparisons$ssl_normalTuned = as.vector(p100_ssl_normalTuned$final_model_object$coef)
+
+####################WOLBERS
+p100_ssl_wolbersTuned <- psdh_ssl_func( p100$x, p100$y, 0.5, 1,
+                          tuning = "wolbers",
+                          s0_seq = seq(0.005, 0.07, length.out = 5),
+                          s1_seq = seq(0.8,   1, length.out = 5),
+                          nfolds = 10,
+                          fixed_global_shrinkage = NULL,
+                          save_tunes = "p100_ssl_wolbersTuned_tunes")
+p100_comparisons$ssl_wolbersTuned = as.vector(p100_ssl_wolbersTuned$final_model_object$coef)
+
+p100_comparisons
+```
+
+```{r}
+viz_comparison((p100_comparisons[1:5,])%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty")), viztype = "full")
+viz_comparison((p100_comparisons[1:5,])%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty")), viztype = "difference")
+metrics_summary(p100_comparisons%>%
+                 select(-c("fstcmp_minPenalty", "ssl_minPenalty")))
+```
+
+```{r}
+ggplot(p100_ssl_normalTuned_tunes, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+ggplot(p100_ssl_wolbersTuned_tunes, aes(x = as.factor(s1), y = as.factor(s0), fill = score_mean)) +
+  geom_tile(color = "white") +
+  # viridis is great for continuous gradients and colorblind accessibility
+  scale_fill_viridis_c(option = "plasma") + 
+  theme_minimal() +
+  labs(
+    title = "Hyperparameter Landscape",
+    #subtitle = "Look for broad regions of high scores, not just isolated peaks",
+    x = "Parameter s1",
+    y = "Parameter s0",
+    fill = "Mean CV C-index"
+  )+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+```
+
+```{r}
+testing <- fit_ssl_psdh(p100$x,p100$y, ss = c(0.03, 0.9),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = NULL)
+
+testing$coefficients[testing$coefficients[,2]>0,]
+```
+
+```{r}
+p100_comparisons$ssl_minPenalty <- as.vector(testing$final_model_object$coef)
 ```

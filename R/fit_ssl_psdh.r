@@ -31,6 +31,14 @@
 #'   returned in \code{$tuned_lambda}, so callers can capture it from one fit
 #'   and reuse it via \code{fixed_global_shrinkage} on subsequent fits to avoid
 #'   re-running the search.
+#' @param initial_shrinkage NULL or numeric scalar. A warm start for the
+#'   initializing model only: when supplied, the (expensive)
+#'   \code{cv_fastCrrp} search is skipped and this value is used directly as
+#'   the initial lambda seeding the EM algorithm. Unlike
+#'   \code{fixed_global_shrinkage}, it does \emph{not} pin the global
+#'   shrinkage for the subsequent EM iterations, which continue to update
+#'   lambda normally. Takes precedence over \code{fixed_global_shrinkage}
+#'   for seeding the initial model.
 #'
 #' @returns A \code{fastCrrp} model object augmented with additional fields:
 #'   \describe{
@@ -70,7 +78,8 @@ fit_ssl_psdh <- function(x, y,
                          init_lam_path = 10^seq(log10(0.1),
                                                 log10(0.001),
                                                 length = 25),
-                         fixed_global_shrinkage = NULL){
+                         fixed_global_shrinkage = NULL,
+                         initial_shrinkage = NULL){
 
   .dedupe_warnings({
 
@@ -88,11 +97,18 @@ fit_ssl_psdh <- function(x, y,
 
 
     #Initial model with non-adaptive lasso
-    # When a single fixed global shrinkage value is supplied, skip the
-    # expensive cv_fastCrrp search and use it directly as the initial lambda.
-    # A vector fixed_global_shrinkage (e.g. a lambda path) preserves the old
-    # behaviour: the search still seeds the initial model.
-    if(is.null(fixed_global_shrinkage) || length(fixed_global_shrinkage) > 1){
+    # Determine the lambda used to seed the initial (non-adaptive lasso) model.
+    # Priority:
+    #   1. initial_shrinkage  - a warm start for the initial model ONLY. Skips
+    #      the expensive cv_fastCrrp search; the EM iterations below still
+    #      update lambda normally (it is NOT pinned).
+    #   2. a scalar fixed_global_shrinkage - skips the search AND pins lambda
+    #      at every EM iteration (see the M-step below).
+    #   3. otherwise (NULL or a vector fixed_global_shrinkage, e.g. a lambda
+    #      path) - the cv_fastCrrp search seeds the initial model.
+    if(!is.null(initial_shrinkage)){
+      current_lambda <- initial_shrinkage
+    } else if(is.null(fixed_global_shrinkage) || length(fixed_global_shrinkage) > 1){
       init_mod_search <- cv_fastCrrp(x, y[,1], y[,2], k = 5,
                                      penalty = "LASSO",
                                      lambda_path = init_lam_path,
@@ -156,7 +172,7 @@ fit_ssl_psdh <- function(x, y,
 
 
       # Update shrinkage (lambda)
-      current_lambda <- 1/(ncol(x)*nrow(x))
+      current_lambda <- 1/nrow(x)
       if(!is.null(fixed_global_shrinkage)){
         current_lambda <- fixed_global_shrinkage}
 
