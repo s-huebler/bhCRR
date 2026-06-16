@@ -1,0 +1,3 @@
+load("/Users/sophiehuebler/Documents/bhCRR/inst/model_fail.RData")
+head(model_fail.RData)
+ls()

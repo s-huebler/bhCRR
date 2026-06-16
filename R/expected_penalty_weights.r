@@ -30,7 +30,7 @@
 #'                                   betas = c(0.5, 0.0, -0.3))
 #' expected_penalty_weights(s1 = 0.5, s0 = 0.04, p = probs)
 #' }
-expected_penalty_weights <- function(s1, s0, p){
+expected_penalty_weights <- function(s0, s1, p){
   (1 - p) / s0 + p / s1
 }
 

@@ -384,9 +384,24 @@ p5_fstcmp_wolbersTuned <- cv_fastCrrp(x = p5$x, time = p5$y[,1], status = p5$y[,
                             k = 5, penalty = "LASSO",
                             lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
                             tuning = "wolbers")
+test_p5_fstcmp_wolbersTuned <- cv_fastCrrp_cpp(x = p5$x, time = p5$y[,1], status = p5$y[,2],
+                            k = 5, penalty = "LASSO",
+                            lambda = 10^seq(log10(0.1),log10(0.001),length = 25),
+                            tuning = "wolbers")
 
 # Extract your optimal lambda
 p5_fstcmp_wolbersTuned_best_lambda <- p5_fstcmp_wolbersTuned$lambda_min
+
+best_p5_lambda_mod <- fastcmprsk::fastCrrp(
+    Crisk(
+      p5$y[,1],
+      p5$y[,2],
+      cencode = 0,
+      failcode = 1
+    ) ~ p5$x,
+    penalty = "LASSO",
+    lambda = p5_fstcmp_wolbersTuned_best_lambda
+  )
 ```
 
 ```{r}
@@ -403,9 +418,7 @@ p5_comparisons
 Similarly, we'll use the least penalized form of the model. We could do this either by fixing the global shrinkage to that of what we saw in the fastcmprsk, or we can just set the hyperparameter scales to extreme values. We'll set the hyperparameter scales to extreme values here.
 
 ```{r}
-p5_ssl_minPenalty <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 1),
-                            initial_sparsity = 0.5,
-                            fixed_global_shrinkage  = p5_fstcmp_minPenalty$lambda.path)
+p5_ssl_minPenalty <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 1))
 ```
 
 ```{r}
@@ -549,8 +562,8 @@ p5_comparisons
 
 p5_ssl_wolbersTuned <- psdh_ssl_func( p5$x, p5$y, 0.5, 1,
                           tuning = "wolbers",
-                          s0_seq = seq(0.005, 0.1, length.out = 5),
-                          s1_seq = seq(0.45,   0.9, length.out = 5),
+                          s0_seq = seq(0.005, 0.1, length.out = 10),
+                          s1_seq = seq(0.45,   0.9, length.out = 10),
                           nfolds = 10,
                           fixed_global_shrinkage = NULL,
                           save_tunes = "p5_ssl_wolbersTuned_tunes")
@@ -855,4 +868,159 @@ testing$coefficients[testing$coefficients[,2]>0,]
 
 ```{r}
 p100_comparisons$ssl_minPenalty <- as.vector(testing$final_model_object$coef)
+```
+
+```{r}
+start_time <- Sys.time()
+testing <- one_sim(10)
+end_time <- Sys.time()
+
+print(end_time-start_time)
+
+```
+
+# Testing
+
+```{r}
+test <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 0.7),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = NULL)
+
+test_comparisons <- p5_comparisons %>%
+  select(True_beta, Fg)
+test_comparisons$test <- test$final_model_object$coef
+
+test_comparisons
+```
+
+```{r}
+test2 <- fit_ssl_psdh(p100$x,p100$y, ss = c(0.001, 0.7),
+                            initial_sparsity = 0.5,
+                            fixed_global_shrinkage  = NULL)
+
+test2_comparisons <- p100_comparisons %>%
+  select(True_beta, Fg)
+test2_comparisons$test2 <- test2$final_model_object$coef
+
+test2_comparisons
+```
+
+# Solution Path
+
+```{r}
+
+solution_paths <- p10_comparisons %>% 
+  mutate(Beta = paste0("B", 1:10))%>%
+  select(Beta, True_beta)%>%
+  pivot_wider(names_from = Beta,
+              values_from = True_beta)%>%
+  mutate(Model = "True",
+         s0 = NA,
+         s1 = NA)
+
+
+lapply(seq(0.01, 0.06, 0.025), function(x) fit_ssl_psdh(p10$x,p10$y, ss = c(x, 1),
+                            initial_sparsity = 0.5]))
+
+
+solution_path_func <- function(a, b, scenario=p10){
+ temp <-  fit_ssl_psdh(scenario$x,scenario$y, ss = c(a, b),
+                            initial_sparsity = 0.5)
+ 
+ ret <- as.vector(temp$final_model_object$coef)
+ 
+ ret
+  
+}
+
+solution_path_wrapper <- function(b, start, end, granularity, scenario = p10){
+  
+  path <- seq(start, end, granularity)
+  suppressWarnings({
+    res_1 <- sapply(path, function(x) solution_path_func(x, b, scenario = scenario))
+    })
+
+res <- as.data.frame(t(res_1)) %>%
+  mutate(s1 = b)
+res$s0 = path
+res <- res %>%
+  pivot_longer(cols = starts_with("V"),
+               names_to = "Beta", values_to = "Estimate")%>%
+  mutate(True = case_when(Beta == "V1" ~ 0.4,
+                          Beta == "V2" ~ -0.5,
+                          Beta == "V3" ~ 0.6,
+                          Beta == "V4" ~ 0.74,
+                          Beta == "V5" ~ -0.8,
+                          TRUE ~ 0))%>%
+  mutate(FG = case_when(Beta == "V1" ~ 0.542,
+                          Beta == "V2" ~ -0.373,
+                          Beta == "V3" ~ 0.5025,
+                          Beta == "V4" ~ 0.694,
+                          Beta == "V5" ~ -0.92,
+                          TRUE ~ 0))
+
+}
+
+
+
+  
+```
+
+## Reasoning
+
+When $\lambda_1=\lambda_0$ the model should reduce to regular LASSO.
+
+Under the normal model, when $(\lambda_1-\lambda_0)^2 < 4$ and $\sigma^2$ is fixed, the objective function is convex.
+
+## Separable penalty
+
+The spot where the spike and slab distributions intersect. $\delta = \frac{1}{\lambda_0-\lambda_1}log[1/p^*_{\theta}(0) - 1]$.
+
+![](images/clipboard-2529983126.png)
+
+```{r}
+
+res_1_broad <- solution_path_wrapper(1, 0.01, 1, 0.025)
+
+ggplot(res_1_broad %>%
+         filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))
+       )+
+  geom_point(aes(x=s0, y = Estimate, color = Beta))+
+  geom_hline(aes(yintercept = True, color = Beta), linetype = "dashed")+
+  geom_hline(aes(yintercept = FG, color = Beta))
+
+
+
+
+  
+```
+
+```{r}
+res_0.7_broad <- solution_path_wrapper(0.7, 0.01, 0.7, 0.025, scenario=p10)
+ggplot(res_0.7_broad %>%
+         filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))
+       )+
+  geom_point(aes(x=s0, y = Estimate, color = Beta))+
+  geom_hline(aes(yintercept = True, color = Beta), linetype = "dashed")+
+  geom_hline(aes(yintercept = FG, color = Beta))
+```
+
+```{r}
+solution_path_wrapper(0.7, 0.05, 0.7, 0.001, scenario = p5)%>%
+         filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+
+ggplot()+
+  geom_point(aes(x=s0, y = Estimate, color = Beta))+
+  geom_hline(aes(yintercept = True, color = Beta), linetype = "dashed")+
+  geom_hline(aes(yintercept = FG, color = Beta))
+```
+
+```{r}
+solution_path_wrapper(.6, 0.01, 0.6, 0.025, scenario = p10)%>%
+         filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+
+ggplot()+
+  geom_point(aes(x=s0, y = Estimate, color = Beta))+
+  geom_hline(aes(yintercept = True, color = Beta), linetype = "dashed")+
+  geom_hline(aes(yintercept = FG, color = Beta))
 ```

@@ -22,9 +22,23 @@
 #' @param epsilon Numeric. Convergence threshold: iteration stops when the
 #'   relative change in log-likelihood falls below this value (after at
 #'   least 5 iterations). Default \code{1e-04}.
-#' @param init Length-p numeric vector. Provide initial estimates. Otherwise leave as null to get initial estimates from non-adaptive LASSO.
-#' @param init_lam_path Numeric sequence vector. Path to define LASSO shrinkage parameter for the initializing model. Required if init is NULL.
-
+#' @param init_lam_path Numeric sequence vector. Path to define global shrinkage parameter for the initializing model.
+#' @param fixed_global_shrinkage NULL or numeric. If not null, the global
+#'   shrinkage parameter is coerced to the supplied value for each step in the
+#'   model, AND the (expensive) \code{cv_fastCrrp} search for the initializing
+#'   model is skipped: the supplied value is used directly as the initial
+#'   lambda. The tuned initial lambda (whether searched or supplied) is
+#'   returned in \code{$tuned_lambda}, so callers can capture it from one fit
+#'   and reuse it via \code{fixed_global_shrinkage} on subsequent fits to avoid
+#'   re-running the search.
+#' @param initial_shrinkage NULL or numeric scalar. A warm start for the
+#'   initializing model only: when supplied, the (expensive)
+#'   \code{cv_fastCrrp} search is skipped and this value is used directly as
+#'   the initial lambda seeding the EM algorithm. Unlike
+#'   \code{fixed_global_shrinkage}, it does \emph{not} pin the global
+#'   shrinkage for the subsequent EM iterations, which continue to update
+#'   lambda normally. Takes precedence over \code{fixed_global_shrinkage}
+#'   for seeding the initial model.
 #'
 #' @returns A \code{fastCrrp} model object augmented with additional fields:
 #'   \describe{
@@ -36,6 +50,11 @@
 #'       penalty weights from the last EM iteration.}
 #'     \item{\code{$lambda}}{Numeric. The LASSO tuning parameter used at
 #'       convergence.}
+#'     \item{\code{$tuned_lambda}}{Numeric. The initial global shrinkage
+#'       lambda used to seed the EM algorithm: the \code{cv_fastCrrp}
+#'       \code{lambda_min} when \code{fixed_global_shrinkage} is \code{NULL},
+#'       otherwise the supplied \code{fixed_global_shrinkage}. Intended for
+#'       caching and reuse across fits with the same data folds.}
 #'     \item{\code{$ss}}{The \code{ss} argument as supplied.}
 #'   }
 #'
@@ -51,34 +70,16 @@
 #' fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05)
 #' fit$coefficients
 #' }
-fit_ssl_psdh <- function(x, y,
+archive_fit_ssl_psdh <- function(x, y,
                          ss=c(0.04, 0.5),
                          initial_sparsity = 0.05,
                          maxit = 50,
                          epsilon=1e-04,
-                         init = NULL,
                          init_lam_path = 10^seq(log10(0.1),
                                                 log10(0.001),
-                                                length = 10)){
-
-  #Requirements (to add once fastCrrp back on CRAN)
-  #if (!requireNamespace("fastcmprsk")) install.packages("glmnet")
-  #require(fastcmprsk)
-
-  #Input checks
-  if(maxit < 1) stop("maxit must be positive integer.")
-  if(epsilon <= 0) stop("epsilon must be a positive number.")
-  if(length(ss)!=2) stop("ss must be a vector of length 2")
-  if(ss[1]>ss[2]){
-    ss<- sort(ss)
-    print("ss warning, scale values supplied out of order. Spike scale taken as ss[1] and slab scale taken as ss[2].")
-  }
-  if(!is.null(init)){
-    if(!is.numeric(init) | length(init)!=ncol(x)){
-      stop("provide initial value to each coefficient (no intercept) or leave NULL")
-    }
-  }
-  if(nrow(x) != nrow(y)) stop("x and y must have the same number of rows")
+                                                length = 25),
+                         fixed_global_shrinkage = NULL,
+                         initial_shrinkage = NULL){
 
   .dedupe_warnings({
 
@@ -86,62 +87,61 @@ fit_ssl_psdh <- function(x, y,
     ss1 <- ss[2]
 
     #Initial penalty weights
-     ##expected inclusion probs all equal to initial sparsity
+    ##expected inclusion probs all equal to initial sparsity
     current_mixture_prob <- initial_sparsity
     current_inclusion_probs <- rep(initial_sparsity, ncol(x))
-    current_penalty_weights <- expected_penalty_weights(ss0,
-                                                        ss1,
+    current_penalty_weights <- expected_penalty_weights(ss1,
+                                                        ss0,
                                                         current_inclusion_probs)
 
 
 
-    #Initial estimates
-    if(!is.null(init)){
-      #If provided
-      current_betas <- init
-
-    }else{
-      #If init==NULL
-
-      ## to-do: add in overall arguments to the larger function that can be supplied here (tuning type and eval_quantile)
-      init_mod_search <- cv_fastCrrp_cpp(x, y[,1], y[,2], k = 5,
+    #Initial model with non-adaptive lasso
+    # Determine the lambda used to seed the initial (non-adaptive lasso) model.
+    # Priority:
+    #   1. initial_shrinkage  - a warm start for the initial model ONLY. Skips
+    #      the expensive cv_fastCrrp search; the EM iterations below still
+    #      update lambda normally (it is NOT pinned).
+    #   2. a scalar fixed_global_shrinkage - skips the search AND pins lambda
+    #      at every EM iteration (see the M-step below).
+    #   3. otherwise (NULL or a vector fixed_global_shrinkage, e.g. a lambda
+    #      path) - the cv_fastCrrp search seeds the initial model.
+    if(!is.null(initial_shrinkage)){
+      current_lambda <- initial_shrinkage
+    } else if(is.null(fixed_global_shrinkage) || length(fixed_global_shrinkage) > 1){
+      init_mod_search <- cv_fastCrrp(x, y[,1], y[,2], k = 5,
                                      penalty = "LASSO",
                                      lambda_path = init_lam_path,
                                      tuning = "wolbers",
                                      eval_quantile = 0.5)
-      current_betas <- init_mod_search$full_model$coef[,
-        init_mod_search$lambda == init_mod_search$lambda_min]
-
-      # current_betas[abs(current_betas)<0.001] <- mean(current_betas[abs(current_betas)>0])
-
-       # current_mixture_prob <- sum(abs(current_betas)>0)/length(current_betas)
-       # current_inclusion_probs <- rep(current_mixture_prob, ncol(x))
-       #
-       # current_betas <- rep(mean(current_betas), length(current_betas))
-
+      current_lambda <- init_mod_search$lambda_min
+    } else {
+      current_lambda <- fixed_global_shrinkage
     }
 
+    # The tuned (or supplied) initial lambda; returned so it can be cached
+    # and reused as fixed_global_shrinkage on subsequent fits.
+    tuned_lambda <- current_lambda
 
-    # current_penalty_weights <- expected_penalty_weights(ss0,
-    #                                                     ss1,
-    #                                                     current_inclusion_probs)
+    init_mod <- fastcmprsk::fastCrrp(
+      Crisk(
+        y[,1],
+        y[,2],
+        cencode = 0,
+        failcode = 1
+      ) ~ x,
+      penalty = "LASSO",
+      lambda = current_lambda
+    )
+    current_betas <- init_mod$coef
 
-    betas_path <- data.frame("Initial" = current_betas)
-    pips_path <- data.frame("Initial" = current_inclusion_probs)
 
+    #Initial likelihood
+    devold <- 0
 
-
-
-
-
-
-
-    #Initial deviance
-    previous_dev <- 0
     outer_convergence <- FALSE
     iterations <- 0
     for(iter in 1:maxit){
-      previous_betas <- current_betas
 
 
 
@@ -149,17 +149,16 @@ fit_ssl_psdh <- function(x, y,
       # Update inclusion probabilites (gamma_j)
 
 
-      current_inclusion_probs <- expected_inclusion_probs(ss0, ss1,
-                                                        current_inclusion_probs,
-                                                        current_betas,
-                                                        exact = ncol(x)<nrow(x))
+      current_inclusion_probs <- expected_inclusion_probs(ss1, ss0,
+                                                          current_inclusion_probs,
+                                                          current_betas)
 
 
 
       # Update penalty weights (inverse S_j)
-      current_penalty_weights <- expected_penalty_weights(ss0,
-                                                       ss1,
-                                                       current_inclusion_probs)
+      current_penalty_weights <- expected_penalty_weights(ss1,
+                                                          ss0,
+                                                          current_inclusion_probs)
       penalties <- ifelse(abs(current_penalty_weights) < 1e-10,
                           1e-10,
                           current_penalty_weights)
@@ -174,6 +173,10 @@ fit_ssl_psdh <- function(x, y,
 
       # Update shrinkage (lambda)
       current_lambda <- 1/nrow(x)
+      if(!is.null(fixed_global_shrinkage)){
+        current_lambda <- fixed_global_shrinkage}
+
+
 
       # Update regression coefficients (betas)
       mod <- update_betas(penalties,
@@ -184,29 +187,15 @@ fit_ssl_psdh <- function(x, y,
 
       current_betas <- mod$coef
 
-      betas_path[,iter+1] <- current_betas
-      pips_path[,iter+1]<- current_inclusion_probs
+      logLik <- mod$logLik
 
+      # # Convergence check (using log-likelihood)
 
-
-      dev <- -2*mod$logLik
-
-      ##Convergence check
-      ##using deviance as necessary and stability as sufficient
-
-      #necessary condition
-      if(iter > 5 && abs(dev - previous_dev) < epsilon) {
-        #sufficient condition
-
-        #to-do: optimize efficiency
-        unstable <- sum(abs(current_betas - previous_betas) > epsilon)
-
-        if(unstable < 1){
+      if(iter > 5 && abs(logLik - devold)/(0.1 + abs(logLik)) < epsilon) {
         outer_convergence <- TRUE
         break
-        }
       }
-      previous_dev <- dev
+      devold <- logLik
       iterations <- iterations+1
 
 
@@ -220,29 +209,16 @@ fit_ssl_psdh <- function(x, y,
     ret$y <- y
     ret$coefficients <- coefficients_df
     ret$penalty.factor <- penalties
+    ret$lambda <- mod$lambda.path
+    ret$tuned_lambda <- tuned_lambda
     ret$ss <- ss
     ret$conv <- outer_convergence
     ret$iterations <- iterations
     ret$pips <- current_inclusion_probs
     ret$final_model_object <-mod
 
-    return(list(ret, betas_path, pips_path))
+    return(ret)
 
   })
 
 }
-
-
-# test1 <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 1))
-# test2 <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.05, 1))
-#
-#
-# test3 <- fit_ssl_psdh(p10$x,p10$y, ss = c(0.025, .5), initial_sparsity = 0.5)
-# data.frame("inclusion_prob" = unname(test3$pips),
-#            "penalty_weights" = unname(test3$penalty.factor),
-#            "est" = as.vector(test3$coefficients[,2]))
-
-
- # test4 <- fit_ssl_psdh(p100$x,p100$y, ss = c(0.1, 1), initial_sparsity = 0.2)
- # test4[[2]]%>%filter(abs(Initial)>0.01)
- # test4[[2]]%>%filter(abs(Initial)<0.01)
