@@ -18,12 +18,26 @@
 #' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
 #'   global mixture probability (prior proportion of active features).
 #'   Default \code{0.05}.
+#' @param theta_a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
+#'   prior on the global mixture probability \eqn{\theta}. Default \code{1}.
+#' @param theta_b Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)}
+#'   prior on \eqn{\theta}. The default \code{ncol(x)} (i.e. \eqn{p}) gives
+#'   the paper's non-separable \eqn{Beta(1, p)} calibration, which drives
+#'   \eqn{\theta} toward the true sparsity \eqn{q/p} and adaptively shrinks
+#'   noise coefficients. Set \code{theta_b = 1} to recover the flat
+#'   \eqn{Beta(1, 1)} (separable-like) behaviour.
 #' @param maxit Integer. Maximum number of EM iterations. Default \code{50}.
 #' @param epsilon Numeric. Convergence threshold: iteration stops when the
 #'   relative change in log-likelihood falls below this value (after at
 #'   least 5 iterations). Default \code{1e-04}.
 #' @param init Length-p numeric vector. Provide initial estimates. Otherwise leave as null to get initial estimates from non-adaptive LASSO.
 #' @param init_lam_path Numeric sequence vector. Path to define LASSO shrinkage parameter for the initializing model. Required if init is NULL.
+#' @param inner_maxit_start Integer. Starting value for the inner
+#'   \code{fastCrrp} iteration budget (\code{max.iter}) used in the M-step.
+#'   If the inner solver fails to converge, this is escalated by 200 per
+#'   refit up to a ceiling of 2000; if it still has not converged the EM
+#'   stops and \code{conv} is returned as \code{FALSE}. The escalated value
+#'   is carried across EM iterations. Default \code{1000}.
 
 #'
 #' @returns A \code{fastCrrp} model object augmented with additional fields:
@@ -54,12 +68,15 @@
 fit_ssl_psdh <- function(x, y,
                          ss=c(0.04, 0.5),
                          initial_sparsity = 0.05,
+                         theta_a = 1,
+                         theta_b = ncol(x),
                          maxit = 50,
                          epsilon=1e-04,
                          init = NULL,
                          init_lam_path = 10^seq(log10(0.1),
                                                 log10(0.001),
-                                                length = 10)){
+                                                length = 10),
+                         inner_maxit_start = 1000){
 
   #Requirements (to add once fastCrrp back on CRAN)
   #if (!requireNamespace("fastcmprsk")) install.packages("glmnet")
@@ -129,6 +146,9 @@ fit_ssl_psdh <- function(x, y,
     betas_path <- data.frame("Initial" = current_betas)
     pips_path <- data.frame("Initial" = current_inclusion_probs)
 
+    inner_maxit <- inner_maxit_start
+
+
 
 
 
@@ -152,7 +172,9 @@ fit_ssl_psdh <- function(x, y,
       current_inclusion_probs <- expected_inclusion_probs(ss0, ss1,
                                                         current_inclusion_probs,
                                                         current_betas,
-                                                        exact = ncol(x)<nrow(x))
+                                                        exact = ncol(x)<nrow(x),
+                                                        a = theta_a,
+                                                        b = theta_b)
 
 
 
@@ -168,24 +190,52 @@ fit_ssl_psdh <- function(x, y,
 
 
       # M-Step
-      # Update mixture prob (pi)
-      current_mixture_prob <- mean(current_inclusion_probs)
+      # Update mixture prob (pi) under the Beta(theta_a, theta_b) prior
+      current_mixture_prob <- update_mixture_prob(current_inclusion_probs,
+                                                  a = theta_a,
+                                                  b = theta_b)
 
 
       # Update shrinkage (lambda)
       current_lambda <- 1/nrow(x)
 
       # Update regression coefficients (betas)
+      # Fit with the current inner iteration budget.
       mod <- update_betas(penalties,
                           y[,1], y[,2], x,
                           cencode_num = 0,
                           failcode_num = 1,
-                          lambda = current_lambda)
+                          lambda = 1,
+                          max.iter = inner_maxit)
+                          #lambda = current_lambda)
+
+      # If fastCrrp did not converge, escalate the inner iteration budget by
+      # 200 and refit, up to a ceiling of 2000. inner_maxit is defined
+      # outside the EM loop, so once escalated it stays escalated for
+      # subsequent iterations (which tend to need at least as many inner
+      # iterations as the one that first stalled).
+      while(mod$converged == 0 && inner_maxit < 20000){
+        inner_maxit <- inner_maxit + 200
+        mod <- update_betas(penalties,
+                            y[,1], y[,2], x,
+                            cencode_num = 0,
+                            failcode_num = 1,
+                            lambda = 1,
+                            max.iter = inner_maxit)
+      }
 
       current_betas <- mod$coef
 
       betas_path[,iter+1] <- current_betas
       pips_path[,iter+1]<- current_inclusion_probs
+
+      # Inner solver hit the iteration ceiling without converging: the
+      # M-step estimate can't be trusted, so stop the EM and report
+      # non-convergence of the outer loop.
+      if(mod$converged == 0){
+        outer_convergence <- FALSE
+        break
+      }
 
 
 
@@ -212,6 +262,12 @@ fit_ssl_psdh <- function(x, y,
 
     }#end iter loop
 
+    if(!outer_convergence){
+      warning(sprintf(
+        "fit_ssl_psdh did not converge within maxit = %d EM iterations; consider increasing maxit or relaxing epsilon.",
+        maxit))
+    }
+
     coefficients_df <- data.frame("Variable" = colnames(x),
                                   "Estimate" = mod$coef)
 
@@ -225,8 +281,10 @@ fit_ssl_psdh <- function(x, y,
     ret$iterations <- iterations
     ret$pips <- current_inclusion_probs
     ret$final_model_object <-mod
+    ret$betas_path <- betas_path
+    ret$pips_path <- pips_path
 
-    return(list(ret, betas_path, pips_path))
+    return(ret)
 
   })
 

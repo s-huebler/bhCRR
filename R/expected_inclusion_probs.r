@@ -31,7 +31,8 @@
 #' expected_inclusion_probs(s1 = 0.5, s0 = 0.04, pi = 0.1, betas = betas)
 #' }
 expected_inclusion_probs <- function(s0, s1, pips, betas,
-                                     exact = FALSE) {
+                                     exact = FALSE,
+                                     a = 1, b = 1) {
 
 
   #if(exact == FALSE){
@@ -43,13 +44,25 @@ expected_inclusion_probs <- function(s0, s1, pips, betas,
   #p(gammaj = 1 | pi)
   #p(gammaj = 0 | pi)
 
+  # if(exact){
+  # prior_Slab <- leave_one_out_mean(pips)
+  # prior_Spike <- 1-leave_one_out_mean(pips)
+  # }else{
+  #   prior_Slab <- mean(pips)
+  #   prior_Spike <- 1-mean(pips)
+  # }
+
+  p <- length(pips)
+
   if(exact){
-  prior_Slab <- leave_one_out_mean(pips)
-  prior_Spike <- 1-leave_one_out_mean(pips)
+    # leave-one-out Beta(a, b) mode: drop coordinate j from the numerator
+    # sum and from the coefficient count in the denominator
+    prior_Slab  <- (sum(pips) - pips + a - 1) / ((p - 1) + a + b - 2)
   }else{
-    prior_Slab <- mean(pips)
-    prior_Spike <- 1-mean(pips)
+    # global Beta(a, b) mode: (sum(pips) + a - 1) / (p + a + b - 2)
+    prior_Slab  <- (sum(pips) + a - 1) / (p + a + b - 2)
   }
+  prior_Spike <- 1 - prior_Slab
 
   ret <- dens_Slab * prior_Slab / (dens_Spike * prior_Spike + dens_Slab * prior_Slab)
   # }else if(exact == TRUE){

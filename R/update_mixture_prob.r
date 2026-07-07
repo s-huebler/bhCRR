@@ -21,4 +21,7 @@
 #'                                   betas = rnorm(100))
 #' update_mixture_prob(probs)
 #' }
-update_mixture_prob <- function(p){mean(p)}
+update_mixture_prob <- function(p, a = 1, b = 1){
+  #mean(p)
+  (sum(p) + a - 1) / (length(p) + a + b - 2)
+  }

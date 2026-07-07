@@ -87,7 +87,7 @@ cv_fastCrrp_cpp <- function(x, time, status, k = 5, penalty = "LASSO",
 
     # 3. Predictions + concordance for every lambda, computed in C++.
     eval_time <- if (tuning == "wolbers") {
-      as.numeric(quantile(time_train, eval_quantile))
+      as.numeric(quantile(time_train[status_train == 1], eval_quantile))
     } else {
       0
     }

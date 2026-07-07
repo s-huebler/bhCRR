@@ -1,0 +1,341 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{mathtools}
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{proposition}{Proposition}
+\newtheorem{remark}{Remark}
+
+\newcommand{\bbeta}{\bm{\beta}}
+\newcommand{\bhat}{\widehat{\beta}}
+\newcommand{\pstar}{p^{\star}}
+\newcommand{\lstar}{\lambda^{\star}}
+\newcommand{\thetahat}{\widehat{\theta}}
+\newcommand{\Estar}{\mathrm{E}}
+\newcommand{\lamdiff}{(\lambda_0-\lambda_1)}
+\newcommand{\betasub}{\bhat_{\backslash j}}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+\title{The Zero Gap of the Spike-and-Slab LASSO Global Mode:\\
+An Expanded Derivation and its Relation to the Adaptive Threshold}
+\author{Sophie Huebler}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\noindent
+This note expands the remark at the end of Section~3.1 of Ro\v{c}kov\'a and
+George (2018), \emph{The Spike-and-Slab LASSO}. We prove that the nonzero
+coordinates of the global mode are bounded away from zero (the \emph{zero
+gap}), and we relate this magnitude floor $\delta_j$ to the adaptive selection
+threshold $\Delta_j$ of Theorem~4. Equation numbers in parentheses refer to
+that paper.
+
+\section{The claim}
+
+Under the conditions of Theorem~4, the global mode $\bhat$ has a \emph{zero
+gap}: every coordinate is either exactly zero or bounded away from zero, with
+\begin{equation}\label{eq:claim}
+  |\bhat_j| > \delta_j
+  \qquad\text{whenever } \bhat_j \neq 0,
+\end{equation}
+where $\delta_j$ is the unique solution of $\pstar_{\thetahat_j}(\delta_j)=c_+$,
+with $\thetahat_j = \Estar[\theta \mid \betasub]$ and
+\begin{equation}\label{eq:cplus}
+  c_+ = \tfrac{1}{2}\Bigl(1 + \sqrt{1 - 4n/\lamdiff^2}\,\Bigr).
+\end{equation}
+This is the nonseparable analogue of the Section~2 statement
+$|\bhat_j| > \delta_{c_+}$ (attributed to Lemma~4.1 of Ro\v{c}kov\'a 2015).
+Because the coordinatewise problem freezes $\theta$ at $\thetahat_j$, the proof
+is identical to the separable one with $\theta = \thetahat_j$; the only new
+feature is that the threshold is coordinate-specific and data-driven.
+
+\section{Univariate reduction}
+
+By (3.12), with $z=z_j>0$ fixed (WLOG, so $\bhat_j\ge 0$) and
+$\theta=\thetahat_j$ held fixed,
+\begin{equation}\label{eq:uniobj}
+  \bhat_j = \argmax_{\beta}\; Q(\beta),
+  \qquad
+  Q(\beta) = -\tfrac{1}{2}(z-n\beta)^2 + n\,\rho(\beta\mid\theta),
+\end{equation}
+where $\rho$ is the separable singleton penalty (2.2),
+\begin{equation}\label{eq:rho}
+  \rho(\beta\mid\theta)
+    = -\lambda_1|\beta| + \log\!\bigl[\pstar_\theta(0)/\pstar_\theta(\beta)\bigr].
+\end{equation}
+
+\section{Derivatives and the curvature of the penalty}
+
+From Lemma~1, $\rho'(\beta) = -\lstar_\theta(\beta)$ with
+$\lstar_\theta(\beta) = \lambda_1\pstar_\theta(\beta) + \lambda_0[1-\pstar_\theta(\beta)]
+= \lambda_0 - \lamdiff\,\pstar_\theta(\beta)$.
+Differentiating the exponential mixing weight (2.6) gives the logistic identity
+\begin{equation}\label{eq:pprime}
+  \pstar_\theta{}'(\beta) = \lamdiff\,\pstar_\theta(\beta)\bigl[1-\pstar_\theta(\beta)\bigr],
+\end{equation}
+so the penalty's second derivative is
+\begin{equation}\label{eq:rhosecond}
+  \rho''(\beta) = \lamdiff^2\,\pstar_\theta(\beta)\bigl[1-\pstar_\theta(\beta)\bigr].
+\end{equation}
+Its maximum over $\beta$ is the maximal nonconcavity
+$\kappa = \tfrac14\lamdiff^2$ (attained at $\pstar_\theta=\tfrac12$), matching
+p.~433. Hence
+\begin{equation}\label{eq:Qderiv}
+  Q'(\beta) = n\bigl[z - n\beta - \lstar_\theta(\beta)\bigr],
+  \qquad
+  Q''(\beta) = n\bigl[\rho''(\beta) - n\bigr].
+\end{equation}
+
+\section{The second-order condition forces $\bhat$ onto the upper branch}
+
+If $\bhat>0$ is the global maximizer it is in particular a local maximizer, so
+$Q''(\bhat)\le 0$, i.e.\ $\rho''(\bhat)\le n$. With $u := \pstar_\theta(\bhat)$
+and \eqref{eq:rhosecond},
+\begin{equation}\label{eq:soc}
+  \lamdiff^2\, u(1-u) \le n
+  \iff
+  u(1-u) \le \frac{n}{\lamdiff^2}
+  \iff
+  u^2 - u + \frac{n}{\lamdiff^2} \ge 0.
+\end{equation}
+The quadratic in \eqref{eq:soc} is nonnegative iff
+\begin{equation}\label{eq:branches}
+  u \le c_-
+  \quad\text{or}\quad
+  u \ge c_+,
+  \qquad
+  c_\mp = \tfrac{1}{2}\Bigl(1 \mp \sqrt{1-4n/\lamdiff^2}\Bigr),
+\end{equation}
+with real, distinct roots precisely when $\lamdiff^2 > 4n$. Thus no local
+maximum can lie in the curvature band $c_- < \pstar_\theta(\beta) < c_+$, where
+$Q$ is strictly convex ($Q''>0$). Consequently $Q$ is concave--convex--concave
+in $\beta$, and the only nonzero maximizer candidates are a point on the
+\emph{lower} branch ($\pstar_\theta \le c_-$, small $\beta$) or the \emph{upper}
+branch ($\pstar_\theta \ge c_+$, larger $\beta$).
+
+\paragraph{Excluding the lower branch.}
+Write $h(\beta) := Q'(\beta)/n = z - n\beta - \lstar_\theta(\beta)$, so by
+\eqref{eq:Qderiv} $h'(\beta) = \rho''(\beta) - n$ shares the sign pattern of
+\eqref{eq:branches}: $h$ decreases on $(0,\delta_{c_-})$, increases across the
+convex band, and decreases again for $\beta > \delta_{c_+}$. Near the origin the
+spike slope dominates, $\lstar_\theta(0)\approx\lambda_0$, so $Q$ falls away
+from $0$ across the first concave piece and any lower-branch stationary point is
+dominated by the mode at $0$. The condition $g_\theta(0)>0$ --- equivalently
+$\lstar_\theta(0) > \sqrt{2n\log[1/\pstar_\theta(0)]} + \lambda_1$ (p.~435) ---
+is exactly what guarantees this domination, so the only nonzero value that can
+beat $Q(0)$ lies on the upper decreasing branch. (This is the content of
+Lemma~4.1 of Ro\v{c}kov\'a 2015; the second-order argument above is the crux.)
+Hence a nonzero global mode satisfies $\pstar_\theta(\bhat)\ge c_+$.
+
+\section{Converting the branch condition into the magnitude floor}
+
+Since $\pstar_\theta$ is strictly increasing,
+$\pstar_\theta(\bhat)\ge c_+ \iff \bhat \ge \delta_j$, where $\delta_j$ solves
+$\pstar_{\thetahat_j}(\delta_j)=c_+$. Solving (2.6) explicitly,
+\begin{equation*}
+  c_+ = \Bigl[1 + \tfrac{\lambda_0}{\lambda_1}\tfrac{1-\theta}{\theta}
+        e^{-\delta_j\lamdiff}\Bigr]^{-1},
+\end{equation*}
+gives
+\begin{equation}\label{eq:delta}
+  \boxed{\;
+  \delta_j = \frac{1}{\lamdiff}\,
+    \log\!\left[
+      \frac{1-\thetahat_j}{\thetahat_j}\cdot
+      \frac{\lambda_0}{\lambda_1}\cdot
+      \frac{c_+}{1-c_+}
+    \right].
+  \;}
+\end{equation}
+With a single fixed $\theta$ this is exactly $\delta_{c_+}$ of Section~2; with
+$\thetahat_j = \Estar[\theta\mid\betasub]$ it becomes the coordinate-specific
+gap. Because $z>\Delta_j$ at selection places the stationary point strictly
+interior to the upper branch, the inequality is strict, establishing
+$|\bhat_j| > \delta_j$ and hence \eqref{eq:claim}. \qed
+
+\section{Relation to the adaptive threshold $\Delta_j$ of Theorem~4}
+
+The two thresholds answer different questions and arise from different parts of
+the same geometry.
+
+\medskip
+\noindent\textbf{$\Delta_j$ is a threshold on the data $z_j$ --- it governs
+\emph{selection}.} By Theorem~3, $\bhat_j = 0 \iff |z_j|\le\Delta_j$, and
+Theorem~4 bounds it by $\Delta_j^L < \Delta_j < \Delta_j^U$ with
+$\Delta_j^U = \sqrt{2n\log[1/\pstar_{\thetahat_j}(0)]} + \lambda_1$. It is a
+\emph{global} comparison --- the value of $z_j$ at which $Q(\bhat)$ overtakes
+$Q(0)$ --- which is why its scale is $\sqrt{2n\log[1/\pstar_{\thetahat_j}(0)]}$
+and it is driven by $\pstar_{\thetahat_j}(0)$, the shrinkage at the origin.
+
+\medskip
+\noindent\textbf{$\delta_j$ is a threshold on the estimate $\bhat_j$ --- it
+governs the \emph{magnitude} of whatever survives selection.} It is a
+\emph{local} condition: the boundary $Q''=0$ of the concave region, which is why
+its scale is set by $c_+$, i.e.\ by $\lamdiff^2$ versus $n$, rather than by
+$\pstar_{\thetahat_j}(0)$.
+
+\medskip
+They are tied together in three ways.
+
+\begin{enumerate}
+\item \textbf{Same adaptive driver.} Both inherit coordinate-adaptivity from the
+single learned quantity $\thetahat_j = \Estar[\theta\mid\betasub]$. As more
+sparsity is detected in $\betasub$, $\thetahat_j$ falls; this raises
+$\Delta_j^U$ (a smaller $\pstar_{\thetahat_j}(0)$, harder to enter the model)
+while simultaneously raising $\delta_j$ (through the
+$(1-\thetahat_j)/\thetahat_j$ factor in \eqref{eq:delta}). The
+Scott--Berger multiplicity adjustment thus moves the selection threshold and the
+gap \emph{in concert}, coordinate by coordinate --- the nonseparable counterpart
+of the single fixed pair $(\Delta^U,\delta_{c_+})$ in Section~2.
+
+\item \textbf{The selection threshold \emph{creates} the gap.} At the exact
+selection boundary $z_j = \Delta_j$ the competing nonzero maximizer is already on
+the upper branch ($\pstar_\theta \ge c_+$). So as $z_j$ crosses $\Delta_j$ the
+estimate jumps discontinuously from $0$ to a value already exceeding $\delta_j$
+--- the hard-thresholding face of the ``blend of soft- and hard-thresholding''
+in Theorem~3. There is no continuum of tiny nonzero estimates; that is precisely
+the zero gap.
+
+\item \textbf{Common large-$\lambda_0$ limit.} As $\lamdiff\to\infty$,
+$c_+\to 1$ and $1-c_+ = c_- \to n/\lamdiff^2$, so
+$c_+/(1-c_+) \approx \lamdiff^2/n$ and
+\begin{equation*}
+  \delta_j \approx \frac{1}{\lamdiff}
+    \log\!\left[
+      \frac{1-\thetahat_j}{\thetahat_j}\cdot
+      \frac{\lambda_0}{\lambda_1}\cdot
+      \frac{\lamdiff^2}{n}
+    \right] \longrightarrow 0.
+\end{equation*}
+The gap floor vanishes while $\Delta_j\to\Delta_j^U$, so the estimator
+approaches the $\ell_0$/hard-threshold limit in which selection is controlled
+entirely by $\Delta_j$ and surviving coefficients are essentially unbiased ---
+matching the Section~2 remark that $\Delta\to\Delta^U$ for large $\lamdiff$.
+\end{enumerate}
+
+\medskip
+\noindent
+In short: $\Delta_j$ (from the \emph{global} value comparison, scale
+$\sqrt{2n\log[1/\pstar_{\thetahat_j}(0)]}$) decides \emph{whether} a coordinate
+is nonzero; $\delta_j$ (from the \emph{local} curvature boundary, scale set by
+$c_+$) decides \emph{how small a nonzero coordinate can be}. Both are made
+coordinate-adaptive by $\thetahat_j$, and they meet at the selection boundary,
+which is what makes the gap appear.
+
+\appendix
+
+\section{The penalty derivative: a detailed derivation of Lemma~1}
+\label{app:lemma1}
+
+The proof of Lemma~1 opens from the identity
+\begin{equation}\label{eq:lem1start}
+  \frac{\partial\,\mathrm{pen}_S(\bbeta\mid\theta)}{\partial|\beta_j|}
+  = \pstar_\theta(\beta_j)\,
+      \frac{\partial\log\psi_1(\beta_j)}{\partial|\beta_j|}
+  + \bigl[1-\pstar_\theta(\beta_j)\bigr]\,
+      \frac{\partial\log\psi_0(\beta_j)}{\partial|\beta_j|}.
+\end{equation}
+It is worth noting that \eqref{eq:lem1start} is \emph{not} the derivative of the
+regrouped singleton (2.2); it is the derivative of the original mixture form
+(2.1), and (2.2) is an algebraically equivalent regrouping of the same object.
+We record both routes.
+
+\paragraph{Setup.}
+The two Laplace components (1.3) are
+\begin{equation*}
+  \psi_1(\beta) = \tfrac{\lambda_1}{2}e^{-\lambda_1|\beta|},
+  \qquad
+  \psi_0(\beta) = \tfrac{\lambda_0}{2}e^{-\lambda_0|\beta|},
+\end{equation*}
+each depending on $\beta$ only through $t=|\beta|$, so that
+\begin{equation}\label{eq:logscore}
+  \frac{\partial\log\psi_1}{\partial|\beta|} = -\lambda_1,
+  \qquad
+  \frac{\partial\log\psi_0}{\partial|\beta|} = -\lambda_0.
+\end{equation}
+The per-coordinate term of the penalty, \emph{before} the rewrite into (2.2), is
+the mixture form (2.1),
+\begin{equation*}
+  s(\beta_j) = \log\bigl[\theta\psi_1(\beta_j)+(1-\theta)\psi_0(\beta_j)\bigr]
+             - \log\bigl[\theta\psi_1(0)+(1-\theta)\psi_0(0)\bigr],
+\end{equation*}
+whose second bracket is constant in $\beta_j$.
+
+\paragraph{Where \eqref{eq:lem1start} comes from.}
+Write the mixture density $f(\beta) := \theta\psi_1(\beta)+(1-\theta)\psi_0(\beta)$.
+Then, with ${}'$ denoting $\partial/\partial|\beta|$,
+\begin{equation*}
+  \frac{\partial s}{\partial|\beta_j|}
+  = \frac{\partial\log f}{\partial|\beta_j|}
+  = \frac{f'}{f}
+  = \frac{\theta\psi_1'(\beta_j)+(1-\theta)\psi_0'(\beta_j)}{f}.
+\end{equation*}
+Applying the standard log-mixture derivative identity --- multiply and divide
+each term by its own component density ---
+\begin{equation*}
+  \frac{f'}{f}
+  = \frac{\theta\psi_1}{f}\cdot\frac{\psi_1'}{\psi_1}
+  + \frac{(1-\theta)\psi_0}{f}\cdot\frac{\psi_0'}{\psi_0}
+  = \frac{\theta\psi_1}{f}\,\frac{\partial\log\psi_1}{\partial|\beta_j|}
+  + \frac{(1-\theta)\psi_0}{f}\,\frac{\partial\log\psi_0}{\partial|\beta_j|}.
+\end{equation*}
+The two weights are exactly the conditional mixing probability (2.4) and its
+complement,
+\begin{equation}\label{eq:responsibility}
+  \frac{\theta\psi_1(\beta_j)}{f} = \pstar_\theta(\beta_j),
+  \qquad
+  \frac{(1-\theta)\psi_0(\beta_j)}{f} = 1-\pstar_\theta(\beta_j),
+\end{equation}
+which yields \eqref{eq:lem1start}. Thus the identity is the score of a
+log-mixture, equal to the \emph{responsibility-weighted average of the component
+scores}. Here $\pstar_\theta(\beta_j)$ is not incidental: it is the posterior
+probability $\mathrm{P}(\gamma_j=1\mid\beta_j,\theta)$ of (2.6), i.e.\ the
+responsibility that the slab $\psi_1$ generated $\beta_j$ --- the same weight
+that appears in the E-step of EM --- which is why it drops out immediately.
+Substituting \eqref{eq:logscore},
+\begin{equation*}
+  \frac{\partial\,\mathrm{pen}_S(\bbeta\mid\theta)}{\partial|\beta_j|}
+  = -\lambda_1\pstar_\theta(\beta_j) - \lambda_0\bigl[1-\pstar_\theta(\beta_j)\bigr]
+  = -\lstar_\theta(\beta_j),
+\end{equation*}
+which is (2.7). \qed
+
+\paragraph{Reconciliation with the regrouped form (2.2).}
+Differentiating (2.2) directly must give the same answer; it merely hides the
+mixture step inside the $\pstar$ term. From
+$\rho(\beta_j\mid\theta) = -\lambda_1|\beta_j| + \log\pstar_\theta(0)
+- \log\pstar_\theta(\beta_j)$,
+\begin{equation*}
+  \frac{\partial\rho}{\partial|\beta_j|}
+  = -\lambda_1 - \frac{\partial\log\pstar_\theta(\beta_j)}{\partial|\beta_j|}.
+\end{equation*}
+Evaluating the last derivative still requires the mixture: since
+$\log\pstar_\theta = \log\theta + \log\psi_1 - \log f$,
+\begin{equation*}
+  \frac{\partial\log\pstar_\theta}{\partial|\beta_j|}
+  = \frac{\partial\log\psi_1}{\partial|\beta_j|}
+    - \frac{\partial\log f}{\partial|\beta_j|}
+  = -\lambda_1 - \bigl(-\lstar_\theta(\beta_j)\bigr)
+  = \lstar_\theta(\beta_j) - \lambda_1,
+\end{equation*}
+using $\partial\log f/\partial|\beta_j| = -\lstar_\theta(\beta_j)$ from above.
+Hence
+\begin{equation*}
+  \frac{\partial\rho}{\partial|\beta_j|}
+  = -\lambda_1 - \bigl(\lstar_\theta(\beta_j)-\lambda_1\bigr)
+  = -\lstar_\theta(\beta_j),
+\end{equation*}
+in agreement. The two forms coincide because (2.2) is the ``LASSO piece plus
+$\log\pstar$ correction'' regrouping of (2.1) (the passage from 2.1 to 2.3);
+but differentiating (2.2) directly forces one to compute
+$\partial\log\pstar_\theta/\partial|\beta_j|$, which reintroduces the mixture.
+Differentiating the mixture form first lets the log-derivative identity
+\eqref{eq:responsibility} collapse everything to the $\pstar$-weighted average
+in a single line.
+
+\end{document}

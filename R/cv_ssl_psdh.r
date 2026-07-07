@@ -90,7 +90,7 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
   n <- NROW(y)
   nfolds <- max(foldid)
 
-  eval_time <- as.numeric(quantile(y[,1], eval_quantile))
+  eval_time <- as.numeric(quantile(y[y[,2] == 1, 1], eval_quantile))
 
   pooled_measures <- rep(NA_real_, ncv)
   fold_measures_list <- vector("list", ncv)

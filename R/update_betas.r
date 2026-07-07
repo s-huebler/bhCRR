@@ -47,7 +47,8 @@ update_betas <- function(
   feature_matrix,
   cencode_num = 0,
   failcode_num = 1,
-  lambda = mean(penalty_weights) / length(status_vector)
+  lambda = 1,
+  max.iter = 1000
 ) {
   fastcmprsk::fastCrrp(
     Crisk(
@@ -58,6 +59,8 @@ update_betas <- function(
     ) ~ feature_matrix,
     penalty.factor = penalty_weights,
     penalty = "LASSO",
-    lambda = lambda
+    lambda = lambda,
+    standardize = FALSE,
+    max.iter = max.iter
   )
 }

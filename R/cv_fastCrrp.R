@@ -62,7 +62,7 @@ cv_fastCrrp <- function(x, time, status, k = 5, penalty = "LASSO",
         )
       }
     } else if (tuning == "wolbers") {
-      eval_time  <- as.numeric(quantile(time_train, eval_quantile))
+      eval_time  <- as.numeric(quantile(time_train[status_train == 1], eval_quantile))
       y_test_mat <- cbind(time_test, status_test)
       for (j in 1:n_lambda) {
         risk_scores <- pred_risk[, j]
