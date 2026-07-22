@@ -19,6 +19,6 @@ A list with elements \code{G_Ti} = \eqn{G(T_i)} and
 \description{
 Exposes the internal censoring-distribution estimate used by the IPCW
 C-index so it can be checked against the R reference in
-\code{measure_ssl_psdh()}.
+\code{wolbers_c()}.
 }
 \keyword{internal}

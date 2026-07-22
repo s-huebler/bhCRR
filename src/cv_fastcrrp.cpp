@@ -13,7 +13,7 @@
 //   * "normal"  -> harrell_cindex():  a standard right-censored C-index that
 //                  matches survival::concordance(Surv(time, status==1) ~ rs)
 //                  for distinct event times (see notes on ties below).
-//   * "wolbers" -> ipcw_cindex():     an exact translation of measure_ssl_psdh(),
+//   * "wolbers" -> ipcw_cindex():     an exact translation of wolbers_c(),
 //                  the IPCW competing-risks C-index, with the Kaplan-Meier
 //                  censoring distribution G(t) estimated once per fold.
 //
@@ -28,7 +28,7 @@ using namespace Rcpp;
 // ---------------------------------------------------------------------------
 // Kaplan-Meier estimate of the censoring distribution G(t).
 //
-// Faithful to measure_ssl_psdh(): the "event" for the censoring KM is the
+// Faithful to wolbers_c(): the "event" for the censoring KM is the
 // original censoring indicator (status == 0). We return, for every subject i,
 //   G_Ti[i]       = G(T_i)        (right-continuous step value at T_i)
 //   G_Ti_minus[i] = G(T_i - eps)  (value just before T_i)
@@ -83,7 +83,7 @@ static void km_censoring(const arma::vec& time,
 //'
 //' Exposes the internal censoring-distribution estimate used by the IPCW
 //' C-index so it can be checked against the R reference in
-//' \code{measure_ssl_psdh()}.
+//' \code{wolbers_c()}.
 //'
 //' @param time Numeric vector of observed event/censoring times.
 //' @param status Numeric vector of status codes (0 = censored, 1 = cause-1
@@ -164,7 +164,7 @@ static double harrell_cindex(const arma::vec& time,
 // ---------------------------------------------------------------------------
 // IPCW competing-risks C-index for a single risk-score vector.
 //
-// Exact translation of measure_ssl_psdh(). G_Ti and G_Ti_minus are precomputed
+// Exact translation of wolbers_c(). G_Ti and G_Ti_minus are precomputed
 // once per fold (they do not depend on the risk score) and passed in.
 // ---------------------------------------------------------------------------
 static double ipcw_cindex(const arma::vec& time,
@@ -245,7 +245,7 @@ Rcpp::NumericMatrix cpp_predict_risk(const Rcpp::NumericMatrix& x_test_,
 //'   1 = cause-1 event, 2 = competing event).
 //' @param tuning Either \code{"normal"} (Harrell C-index, matching
 //'   \code{survival::concordance}) or \code{"wolbers"} (IPCW competing-risks
-//'   C-index, matching \code{measure_ssl_psdh}).
+//'   C-index, matching \code{wolbers_c}).
 //' @param evaluation_time Numeric scalar; the time horizon used only by the
 //'   \code{"wolbers"} tuning. Ignored when \code{tuning = "normal"}.
 //' @param reverse Logical; orientation of the Harrell C-index for

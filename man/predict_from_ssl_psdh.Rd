@@ -40,6 +40,6 @@ hist(risk)
 }
 }
 \seealso{
-\code{\link{fit_ssl_psdh}}, \code{\link{measure_ssl_psdh}},
+\code{\link{fit_ssl_psdh}}, \code{\link{wolbers_c}},
 \code{\link{cv_ssl_psdh}}
 }

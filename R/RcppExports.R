@@ -5,7 +5,7 @@
 #'
 #' Exposes the internal censoring-distribution estimate used by the IPCW
 #' C-index so it can be checked against the R reference in
-#' \code{measure_ssl_psdh()}.
+#' \code{wolbers_c()}.
 #'
 #' @param time Numeric vector of observed event/censoring times.
 #' @param status Numeric vector of status codes (0 = censored, 1 = cause-1
@@ -42,7 +42,7 @@ cpp_predict_risk <- function(x_test_, coef_) {
 #'   1 = cause-1 event, 2 = competing event).
 #' @param tuning Either \code{"normal"} (Harrell C-index, matching
 #'   \code{survival::concordance}) or \code{"wolbers"} (IPCW competing-risks
-#'   C-index, matching \code{measure_ssl_psdh}).
+#'   C-index, matching \code{wolbers_c}).
 #' @param evaluation_time Numeric scalar; the time horizon used only by the
 #'   \code{"wolbers"} tuning. Ignored when \code{tuning = "normal"}.
 #' @param reverse Logical; orientation of the Harrell C-index for

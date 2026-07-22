@@ -4,7 +4,7 @@
 \alias{update_mixture_prob}
 \title{M-step: update the global mixture probability}
 \usage{
-update_mixture_prob(p)
+update_mixture_prob(p, a = 1, b = 1)
 }
 \arguments{
 \item{p}{Numeric vector of length \eqn{p}. Posterior inclusion

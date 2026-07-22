@@ -21,7 +21,7 @@
 #'   (absolute risk) in \eqn{[0, 1]} for each row of \code{newx} at
 #'   \code{prediction_time}.
 #'
-#' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{measure_ssl_psdh}},
+#' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{wolbers_c}},
 #'   \code{\link{cv_ssl_psdh}}
 #'
 #' @export

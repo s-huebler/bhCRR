@@ -20,7 +20,7 @@
 #'   the path is chosen by [fastcmprsk::fastCrrp()].
 #' @param tuning Either \code{"normal"} (Harrell C-index, matching
 #'   \code{survival::concordance}) or \code{"wolbers"} (IPCW competing-risks
-#'   C-index, matching [measure_ssl_psdh()]).
+#'   C-index, matching [wolbers_c()]).
 #' @param eval_quantile Quantile of the training times used as the evaluation
 #'   horizon for \code{tuning = "wolbers"}.
 #' @param reverse Logical orientation flag for the \code{"normal"} Harrell
@@ -31,7 +31,7 @@
 #'   \code{lambda_min}, \code{full_model}, and \code{cv_raw_matrix}, matching
 #'   [cv_fastCrrp()].
 #'
-#' @seealso [cv_fastCrrp()], [measure_ssl_psdh()]
+#' @seealso [cv_fastCrrp()], [wolbers_c()]
 #'
 #' @importFrom fastcmprsk fastCrrp Crisk
 #' @importFrom stats quantile

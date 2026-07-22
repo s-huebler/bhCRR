@@ -11,7 +11,8 @@ update_betas(
   feature_matrix,
   cencode_num = 0,
   failcode_num = 1,
-  lambda = mean(penalty_weights)/length(status_vector)
+  lambda = 1/nrow(feature_matrix),
+  ...
 )
 }
 \arguments{
@@ -36,7 +37,11 @@ censored observation. Default \code{0}.}
 the event of interest. Default \code{1}.}
 
 \item{lambda}{Numeric. Global LASSO tuning parameter.  Default
-\code{mean(penalty_weights) / length(status_vector)}.}
+\code{1 / nrow(feature_matrix)}.}
+
+\item{...}{Additional arguments passed to \code{fastcmprsk::fastCrrp},
+most usefully \code{max.iter} (maximum number of inner solver
+iterations).}
 }
 \value{
 A \code{fastCrrp} model object as returned by

@@ -2,7 +2,7 @@
 #'
 #' Evaluates a specific spike-and-slab scale pair \code{(s0, s1)} via
 #' \eqn{k}-fold cross-validation, using the IPCW concordance index
-#' (from \code{\link{measure_ssl_psdh}}) as the performance metric.
+#' (from \code{\link{wolbers_c}}) as the performance metric.
 #' Optionally repeats cross-validation \code{ncv} times with different
 #' random splits and averages the results.
 #'
@@ -23,26 +23,15 @@
 #'   Default \code{0.5} (median event time).
 #' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
 #'   global mixture probability (prior proportion of active features).
-#'   Default \code{0.05}.
-#' @param fixed_global_shrinkage \code{NULL} or a numeric matrix of
-#'   dimensions \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL}
-#'   (default) each fold tunes its own global shrinkage via the
-#'   \code{cv_fastCrrp} search inside \code{\link{fit_ssl_psdh}}. When a
-#'   matrix is supplied, entry \code{[k, i]} is passed as the fixed global
-#'   shrinkage for repetition \code{k}, fold \code{i}, skipping that search;
-#'   \code{NA} entries fall back to per-fold tuning. Used by
-#'   \code{\link{tune_ssl_psdh}} to reuse a tuned lambda across \code{s1}
-#'   values for a fixed \code{s0}.
-#' @param initial_shrinkage \code{NULL} or a numeric matrix of dimensions
-#'   \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL} (default) each
-#'   fold seeds its initializing model via the \code{cv_fastCrrp} search
-#'   inside \code{\link{fit_ssl_psdh}}. When a matrix is supplied, entry
-#'   \code{[k, i]} is passed as the warm-start initial lambda for repetition
-#'   \code{k}, fold \code{i}, skipping that search; \code{NA} entries fall
-#'   back to per-fold tuning. Unlike \code{fixed_global_shrinkage}, this only
-#'   warm-starts the initial model and does not pin lambda across EM
-#'   iterations. Used by \code{\link{tune_ssl_psdh}} to reuse per-fold tuned
-#'   lambdas across \code{s1} values for a fixed \code{s0}.
+#' @param init Optional warm-start structure. A list of length \code{ncv},
+#'   each element a list of length \code{nfolds} holding a length-\eqn{p}
+#'   numeric vector of starting coefficients for that (repetition, fold)
+#'   training fit; \code{NULL} entries (or \code{init = NULL}, the default)
+#'   fall back to the per-fit LASSO-CV cold start. Element \code{init[[k]][[i]]}
+#'   is passed as \code{init} to \code{\link{fit_ssl_psdh}} for fold \code{i}
+#'   of repetition \code{k}. The matching \code{$fold_coefs} field returned by
+#'   this function can be fed straight back in as \code{init} for a subsequent
+#'   scale pair (this is how \code{\link{tune_ssl_psdh}} warm-starts).
 #'
 #' @returns A list with the following elements:
 #'   \describe{
@@ -63,17 +52,16 @@
 #'       \code{fit_ssl_psdh} failed (empty if all folds succeeded).}
 #'     \item{\code{n_failed}}{Total number of (rep, fold) pairs in
 #'       which \code{fit_ssl_psdh} failed.}
-#'     \item{\code{fold_lambdas}}{An \eqn{\code{ncv} \times \code{nfolds}}
-#'       matrix of the initial global shrinkage lambda used in each
-#'       (rep, fold) fit (\code{fit_ssl_psdh}'s \code{$tuned_lambda}).
-#'       \code{NA} where the fold failed. Can be fed back as
-#'       \code{fixed_global_shrinkage} to reuse the tuned values.}
+#'     \item{\code{fold_coefs}}{A list of length \code{ncv}, each element a
+#'       list of length \code{nfolds} giving the fitted coefficient vector
+#'       for that (repetition, fold) training fit (\code{NULL} where the fit
+#'       failed). Suitable to pass back as \code{init} for a warm start.}
 #'   }
 #'
 #' @importFrom stats quantile sd
 #'
 #' @seealso \code{\link{fit_ssl_psdh}}, \code{\link{tune_ssl_psdh}},
-#'   \code{\link{measure_ssl_psdh}}, \code{\link{generate_foldid}}
+#'   \code{\link{wolbers_c}}, \code{\link{generate_foldid}}
 #'
 #' @export
 #'
@@ -83,7 +71,8 @@
 #' fols <- generate_foldid(nobs = nrow(x), nfolds = 5)
 #' cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
 #' }
-cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, initial_sparsity, fixed_global_shrinkage = NULL, initial_shrinkage = NULL) {
+cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5,
+                        init = NULL, ...) {
   # Extract data
   y <- object$y
   x <- object$x
@@ -95,8 +84,10 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
   pooled_measures <- rep(NA_real_, ncv)
   fold_measures_list <- vector("list", ncv)
   failed_folds_list <- vector("list", ncv)
-  # Initial global shrinkage lambda actually used in each (rep, fold) fit
-  fold_lambdas <- matrix(NA_real_, nrow = ncv, ncol = nfolds)
+
+  # Per-(rep, fold) fitted coefficients, returned so a caller can warm-start
+  # a subsequent scale pair. Stays NULL for folds whose fit fails.
+  fitted_coefs <- lapply(seq_len(ncv), function(k) vector("list", nfolds))
 
   for (k in 1:ncv) {
     lp_all       <- rep(NA_real_, n)
@@ -111,33 +102,15 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
       y_train <- as.matrix(y[-omit_indices, ])
       x_train <- as.matrix(x[-omit_indices, , drop = FALSE])
 
-      # Per-fold fixed shrinkage: reuse a cached lambda when supplied (and
-      # not NA), otherwise let this fold tune its own via cv_fastCrrp.
-      fold_fixed <- if (is.null(fixed_global_shrinkage)) {
-        NULL
-      } else {
-        val <- fixed_global_shrinkage[k, i]
-        if (is.na(val)) NULL else val
-      }
-
-      # Per-fold warm start: reuse a cached initial lambda for this fold (and
-      # not NA) to seed the initializing model only, otherwise let this fold
-      # tune its own via cv_fastCrrp.
-      fold_initial <- if (is.null(initial_shrinkage)) {
-        NULL
-      } else {
-        val <- initial_shrinkage[k, i]
-        if (is.na(val)) NULL else val
-      }
+      # Warm-start coefficients for this (rep, fold), if supplied; else NULL
+      # so fit_ssl_psdh derives its own LASSO-CV cold start.
+      this_init <- if (is.null(init)) NULL else init[[k]][[i]]
 
       # RE-FIT (errors are captured rather than silenced so we can report them)
       suppressWarnings({
         fit <- try(fit_ssl_psdh(x = x_train, y = y_train, ss = c(s0, s1),
-                                initial_sparsity = initial_sparsity,
                                 maxit = 50,
-                                epsilon = 1e-04,
-                                fixed_global_shrinkage = fold_fixed,
-                                initial_shrinkage = fold_initial),
+                                epsilon = 1e-04, init = this_init, ...),
                    silent = TRUE)
       })
 
@@ -150,8 +123,12 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
         next  # try the remaining folds rather than aborting the repetition
       }
 
-      # Record the initial shrinkage lambda used by this fold for reuse
-      fold_lambdas[k, i] <- fit$tuned_lambda
+      # Record fitted coefficients for a possible warm start of the next pair.
+      # Source from the raw model object (a plain length-p vector) and only
+      # store when well-formed: assigning NULL to a list slot would delete it
+      # and shrink the per-fold list, corrupting later warm-start reads.
+      fitted_coef <- as.numeric(fit$final_model_object$coef)
+      if (length(fitted_coef) == ncol(x_train)) fitted_coefs[[k]][[i]] <- fitted_coef
 
       # PREDICT on hold-out set
       x_test  <- x[omit_indices, , drop = FALSE]
@@ -163,7 +140,7 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
       # before eval_time, or if the IPCW denominator is zero.
       y_test <- as.matrix(y[omit_indices, ])
       fold_scores[i] <- tryCatch(
-        measure_ssl_psdh(y_test, lp_fold, eval_time),
+        wolbers_c(y_test, lp_fold, eval_time),
         error = function(e) NA_real_
       )
     }
@@ -172,7 +149,7 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
     failed_folds_list[[k]]  <- failed
 
     # Pooled cross-validated C-index across folds for this repetition
-    pooled_measures[k] <- measure_ssl_psdh(y, lp_all, eval_time)
+    pooled_measures[k] <- wolbers_c(y, lp_all, eval_time)
   }
 
   # Aggregate across NCV repetitions
@@ -193,5 +170,5 @@ cv_ssl_psdh <- function(object, foldid, s0, s1, ncv=1, eval_quantile = 0.5, init
        fold_sd       = fold_sd_mean,
        failed_folds  = failed_folds_list,
        n_failed      = sum(lengths(failed_folds_list)),
-       fold_lambdas  = fold_lambdas)
+       fold_coefs    = fitted_coefs)
 }

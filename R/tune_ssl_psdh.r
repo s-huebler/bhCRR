@@ -21,17 +21,18 @@
 #'   fold assignments.  If \code{NULL} (default) folds are generated
 #'   internally by \code{\link{generate_foldid}} and shared across all
 #'   hyperparameter pairs.
-#' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
-#'   global mixture probability (prior proportion of active features).
-#'   Default \code{0.05}.
-#' @param reuse_lambda Logical. When \code{TRUE}, the expensive
-#'   \code{cv_fastCrrp} initial-model search is run only once per \code{s0}
-#'   value: it is tuned at that \code{s0}'s smallest valid \code{s1}, and the
-#'   resulting per-fold lambdas are reused as warm starts (via
-#'   \code{initial_shrinkage}) for the remaining \code{s1} values at the same
-#'   \code{s0}. This only warm-starts each fold's initial model; the EM
-#'   iterations still update lambda normally. Set to \code{FALSE} (default) to
-#'   tune the initial model independently for every \code{(s0, s1)} pair.
+#' @param warm_start Logical. If \code{TRUE} (default) each \code{(s0, s1)}
+#'   pair is initialised from the per-fold coefficients fitted for the
+#'   previous pair, rather than paying the LASSO-CV cold start inside every
+#'   \code{\link{fit_ssl_psdh}} call. The grid is traversed grouped by
+#'   \code{s1} (in \code{s1_seq} order) with \code{s0} ascending within each
+#'   group, and the warm-start state is carried continuously across the whole
+#'   traversal (including \code{s1} group boundaries). Only the very first
+#'   pair, and any (repetition, fold) whose previous fit failed, cold-start.
+#'   Set \code{FALSE} to cold-start every fit.
+#' @param ... Additional arguments passed to \code{\link{cv_ssl_psdh}} for
+#'   every \code{(s0, s1)} pair, most usefully \code{initial_sparsity} and
+#'   \code{eval_quantile}.
 #'
 #' @returns A data frame with one row per valid \code{(s0, s1)} pair and
 #'   columns:
@@ -61,7 +62,8 @@
 #'                        s1_seq = seq(0.3,   0.9, length.out = 10))
 #' tunes[which.max(tunes$score_mean), ]
 #' }
-tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL, initial_sparsity, reuse_lambda = FALSE) {
+tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
+                          warm_start=TRUE, ...) {
 
   .dedupe_warnings({
 
@@ -84,14 +86,12 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
     stop("No valid hyperparameter combinations found. Ensure at least one value in 's1_seq' is greater than a value in 's0_seq'.")
   }
 
-  # 3. Iterate over the valid combinations, grouped by s0.
+  # 3. Iterate over the valid combinations, grouped by s1.
   #
-  # For each s0 (in s0_seq order) the valid s1 values are visited in
-  # ascending order.  When reuse_lambda is TRUE, the first (smallest) s1
-  # tunes the initial model via cv_fastCrrp and the resulting per-fold
-  # lambdas are cached, then reused as warm starts (initial_shrinkage) for
-  # the remaining s1 values at that s0 so the expensive search runs only
-  # once per s0.
+  # For each s1 (in s1_seq order) the valid s0 values are visited in
+  # ascending order. When warm_start is TRUE the per-fold coefficients from
+  # the previous pair are carried forward continuously across this traversal
+  # (including s1 group boundaries) as the next pair's init.
 
   # Helper: turn a cv_ssl_psdh result (or try-error) into a result row.
   build_row <- function(current_s0, current_s1, cv_res) {
@@ -129,34 +129,35 @@ tune_ssl_psdh <- function(object, s0_seq, s1_seq, nfolds=10, ncv=1, foldid=NULL,
       n_failed_folds = cv_res$n_failed)
   }
 
-  # Unique s0 values, in the order they appear in s0_seq
-  s0_levels <- unique(valid_grid$s0)
+  # Unique s1 values, in the order they appear in s1_seq
+  s1_levels <- unique(valid_grid$s1)
 
   results_list <- list()
 
-  for (current_s0 in s0_levels) {
-    # s1 values valid for this s0, ascending
-    s1_for_s0 <- sort(valid_grid$s1[valid_grid$s0 == current_s0])
+  # Warm-start state: per-fold coefficients from the previous (s0, s1) pair.
+  # NULL means cold start (each fit derives its own LASSO-CV init). Carried
+  # continuously across the whole traversal when warm_start is TRUE.
+  prev_init <- NULL
 
-    cached_lambdas <- NULL  # per-fold (ncv x nfolds) lambdas from first s1
+  for (current_s1 in s1_levels) {
+    # s0 values valid for this s1, ascending
+    s0_for_s1 <- sort(valid_grid$s0[valid_grid$s1 == current_s1])
 
-    for (j in seq_along(s1_for_s0)) {
-      current_s1 <- s1_for_s0[j]
+    for (j in seq_along(s0_for_s1)) {
+      current_s0 <- s0_for_s1[j]
 
-      # First s1 of this s0 always tunes; later s1 reuse the cached per-fold
-      # lambdas as warm starts for their initial models only.
       cv_res <- try(cv_ssl_psdh(object,
                                 foldid        = foldid,
                                 s0            = current_s0,
                                 s1            = current_s1,
                                 ncv           = ncv,
-                                eval_quantile = 0.5,
-                                initial_sparsity = initial_sparsity,
-                                initial_shrinkage = if (reuse_lambda && j > 1) cached_lambdas else NULL))
+                                init          = if (warm_start) prev_init else NULL,
+                                ...))
 
-      # Cache the per-fold lambdas tuned at the first s1 for reuse
-      if (reuse_lambda && j == 1 && !inherits(cv_res, "try-error")) {
-        cached_lambdas <- cv_res$fold_lambdas
+      # Carry this pair's per-fold coefficients forward as the next pair's
+      # warm start (only when warm-starting and the CV call succeeded).
+      if (warm_start && !inherits(cv_res, "try-error")) {
+        prev_init <- cv_res$fold_coefs
       }
 
       results_list[[length(results_list) + 1L]] <-

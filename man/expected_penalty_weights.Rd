@@ -4,12 +4,12 @@
 \alias{expected_penalty_weights}
 \title{E-step: expected penalty weights for the M-step LASSO}
 \usage{
-expected_penalty_weights(s1, s0, p)
+expected_penalty_weights(s0, s1, p)
 }
 \arguments{
-\item{s1}{Numeric scalar. Slab scale parameter of the Laplace prior.}
-
 \item{s0}{Numeric scalar. Spike scale parameter of the Laplace prior.}
+
+\item{s1}{Numeric scalar. Slab scale parameter of the Laplace prior.}
 
 \item{p}{Numeric vector of length \eqn{p}. Posterior inclusion
 probabilities \eqn{E[\gamma_j \mid \beta_j]}, as returned by

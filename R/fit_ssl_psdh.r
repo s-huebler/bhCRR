@@ -129,17 +129,12 @@ fit_ssl_psdh <- function(x, y,
       current_betas <- init_mod_search$full_model$coef[,
         init_mod_search$lambda == init_mod_search$lambda_min]
 
+    }
+
     betas_path <- data.frame("Initial" = current_betas)
     pips_path <- data.frame("Initial" = current_inclusion_probs)
 
     inner_maxit <- inner_maxit_start
-
-
-
-
-
-
-
 
 
     #Initial deviance
@@ -255,7 +250,7 @@ fit_ssl_psdh <- function(x, y,
     }
 
     coefficients_df <- data.frame("Variable" = colnames(x),
-                                  "Estimate" = mod$coef)
+                                  "Estimate" = as.numeric(mod$coef))
 
     ret <- list()
     ret$x <- x

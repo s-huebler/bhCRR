@@ -34,7 +34,7 @@ test_that("cpp_km_censoring matches survival::survfit censoring KM", {
   expect_equal(cpp$G_Ti_minus, G_minus,       tolerance = 1e-10)
 })
 
-test_that("cpp_cv_cindex 'wolbers' matches measure_ssl_psdh", {
+test_that("cpp_cv_cindex 'wolbers' matches wolbers_c", {
   d <- make_cr_data()
   coef <- matrix(c(1, -0.5, 0, 0.25,
                    0.2, 0.2, 0.2, 0.2), nrow = 4)
@@ -45,7 +45,7 @@ test_that("cpp_cv_cindex 'wolbers' matches measure_ssl_psdh", {
                        evaluation_time = eval_time)
 
   ref <- apply(d$x %*% coef, 2, function(rs) {
-    measure_ssl_psdh(y_true = cbind(d$time, d$status),
+    wolbers_c(y_true = cbind(d$time, d$status),
                      risk_score = rs, evaluation_time = eval_time)
   })
 

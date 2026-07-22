@@ -67,7 +67,7 @@ cv_fastCrrp <- function(x, time, status, k = 5, penalty = "LASSO",
       for (j in 1:n_lambda) {
         risk_scores <- pred_risk[, j]
         cv_metrics[i, j] <- tryCatch(
-          measure_ssl_psdh(y_true          = y_test_mat,
+          wolbers_c(y_true          = y_test_mat,
                            risk_score      = risk_scores,
                            evaluation_time = eval_time),
           error = function(e) NA_real_

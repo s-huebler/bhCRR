@@ -4,14 +4,14 @@
 \alias{expected_inclusion_probs}
 \title{E-step: posterior inclusion probabilities}
 \usage{
-expected_inclusion_probs(s1, s0, pips, betas, exact = FALSE)
+expected_inclusion_probs(s0, s1, pips, betas, exact = FALSE, a = 1, b = 1)
 }
 \arguments{
-\item{s1}{Numeric scalar. Slab scale parameter of the Laplace prior
-(larger value; controls the spread of the active-feature distribution).}
-
 \item{s0}{Numeric scalar. Spike scale parameter of the Laplace prior
 (small value; concentrates inactive features near zero).}
+
+\item{s1}{Numeric scalar. Slab scale parameter of the Laplace prior
+(larger value; controls the spread of the active-feature distribution).}
 
 \item{pips}{Numeric vector of length \eqn{p}.
 Set of current prior probability that any

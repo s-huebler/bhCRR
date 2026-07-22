@@ -33,7 +33,7 @@ the path is chosen by \code{\link[fastcmprsk:fastCrrp]{fastcmprsk::fastCrrp()}}.
 
 \item{tuning}{Either \code{"normal"} (Harrell C-index, matching
 \code{survival::concordance}) or \code{"wolbers"} (IPCW competing-risks
-C-index, matching \code{\link[=measure_ssl_psdh]{measure_ssl_psdh()}}).}
+C-index, matching \code{\link[=wolbers_c]{wolbers_c()}}).}
 
 \item{eval_quantile}{Quantile of the training times used as the evaluation
 horizon for \code{tuning = "wolbers"}.}
@@ -66,5 +66,5 @@ cv_fastCrrp_cpp(x, time, status, k = 5, penalty = "LASSO",
 }
 }
 \seealso{
-\code{\link[=cv_fastCrrp]{cv_fastCrrp()}}, \code{\link[=measure_ssl_psdh]{measure_ssl_psdh()}}
+\code{\link[=cv_fastCrrp]{cv_fastCrrp()}}, \code{\link[=wolbers_c]{wolbers_c()}}
 }

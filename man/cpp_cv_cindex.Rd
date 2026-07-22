@@ -17,7 +17,7 @@ cpp_cv_cindex(
 \arguments{
 \item{tuning}{Either \code{"normal"} (Harrell C-index, matching
 \code{survival::concordance}) or \code{"wolbers"} (IPCW competing-risks
-C-index, matching \code{measure_ssl_psdh}).}
+C-index, matching \code{wolbers_c}).}
 
 \item{evaluation_time}{Numeric scalar; the time horizon used only by the
 \code{"wolbers"} tuning. Ignored when \code{tuning = "normal"}.}

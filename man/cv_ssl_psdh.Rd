@@ -11,8 +11,8 @@ cv_ssl_psdh(
   s1,
   ncv = 1,
   eval_quantile = 0.5,
-  initial_sparsity,
-  fixed_global_shrinkage = NULL
+  init = NULL,
+  ...
 )
 }
 \arguments{
@@ -37,19 +37,18 @@ over which results are averaged. Default \code{1}.}
 event times used as the evaluation horizon for the C-index.
 Default \code{0.5} (median event time).}
 
-\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
-global mixture probability (prior proportion of active features).
-Default \code{0.05}.}
+\item{init}{Optional warm-start structure. A list of length \code{ncv},
+each element a list of length \code{nfolds} holding a length-\eqn{p}
+numeric vector of starting coefficients for that (repetition, fold)
+training fit; \code{NULL} entries (or \code{init = NULL}, the default)
+fall back to the per-fit LASSO-CV cold start. Element \code{init[[k]][[i]]}
+is passed as \code{init} to \code{\link{fit_ssl_psdh}} for fold \code{i}
+of repetition \code{k}. The matching \code{$fold_coefs} field returned by
+this function can be fed straight back in as \code{init} for a subsequent
+scale pair (this is how \code{\link{tune_ssl_psdh}} warm-starts).}
 
-\item{fixed_global_shrinkage}{\code{NULL} or a numeric matrix of
-dimensions \eqn{\code{ncv} \times \code{nfolds}}. When \code{NULL}
-(default) each fold tunes its own global shrinkage via the
-\code{cv_fastCrrp} search inside \code{\link{fit_ssl_psdh}}. When a
-matrix is supplied, entry \code{[k, i]} is passed as the fixed global
-shrinkage for repetition \code{k}, fold \code{i}, skipping that search;
-\code{NA} entries fall back to per-fold tuning. Used by
-\code{\link{tune_ssl_psdh}} to reuse a tuned lambda across \code{s1}
-values for a fixed \code{s0}.}
+\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
+global mixture probability (prior proportion of active features).}
 }
 \value{
 A list with the following elements:
@@ -71,17 +70,16 @@ vectors, each giving the fold indices in which
 \code{fit_ssl_psdh} failed (empty if all folds succeeded).}
 \item{\code{n_failed}}{Total number of (rep, fold) pairs in
 which \code{fit_ssl_psdh} failed.}
-\item{\code{fold_lambdas}}{An \eqn{\code{ncv} \times \code{nfolds}}
-matrix of the initial global shrinkage lambda used in each
-(rep, fold) fit (\code{fit_ssl_psdh}'s \code{$tuned_lambda}).
-\code{NA} where the fold failed. Can be fed back as
-\code{fixed_global_shrinkage} to reuse the tuned values.}
+\item{\code{fold_coefs}}{A list of length \code{ncv}, each element a
+list of length \code{nfolds} giving the fitted coefficient vector
+for that (repetition, fold) training fit (\code{NULL} where the fit
+failed). Suitable to pass back as \code{init} for a warm start.}
 }
 }
 \description{
 Evaluates a specific spike-and-slab scale pair \code{(s0, s1)} via
 \eqn{k}-fold cross-validation, using the IPCW concordance index
-(from \code{\link{measure_ssl_psdh}}) as the performance metric.
+(from \code{\link{wolbers_c}}) as the performance metric.
 Optionally repeats cross-validation \code{ncv} times with different
 random splits and averages the results.
 }
@@ -94,5 +92,5 @@ cv_ssl_psdh(fit, foldid = fols$foldid, s0 = 0.04, s1 = 0.5)
 }
 \seealso{
 \code{\link{fit_ssl_psdh}}, \code{\link{tune_ssl_psdh}},
-\code{\link{measure_ssl_psdh}}, \code{\link{generate_foldid}}
+\code{\link{wolbers_c}}, \code{\link{generate_foldid}}
 }

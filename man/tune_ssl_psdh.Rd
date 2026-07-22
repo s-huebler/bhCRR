@@ -11,8 +11,8 @@ tune_ssl_psdh(
   nfolds = 10,
   ncv = 1,
   foldid = NULL,
-  initial_sparsity,
-  reuse_lambda = TRUE
+  warm_start = TRUE,
+  ...
 )
 }
 \arguments{
@@ -37,17 +37,19 @@ fold assignments.  If \code{NULL} (default) folds are generated
 internally by \code{\link{generate_foldid}} and shared across all
 hyperparameter pairs.}
 
-\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
-global mixture probability (prior proportion of active features).
-Default \code{0.05}.}
+\item{warm_start}{Logical. If \code{TRUE} (default) each \code{(s0, s1)}
+pair is initialised from the per-fold coefficients fitted for the
+previous pair, rather than paying the LASSO-CV cold start inside every
+\code{\link{fit_ssl_psdh}} call. The grid is traversed grouped by
+\code{s1} (in \code{s1_seq} order) with \code{s0} ascending within each
+group, and the warm-start state is carried continuously across the whole
+traversal (including \code{s1} group boundaries). Only the very first
+pair, and any (repetition, fold) whose previous fit failed, cold-start.
+Set \code{FALSE} to cold-start every fit.}
 
-\item{reuse_lambda}{Logical. When \code{TRUE} (default), the expensive
-\code{cv_fastCrrp} global-shrinkage search is run only once per \code{s0}
-value: it is tuned at that \code{s0}'s smallest valid \code{s1}, and the
-resulting per-fold lambdas are reused (via \code{fixed_global_shrinkage})
-for the remaining \code{s1} values at the same \code{s0}. Set to
-\code{FALSE} to tune the shrinkage independently for every \code{(s0, s1)}
-pair (the previous behaviour).}
+\item{...}{Additional arguments passed to \code{\link{cv_ssl_psdh}} for
+every \code{(s0, s1)} pair, most usefully \code{initial_sparsity} and
+\code{eval_quantile}.}
 }
 \value{
 A data frame with one row per valid \code{(s0, s1)} pair and

@@ -20,7 +20,10 @@
 #' @param failcode_num Integer. Value in \code{status_vector} that denotes
 #'   the event of interest. Default \code{1}.
 #' @param lambda Numeric. Global LASSO tuning parameter.  Default
-#'   \code{mean(penalty_weights) / length(status_vector)}.
+#'   \code{1 / nrow(feature_matrix)}.
+#' @param ... Additional arguments passed to \code{fastcmprsk::fastCrrp},
+#'   most usefully \code{max.iter} (maximum number of inner solver
+#'   iterations).
 #'
 #' @returns A \code{fastCrrp} model object as returned by
 #'   \code{fastcmprsk::fastCrrp}, containing (among other fields)
@@ -48,7 +51,7 @@ update_betas <- function(
   cencode_num = 0,
   failcode_num = 1,
   lambda = 1/nrow(feature_matrix),
-  max.iter = 1000
+  ...
 ) {
   fastcmprsk::fastCrrp(
     Crisk(
@@ -61,6 +64,6 @@ update_betas <- function(
     penalty = "LASSO",
     lambda = lambda,
     standardize = FALSE,
-    max.iter = max.iter
+    ...
   )
 }
