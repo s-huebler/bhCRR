@@ -33,9 +33,9 @@
 #' @examples
 #' \dontrun{
 #' lp  <- predict_from_ssl_psdh(fit, newx = x, prediction_time = 30)
-#' measure_ssl_psdh(y_true = y, risk_score = lp, evaluation_time = 30)
+#' wolbers_c(y_true = y, risk_score = lp, evaluation_time = 30)
 #' }
-measure_ssl_psdh <- function(y_true, risk_score, evaluation_time) {
+wolbers_c <- function(y_true, risk_score, evaluation_time) {
   # Extract times and status from y_true array with (TTE, Status)
   # 1=Event, 2=Competing, 0=Censored
   T_i <- y_true[, 1]
