@@ -129,20 +129,6 @@ fit_ssl_psdh <- function(x, y,
       current_betas <- init_mod_search$full_model$coef[,
         init_mod_search$lambda == init_mod_search$lambda_min]
 
-      # current_betas[abs(current_betas)<0.001] <- mean(current_betas[abs(current_betas)>0])
-
-       # current_mixture_prob <- sum(abs(current_betas)>0)/length(current_betas)
-       # current_inclusion_probs <- rep(current_mixture_prob, ncol(x))
-       #
-       # current_betas <- rep(mean(current_betas), length(current_betas))
-
-    }
-
-
-    # current_penalty_weights <- expected_penalty_weights(ss0,
-    #                                                     ss1,
-    #                                                     current_inclusion_probs)
-
     betas_path <- data.frame("Initial" = current_betas)
     pips_path <- data.frame("Initial" = current_inclusion_probs)
 
@@ -205,7 +191,7 @@ fit_ssl_psdh <- function(x, y,
                           y[,1], y[,2], x,
                           cencode_num = 0,
                           failcode_num = 1,
-                          lambda = 1,
+                          lambda = current_lambda,
                           max.iter = inner_maxit)
                           #lambda = current_lambda)
 
@@ -220,7 +206,7 @@ fit_ssl_psdh <- function(x, y,
                             y[,1], y[,2], x,
                             cencode_num = 0,
                             failcode_num = 1,
-                            lambda = 1,
+                            lambda = current_lambda,
                             max.iter = inner_maxit)
       }
 
@@ -291,16 +277,3 @@ fit_ssl_psdh <- function(x, y,
 }
 
 
-# test1 <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.001, 1))
-# test2 <- fit_ssl_psdh(p5$x,p5$y, ss = c(0.05, 1))
-#
-#
-# test3 <- fit_ssl_psdh(p10$x,p10$y, ss = c(0.025, .5), initial_sparsity = 0.5)
-# data.frame("inclusion_prob" = unname(test3$pips),
-#            "penalty_weights" = unname(test3$penalty.factor),
-#            "est" = as.vector(test3$coefficients[,2]))
-
-
- # test4 <- fit_ssl_psdh(p100$x,p100$y, ss = c(0.1, 1), initial_sparsity = 0.2)
- # test4[[2]]%>%filter(abs(Initial)>0.01)
- # test4[[2]]%>%filter(abs(Initial)<0.01)

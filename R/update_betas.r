@@ -47,7 +47,7 @@ update_betas <- function(
   feature_matrix,
   cencode_num = 0,
   failcode_num = 1,
-  lambda = 1,
+  lambda = 1/nrow(feature_matrix),
   max.iter = 1000
 ) {
   fastcmprsk::fastCrrp(

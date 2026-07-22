@@ -1,0 +1,316 @@
+---
+title: "Simulating from subdistribution hazard model"
+format: html
+editor: visual
+---
+
+# Set up
+
+```{r}
+library(tidyverse)
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+library(survival)
+```
+
+# Easy sim
+
+```{r}
+easy_sim <- function(nobs =50,
+                     beta1,
+                     beta2){
+  sim <- simulateTwoCauseFineGrayModel(nobs = nobs,
+                                       beta1 = beta1,
+                                       beta2 = beta2,
+                                       X = NULL,
+                                       u.min = 100,
+                                       u.max = 100,
+                                       p = 0.5,
+                                       returnX = TRUE)
+
+  sim_data <- cbind(data.frame(ID = 1:nobs,
+                               TTE = sim$ftime,
+                               Status = as.integer(sim$fstatus)),
+                    sim$X)
+
+  names(sim_data)<- c("ID", "TTE", "Status", paste0("X_", 1:(ncol(sim_data)-3)))
+
+  x <- as.matrix(sim_data %>%select(starts_with("X")))
+  y <- as.matrix(sim_data %>%
+                   mutate(Status = as.numeric(Status))%>%
+                   select(TTE, Status))
+
+  return(list("dataframe" = sim_data,
+              "x" = x,
+              "y" = y))
+}
+
+easy_sim_wrapper <- function(x,
+                             nobs = 50,
+                             beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80),
+                             beta2_active = c(0, 0.3, 0, 0, -0.2),
+                             iter.max = 20){
+data <- easy_sim(nobs,
+                     c(beta1_active, rep(0,x-length(beta1_active))),
+                     c(beta2_active, rep(0,x-length(beta1_active)))
+)
+
+
+fg_data <- data$dataframe
+fg_data$Status_factor <- factor(fg_data$Status,
+                           levels = c(0, 1, 2),
+                           labels = c("censor", "event", "competing"))
+fg_data_format <- finegray(Surv(TTE, Status_factor) ~ ., data = fg_data, etype = "event")
+
+sparse_fg_formula <- paste("Surv(fgstart, fgstop, fgstatus) ~ ",
+                           paste0("X_", 1:length(beta1_active), collapse = " + "))
+
+full_fg_formula <- paste("Surv(fgstart, fgstop, fgstatus) ~ ",
+                           paste0("X_", 1:x, collapse = " + "))
+
+sparse_fg_model <- coxph(as.formula(sparse_fg_formula),
+                  weight = fgwt,
+                  data = fg_data_format,
+                  control = coxph.control(iter.max = iter.max))
+
+# A coxph fit is treated as converged if it stopped before hitting the
+# iteration cap AND all coefficients are finite (guards against the
+# monotone-likelihood / separation blow-ups).
+sparse_iter <- max(sparse_fg_model$iter)
+sparse_converged <- isTRUE(sparse_iter < iter.max) &&
+  all(is.finite(sparse_fg_model$coefficients))
+
+if(x < nobs){
+  full_fg_model <- coxph(as.formula(full_fg_formula),
+                  weight = fgwt,
+                  data = fg_data_format,
+                  control = coxph.control(iter.max = iter.max))
+
+  full_fg_ests <- as.vector(full_fg_model$coefficients)
+  full_iter <- max(full_fg_model$iter)
+  full_converged <- isTRUE(full_iter < iter.max) &&
+    all(is.finite(full_fg_model$coefficients))
+}else{
+  full_fg_ests <- rep(NA, x)
+  full_iter <- NA
+  full_converged <- NA
+}
+
+
+
+
+
+comparisons <- data.frame(Name = c(paste("V", 1:x, sep = "")),
+                   True_beta = c(beta1_active,
+                                 rep(0, x-length(beta1_active))),
+                   Sparse_FG_beta = c(as.vector(sparse_fg_model$coefficients),
+                                 rep(0, x-length(beta1_active))),
+                   Full_FG_beta = full_fg_ests
+)
+
+return(list(data = data,
+            comparisons = comparisons,
+            # `converged` gates on the sparse FG model, since that is the
+            # estimate the bias analysis relies on.
+            converged = sparse_converged,
+            convergence = list(sparse = sparse_converged,
+                               full = full_converged,
+                               sparse_iter = sparse_iter,
+                               full_iter = full_iter,
+                               iter.max = iter.max)))
+}
+```
+
+# Plotting
+
+```{r}
+plot_ests <- function(predictors, 
+                      show_full_fg = FALSE,
+                      separate_actives = FALSE,
+                      nobs = 50,
+                      beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80), 
+                      beta2_active = c(0, 0.3, 0, 0, -0.2)){
+  
+  sim <- easy_sim_wrapper(predictors, nobs, beta1_active, beta2_active)
+  
+  long <- sim$comparisons %>%
+  pivot_longer(cols = c(-Name),
+               names_to = "Model",
+               values_to = "Est")%>%
+  mutate(Active = ifelse(Name %in% paste0("V", 1:length(beta1_active)), TRUE, FALSE))%>%
+  transform(Name = factor(Name,
+                          levels = stringr::str_sort(unique(Name), numeric = TRUE)))
+  
+  if(predictors > nobs | show_full_fg == FALSE ){
+  long <- long %>%
+      filter(Model != "Full_FG_beta")
+  }
+  
+
+  plot <- ggplot(long , aes(x = Name,
+                                     y = Est,
+                                     color = Model))+
+  geom_point()
+  
+  if(separate_actives){
+    plot <- plot+
+  facet_wrap(~Active, scales = "free_x")
+  }
+  
+  plot
+}
+```
+
+```{r}
+
+plot_ests(predictors = 5, show_full_fg = TRUE)
+plot_ests(predictors = 25, separate_actives = TRUE, show_full_fg = TRUE)
+plot_ests(predictors = 100, separate_actives = TRUE)
+```
+
+# Visualizing fine and gray bias
+
+```{r}
+# Run `n_iter` simulations and collect the sparse Fine-Gray bias
+# (Sparse_FG_beta - True_beta) for each predictor on every iteration.
+sim_fg_bias <- function(predictors,
+                        n_iter = 100,
+                        nobs = 50,
+                        beta1_active = c(0.40, -0.50, 0.60, 0.75, -0.80),
+                        beta2_active = c(0, 0.3, 0, 0, -0.2),
+                        iter_max = 20,
+                        iter_max_retry = 100,
+                        base_seed = 1) {
+
+  bias_iters <- purrr::map_dfr(seq_len(n_iter), function(i) {
+    seed_i <- base_seed + i
+
+    # First attempt at the default iteration cap. Seeding per iteration
+    # makes the retry reproduce the *same* simulated data.
+    set.seed(seed_i)
+    sim <- suppressWarnings(
+      easy_sim_wrapper(predictors, nobs, beta1_active, beta2_active,
+                       iter.max = iter_max)
+    )
+
+    # Retry once, on the same data, with a larger iteration cap.
+    if (!sim$converged) {
+      set.seed(seed_i)
+      sim <- suppressWarnings(
+        easy_sim_wrapper(predictors, nobs, beta1_active, beta2_active,
+                         iter.max = iter_max_retry)
+      )
+    }
+
+    # Still not converged after the retry -> skip this iteration.
+    if (!sim$converged) return(NULL)
+
+    sim$comparisons %>%
+      mutate(Bias = Sparse_FG_beta - True_beta,
+             Iteration = i) %>%
+      select(Name, True_beta, Sparse_FG_beta, Bias, Iteration)
+  })
+
+  n_used    <- dplyr::n_distinct(bias_iters$Iteration)
+  n_skipped <- n_iter - n_used
+  if (n_skipped > 0) {
+    message(n_skipped, " of ", n_iter,
+            " iterations skipped (did not converge after retry).")
+  }
+
+  bias_summary <- bias_iters %>%
+    group_by(Name, True_beta) %>%
+    summarise(Avg_bias = mean(Bias),
+              SE_bias  = sd(Bias) / sqrt(n()),
+              Avg_est = mean(Sparse_FG_beta),
+              SD_est = sd(Sparse_FG_beta),
+              Med_est = median(Sparse_FG_beta),
+              Q3_est = quantile(Sparse_FG_beta, 0.75),
+              Q1_est = quantile(Sparse_FG_beta, 0.25),
+              .groups  = "drop") %>%
+    mutate(Active = Name %in% paste0("V", seq_along(beta1_active)),
+           Name   = factor(Name,
+                           levels = stringr::str_sort(unique(Name),
+                                                      numeric = TRUE)))
+
+  list(iterations = bias_iters,
+       summary    = bias_summary,
+       n_used     = n_used,
+       n_skipped  = n_skipped)
+}
+
+# Plot the average bias per predictor with +/- 1 SE error bars.
+plot_fg_bias <- function(predictors,
+                         active_only = TRUE, 
+                         n_iter = 100,
+                         nobs = 50,
+                         beta1_active = c(0.40, -0.50, 0.60, 0.75, -0.80),
+                         beta2_active = c(0, 0.3, 0, 0, -0.2),
+                         ...) {
+
+  res <- sim_fg_bias(predictors, n_iter, nobs, beta1_active, beta2_active, ...)
+  
+  if(active_only){
+    res$summary <- res$summary %>%
+      filter(Active == TRUE)
+  }
+
+ p1 <-  ggplot(res$summary) +
+    #geom_hline(aes(x = Name, y = Avg_est, color = Active), yintercept = 0, linetype = "dashed", color = "grey50") +
+   geom_point(aes(x = Name, y = Avg_est, color = Active))+
+    geom_errorbar(aes(x = Name, ymin =Avg_est - 1.96*SD_est,
+                      ymax = Avg_est + 1.96*SD_est, color = Active),
+                  width = 0.2) +
+    geom_point(aes(x = Name, y = True_beta), color = "black", shape = "square") +
+    labs(x = "Predictor",
+         y = "Average Estimate",
+         color = "Active",
+         title = paste0("Average sparse Fine-Gray estimate over ",
+                        n_iter, " iterations"),
+         caption = "Error bars show 95% interval of the estimators sampling distribution. (Est +/- 1.96*SD(Estimate))") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+  
+  p2 <- ggplot(res$summary, aes(x = Name, y = Avg_bias, color = Active)) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+    geom_errorbar(aes(ymin = Avg_bias - SE_bias,
+                      ymax = Avg_bias + SE_bias),
+                  width = 0.2) +
+    geom_point() +
+    labs(x = "Predictor",
+         y = "Average bias (Sparse FG - True beta)",
+         color = "Active",
+         title = paste0("Average sparse Fine-Gray bias over ",
+                        n_iter, " iterations"),
+         caption = "Error bars show standard error of the bias. (SD(Bias)/sqrt(iterations))") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+  
+  print(p1)
+  print(p2)
+}
+```
+
+```{r}
+
+plot_fg_bias(predictors = 5, n_iter = 100, nobs = 50)
+
+```
+
+```{r}
+plot_fg_bias(predictors = 5, n_iter = 100, nobs = 200)
+```
+
+```{r}
+plot_fg_bias(predictors = 25, n_iter = 100, nobs = 200)
+
+```
+
+```{r}
+plot_fg_bias(predictors = 100, n_iter = 100, nobs = 200)
+```
+
+```{r}
+easy_sim_wrapper(5, nobs = 150,
+                                 beta1_active = c(2.40, - 2.50, 2.60, 2.75, - 2.80), 
+                                 beta2_active = c(0, 1.3, 0, 0, -2.2)) 
+```

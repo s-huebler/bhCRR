@@ -37,7 +37,7 @@ devtools::load_all("~/Documents/bhCRR", recompile = TRUE)
 easy_sim <- function(nobs =50,
                      beta1,
                      beta2){
-  sim <- simulateTwoCauseFineGrayModel(nobs = 50,
+  sim <- simulateTwoCauseFineGrayModel(nobs = nobs,
                                        beta1 = beta1,
                                        beta2 = beta2,
                                        X = NULL,
@@ -65,8 +65,9 @@ easy_sim <- function(nobs =50,
 
 easy_sim_wrapper <- function(x,
                              nobs = 50,
-                             beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80), 
-                             beta2_active = c(0, 0.3, 0, 0, -0.2)){
+                             beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80),
+                             beta2_active = c(0, 0.3, 0, 0, -0.2),
+                             iter.max = 20){
 data <- easy_sim(nobs,
                      c(beta1_active, rep(0,x-length(beta1_active))),
                      c(beta2_active, rep(0,x-length(beta1_active)))
@@ -87,16 +88,30 @@ full_fg_formula <- paste("Surv(fgstart, fgstop, fgstatus) ~ ",
 
 sparse_fg_model <- coxph(as.formula(sparse_fg_formula),
                   weight = fgwt,
-                  data = fg_data_format)
+                  data = fg_data_format,
+                  control = coxph.control(iter.max = iter.max))
+
+# A coxph fit is treated as converged if it stopped before hitting the
+# iteration cap AND all coefficients are finite (guards against the
+# monotone-likelihood / separation blow-ups).
+sparse_iter <- max(sparse_fg_model$iter)
+sparse_converged <- isTRUE(sparse_iter < iter.max) &&
+  all(is.finite(sparse_fg_model$coefficients))
 
 if(x < nobs){
   full_fg_model <- coxph(as.formula(full_fg_formula),
                   weight = fgwt,
-                  data = fg_data_format)
+                  data = fg_data_format,
+                  control = coxph.control(iter.max = iter.max))
 
   full_fg_ests <- as.vector(full_fg_model$coefficients)
+  full_iter <- max(full_fg_model$iter)
+  full_converged <- isTRUE(full_iter < iter.max) &&
+    all(is.finite(full_fg_model$coefficients))
 }else{
   full_fg_ests <- rep(NA, x)
+  full_iter <- NA
+  full_converged <- NA
 }
 
 
@@ -112,24 +127,32 @@ comparisons <- data.frame(Name = c(paste("V", 1:x, sep = "")),
 )
 
 return(list(data = data,
-            comparisons=comparisons))
+            comparisons = comparisons,
+            # `converged` gates on the sparse FG model, since that is the
+            # estimate the bias analysis relies on.
+            converged = sparse_converged,
+            convergence = list(sparse = sparse_converged,
+                               full = full_converged,
+                               sparse_iter = sparse_iter,
+                               full_iter = full_iter,
+                               iter.max = iter.max)))
 }
 ```
 
 ## Basic Scenarios
 
 ```{r}
-basic5 <- easy_sim_wrapper(5, nobs = 100) 
-basic25 <- easy_sim_wrapper(25, nobs = 100)
-basic100 <- easy_sim_wrapper(101, nobs = 100)
+basic5 <- easy_sim_wrapper(5, nobs = 200) 
+basic25 <- easy_sim_wrapper(25, nobs = 200)
+basic100 <- easy_sim_wrapper(101, nobs = 200)
 
-basic5_large <- easy_sim_wrapper(5, nobs = 100,
+basic5_large <- easy_sim_wrapper(5, nobs = 200,
                                  beta1_active = c(2.40, - 2.50, 2.60, 2.75, - 2.80), 
                                  beta2_active = c(0, 1.3, 0, 0, -2.2)) 
-basic25_large <- easy_sim_wrapper(25, nobs = 100,
+basic25_large <- easy_sim_wrapper(25, nobs = 200,
                                  beta1_active = c(2.40, - 2.50, 2.60, 2.75, - 2.80), 
                                  beta2_active = c(0, 1.3, 0, 0, -2.2)) 
-basic100_large <- easy_sim_wrapper(101, nobs = 100,
+basic100_large <- easy_sim_wrapper(101, nobs = 200,
                                  beta1_active = c(2.40, - 2.50, 2.60, 2.75, - 2.80), 
                                  beta2_active = c(0, 1.3, 0, 0, -2.2)) 
 ```
@@ -222,23 +245,178 @@ invisible(mod)
 ## Reasonable base models
 
 ```{r}
-mod_basic5 <- mod_pips_func(ss = c(0.005, 1000), basic5, supply_mod = NULL)
+mod_basic5 <- mod_pips_func(ss = c(0.05, .7), basic5, supply_mod = NULL)
 ```
 
 ```{r}
-mod_basic25 <- mod_pips_func(ss = c(0.03, 1000), basic25, supply_mod = NULL)
+mod_basic25 <- mod_pips_func(ss = c(0.05, .8), basic25, supply_mod = NULL)
 ```
 
 ```{r}
-mod_basic25_large <- mod_pips_func(ss = c(0.03, 1000), basic25_large, supply_mod = NULL)
+mod_basic100 <- mod_pips_func(ss = c(0.05, .8), basic100)
 ```
 
 ```{r}
-mod_basic100 <- mod_pips_func(ss = c(0.03, 1000), basic100)
+table(mod_basic100$coefficients==0)
+table(mod_basic100$pips)
+```
+
+## Visualizing many models
+
+```{r}
+# Visualize SSL convergence paths AVERAGED over many simulated datasets.
+# Mirrors mod_pips_func, but each plotted path is the MEAN across `n_sims`
+# fits, and the solid sparse-FG reference line is the MEAN sparse-FG estimate
+# across those same simulations (the dashed true-beta line is constant by
+# design, so its mean is just the true value).
+mod_pips_func_many <- function(ss,
+                               predictors,
+                               n_sims = 25,
+                               nobs = 200,
+                               beta1_active = c(0.40, -0.50, 0.60, 0.75, -0.80),
+                               beta2_active = c(0, 0.3, 0, 0, -0.2),
+                               initial_sparsity = 0.5,
+                               base_seed = 1,
+                               align = c("pad", "truncate")) {
+
+  align <- match.arg(align)
+  active_names <- paste0("V_", seq_along(beta1_active))
+
+  # Reshape a betas/pips path matrix (rows = betas, cols = SSL iterations)
+  # into long form and tag it with the simulation index.
+  path_long <- function(mat, n_beta, sim) {
+    df <- as.data.frame(mat)
+    names(df) <- paste0("Iteration_", 0:(ncol(df) - 1))
+    df$Beta <- paste0("V_", 1:n_beta)
+    df %>%
+      pivot_longer(cols = -Beta, values_to = "Est", names_to = "Iteration",
+                   names_prefix = "Iteration_",
+                   names_transform = list(Iteration = as.numeric)) %>%
+      mutate(Sim = sim)
+  }
+
+  # ---- Run the simulations -------------------------------------------------
+  # Fresh data each sim (seeded for reproducibility); fit SSL; keep the pips
+  # and betas paths plus that sim's true and sparse-FG betas.
+  sims <- purrr::map(seq_len(n_sims), function(s) {
+    set.seed(base_seed + s)
+    scenario <- easy_sim_wrapper(predictors, nobs, beta1_active, beta2_active)
+    mod <- suppressWarnings(
+      fit_ssl_psdh(scenario$data$x, scenario$data$y, ss = ss,
+                   initial_sparsity = initial_sparsity)
+    )
+    n_beta <- nrow(scenario$comparisons)
+    list(
+      pips  = path_long(mod$pips_path,  n_beta, s),
+      betas = path_long(mod$betas_path, n_beta, s),
+      comps = scenario$comparisons %>%
+        mutate(Beta = str_replace(Name, "^(V)(\\d+)$", "\\1_\\2"), Sim = s)
+    )
+  })
+
+  pips_all  <- bind_rows(purrr::map(sims, "pips"))
+  betas_all <- bind_rows(purrr::map(sims, "betas"))
+  comps_all <- bind_rows(purrr::map(sims, "comps"))
+
+  # ---- Align iteration indices across sims ---------------------------------
+  # SSL runs a data-dependent number of iterations, so paths differ in length.
+  # "pad" carries each converged path forward to the global max iteration (so
+  # every iteration is averaged over all n_sims); "truncate" cuts to the
+  # shortest run.
+  align_paths <- function(df) {
+    if (align == "pad") {
+      grid <- tidyr::expand_grid(Sim = unique(df$Sim),
+                                 Beta = unique(df$Beta),
+                                 Iteration = 0:max(df$Iteration))
+      df %>%
+        right_join(grid, by = c("Sim", "Beta", "Iteration")) %>%
+        group_by(Sim, Beta) %>%
+        arrange(Iteration, .by_group = TRUE) %>%
+        tidyr::fill(Est, .direction = "down") %>%
+        ungroup()
+    } else {
+      max_common <- df %>% group_by(Sim) %>%
+        summarise(m = max(Iteration), .groups = "drop") %>% pull(m) %>% min()
+      df %>% filter(Iteration <= max_common)
+    }
+  }
+
+  pips_all  <- align_paths(pips_all)
+  betas_all <- align_paths(betas_all)
+
+  # ---- Average across sims -------------------------------------------------
+  beta_levels <- stringr::str_sort(unique(betas_all$Beta), numeric = TRUE)
+
+  pips_mean <- pips_all %>%
+    group_by(Beta, Iteration) %>%
+    summarise(Est = mean(Est), .groups = "drop") %>%
+    mutate(Beta = factor(Beta, levels = beta_levels))
+
+  comps_mean <- comps_all %>%
+    group_by(Beta) %>%
+    summarise(True_beta = mean(True_beta),
+              Sparse_FG_beta = mean(Sparse_FG_beta), .groups = "drop")
+
+  betas_mean <- betas_all %>%
+    group_by(Beta, Iteration) %>%
+    summarise(Est = mean(Est), .groups = "drop") %>%
+    left_join(comps_mean, by = "Beta") %>%
+    mutate(Beta = factor(Beta, levels = beta_levels))
+
+  sub <- paste0("Mean over ", n_sims, " simulations")
+
+  # ---- Plots (mirror mod_pips_func, but averaged) --------------------------
+  p1 <- ggplot(pips_mean %>% filter(!(Beta %in% active_names)),
+               aes(x = Iteration, y = Est, color = Beta)) +
+    geom_point() + geom_line(aes(group = Beta)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    ggtitle("Inclusion Probabilities: Inactive", subtitle = sub)
+  print(p1)
+
+  p2 <- ggplot(pips_mean %>% filter(Beta %in% active_names),
+               aes(x = Iteration, y = Est, color = Beta)) +
+    geom_point() + geom_line(aes(group = Beta)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    ggtitle("Inclusion Probabilities: Active", subtitle = sub)
+  print(p2)
+
+  p3 <- ggplot(betas_mean %>% filter(!(Beta %in% active_names)),
+               aes(x = Iteration, y = Est, color = Beta)) +
+    geom_point() + geom_line(aes(group = Beta)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    ggtitle("Betas: Inactive", subtitle = sub)
+  print(p3)
+
+  p4 <- ggplot(betas_mean %>% filter(Beta %in% active_names),
+               aes(x = Iteration, y = Est, color = Beta)) +
+    geom_point() + geom_line(aes(group = Beta)) +
+    theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1)) +
+    ggtitle("Betas: Active", subtitle = sub) +
+    geom_hline(aes(yintercept = True_beta, color = Beta),
+               linetype = "dashed", alpha = 0.5) +
+    geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5) +
+    labs(caption = paste0("Dashed = true beta; solid = mean sparse fine-gray ",
+                          "estimate; path = mean estimate across ", n_sims,
+                          " simulations"))
+  print(p4)
+
+  invisible(list(pips = pips_mean, betas = betas_mean, comparisons = comps_mean))
+}
+
+# Example:
+# many5 <- mod_pips_func_many(ss = c(0.005, 500), predictors = 5, n_sims = 25)
 ```
 
 ```{r}
-mod_basic100 <- mod_pips_func(ss = c(0.03, 1000), basic100_large)
+mod_pips_func_many(ss = c(0.05,0.7), predictors = 5, n_sims = 25)
+```
+
+```{r}
+mod_pips_func_many(ss = c(0.05, 0.7), predictors = 25, n_sims = 100, nobs = 200)
+```
+
+```{r}
+mod_pips_func_many(ss = c(0.05, 0.7), predictors = 100, n_sims = 100, nobs = 200)
 ```
 
 # Solution path
@@ -347,11 +525,11 @@ solution_path_wrapper <- function(scale1_seq,
 # Basic 5
 
 ```{r}
-basic5_grid <- solution_path_wrapper(scale1_seq = c(1, 100, 1000),
+basic5_grid <- solution_path_wrapper(scale1_seq = c(0.6, 0.7, 0.8),
                                      #scale0_path = seq(0.001, 0.1, .005),
-                                     scale0_path = 1/(seq(0.0001, 100, 10)),
-                                     scale0_start = 0.001,
-                                     scale0_granularity = 0.05,
+                                     scale0_path = 1/(seq(1.7, 20, 2)),
+                                     #scale0_start = 0.001,
+                                     #scale0_granularity = 0.05,
                                      scenario = basic5, 
                                      cindex = TRUE)
 
@@ -378,7 +556,7 @@ ggplot(basic5_grid,
 ```{r}
 ggplot(basic5_grid %>%
          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
-         filter(s1 == 1000)
+         filter(s1 == 0.8)
        )+
   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
@@ -398,9 +576,9 @@ ggplot(basic5_grid %>%
 # Basic 25
 
 ```{r}
-basic25_grid <- solution_path_wrapper(scale1_seq = c(100, 500, 1000),
+basic25_grid <- solution_path_wrapper(scale1_seq = c(0.6, 0.7, 0.8),
                                      #scale0_path = seq(0.001, 0.1, .005),
-                                     scale0_path = 1/(seq(0.0001, 100, 10)),
+                                     scale0_path = 1/(seq(1.7, 20, 2)),
                                      scale0_start = 0.001,
                                      scale0_granularity = 0.05,
                                      scenario = basic25, 
@@ -409,7 +587,7 @@ basic25_grid <- solution_path_wrapper(scale1_seq = c(100, 500, 1000),
 
 ggplot(basic25_grid %>%
          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
-         filter(s1 == 1000)
+         filter(s1 == 0.8)
        )+
   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
@@ -420,7 +598,7 @@ ggplot(basic25_grid %>%
 
 ggplot(basic25_grid %>%
          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
-         filter(s1 == 1000)
+         filter(s1 == 0.8)
        )+
   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
@@ -436,24 +614,24 @@ target_betas <- c("V1", "V2", "V3", "V4", "V5")
 ggplot() +
   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
   geom_line(
-    data = subset(basic25_grid, !(Beta %in% target_betas) & s1 == 1000),
+    data = subset(basic25_grid, !(Beta %in% target_betas) & s1 == 0.8),
     aes(x = 1/s0, y = Estimate, group = Beta),
     color = "darkgray"
   ) +
   geom_point(
-    data = subset(basic25_grid, !(Beta %in% target_betas)& s1 == 1000),
+    data = subset(basic25_grid, !(Beta %in% target_betas)& s1 == 0.8),
     aes(x = 1/s0, y = Estimate, group = Beta),
     color = "darkgray"
   ) +
   
   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
   geom_line(
-    data = subset(basic25_grid, Beta %in% target_betas & s1 == 1000),
+    data = subset(basic25_grid, Beta %in% target_betas & s1 == 0.8),
     aes(x = 1/s0, y = Estimate, group = Beta),
     color = "black"
   ) +
   geom_point(
-    data = subset(basic25_grid, Beta %in% target_betas & s1 == 1000),
+    data = subset(basic25_grid, Beta %in% target_betas & s1 == 0.8),
     aes(x = 1/s0, y = Estimate, group = Beta),
     color = "black"
   ) +
@@ -468,9 +646,9 @@ ggplot() +
 ```
 
 ```{r}
-basic25_grid_zoomed <- solution_path_wrapper(scale1_seq = c( 1000),
+basic25_grid_zoomed <- solution_path_wrapper(scale1_seq = c(0.8),
                                      #scale0_path = seq(0.001, 0.1, .005),
-                                     scale0_path =seq(0.02, 0.04, .001),
+                                     scale0_path =1/(seq(1.7, 20, 2)),
                                      scale0_start = 0.001,
                                      scale0_granularity = 0.05,
                                      scenario = basic25, 
@@ -495,10 +673,11 @@ ggplot(basic25_grid_zoomed,
 # Basic 100
 
 ```{r}
-basic100_grid <- solution_path_wrapper(scale1_seq = c( 1000),
+basic100_grid <- solution_path_wrapper(scale1_seq = c(0.8),
                                      #scale0_path = seq(0.001, 0.1, .005),
-                                     scale0_path = 1/(seq(0.0001, 100, 10)),
-                                     scale0_start = 0.001,
+                                     #scale0_path = 1/(seq(0.0001, 100, 10)),
+                                     scale0_path = 1/(seq(1.7, 80, 2)),
+                                     scale0_start = 0.03,
                                      scale0_granularity = 0.05,
                                      scenario = basic100, 
                                      cindex = TRUE)
@@ -506,7 +685,7 @@ basic100_grid <- solution_path_wrapper(scale1_seq = c( 1000),
 
 ggplot(basic100_grid %>%
          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
-         filter(s1 == 1000)
+         filter(s1 == 0.8)
        )+
   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
@@ -517,7 +696,7 @@ ggplot(basic100_grid %>%
 
 ggplot(basic100_grid %>%
          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
-         filter(s1 == 1000)
+         filter(s1 == 0.8)
        )+
   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
@@ -528,106 +707,403 @@ ggplot(basic100_grid %>%
 ```
 
 ```{r}
-target_betas <- c("V1", "V2", "V3", "V4", "V5")
-
-ggplot() +
-  # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
-  geom_line(
-    data = subset(basic100_grid, !(Beta %in% target_betas) & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "darkgray"
-  ) +
-  geom_point(
-    data = subset(basic100_grid, !(Beta %in% target_betas)& s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "darkgray"
-  ) +
-  
-  # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
-  geom_line(
-    data = subset(basic100_grid, Beta %in% target_betas & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "black"
-  ) +
-  geom_point(
-    data = subset(basic100_grid, Beta %in% target_betas & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "black"
-  ) +
-  
-  # Set the x-axis ticks to match the exact s0 values
-  scale_x_continuous(breaks = 1/unique(basic100_grid$s0)) +
-  
-  # Rotate the text 90 degrees and align it properly
-  theme(
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
-  )
+# basic100_grid <- solution_path_wrapper(scale1_seq = c( 100),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = 1/(seq(0.0001, 100, 10)),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 1000)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 1000)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
 ```
 
 ```{r}
-basic100_large_grid <- solution_path_wrapper(scale1_seq = c( 1000),
-                                     #scale0_path = seq(0.001, 0.1, .005),
-                                     scale0_path = 1/(seq(0.0001, 100, 10)),
-                                     scale0_start = 0.001,
-                                     scale0_granularity = 0.05,
-                                     scenario = basic100_large, 
-                                     cindex = TRUE)
-
-
-ggplot(basic100_large_grid %>%
-         filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
-         filter(s1 == 1000)
-       )+
-  geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
-  geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
-  geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
-  geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
-  labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
-      title = "Active Coefficients")
-
-ggplot(basic100_large_grid %>%
-         filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
-         filter(s1 == 1000)
-       )+
-  geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
-  geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
-  geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
-  geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
-  labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
-      title = "Inactive Coefficients")
+# target_betas <- c("V1", "V2", "V3", "V4", "V5")
+# 
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_grid, !(Beta %in% target_betas) & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_grid, !(Beta %in% target_betas)& s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_grid, Beta %in% target_betas & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_grid, Beta %in% target_betas & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
 ```
 
 ```{r}
-ggplot() +
-  # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
-  geom_line(
-    data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "darkgray"
-  ) +
-  geom_point(
-    data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "darkgray"
-  ) +
-  
-  # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
-  geom_line(
-    data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "black"
-  ) +
-  geom_point(
-    data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 1000),
-    aes(x = 1/s0, y = Estimate, group = Beta),
-    color = "black"
-  ) +
-  
-  # Set the x-axis ticks to match the exact s0 values
-  scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
-  
-  # Rotate the text 90 degrees and align it properly
-  theme(
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
-  )
+# basic100_large_grid <- solution_path_wrapper(scale1_seq = c(500),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = 1/(seq(0.0001, 100, 10)),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100_large, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 500)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 500)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
+```
+
+```{r}
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
+```
+
+```{r}
+# basic100_large_grid <- solution_path_wrapper(scale1_seq = c(10),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = s0_ladder(10, 100, 100),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100_large, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 10)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 10)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
+# 
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
+```
+
+```{r}
+# basic100_large_grid <- solution_path_wrapper(scale1_seq = c(10),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = s0_ladder(10, 10, 5),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100_large, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 10)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 10)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
+# 
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 10),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
+```
+
+```{r}
+# basic100_large_grid <- solution_path_wrapper(scale1_seq = c(1000),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = s0_ladder(1000, 10, 5),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100_large, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 1000)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 1000)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
+# 
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 1000),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
+```
+
+```{r}
+# basic100_large_grid <- solution_path_wrapper(scale1_seq = c(500),
+#                                      #scale0_path = seq(0.001, 0.1, .005),
+#                                      scale0_path = s0_ladder(500, 10, 5),
+#                                      scale0_start = 0.001,
+#                                      scale0_granularity = 0.05,
+#                                      scenario = basic100_large, 
+#                                      cindex = TRUE)
+# 
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(Beta %in% c("V1", "V2", "V3", "V4", "V5" ))%>%
+#          filter(s1 == 500)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Active Coefficients")
+# 
+# ggplot(basic100_large_grid %>%
+#          filter(!(Beta %in% c("V1", "V2", "V3", "V4", "V5" )))%>%
+#          filter(s1 == 500)
+#        )+
+#   geom_point(aes(x=1/s0, y = Estimate, color = Beta))+
+#   geom_line(aes(x=1/s0, y = Estimate, color = Beta), alpha = 0.5)+
+#   geom_hline(aes(yintercept = True_beta, color = Beta), linetype = "dashed")+
+#   geom_hline(aes(yintercept = Sparse_FG_beta, color = Beta), alpha = 0.5)+
+#   labs(caption = "True estimate in dashed line, sparse fine and gray estimate in solid line",
+#       title = "Inactive Coefficients")
+# 
+# ggplot() +
+#   # LAYER 1 (BOTTOM): Plot everything EXCEPT V1-V5 in light gray
+#   geom_line(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas) & s1 == 500),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, !(Beta %in% target_betas)& s1 == 500),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "darkgray"
+#   ) +
+#   
+#   # LAYER 2 (TOP): Plot ONLY V1-V5 in black so they draw over the gray
+#   geom_line(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 500),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   geom_point(
+#     data = subset(basic100_large_grid, Beta %in% target_betas & s1 == 500),
+#     aes(x = 1/s0, y = Estimate, group = Beta),
+#     color = "black"
+#   ) +
+#   
+#   # Set the x-axis ticks to match the exact s0 values
+#   scale_x_continuous(breaks = 1/unique(basic100_large_grid$s0)) +
+#   
+#   # Rotate the text 90 degrees and align it properly
+#   theme(
+#     axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)
+#   )
 ```

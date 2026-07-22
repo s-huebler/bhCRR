@@ -102,3 +102,25 @@ solve_for_x <- function(n, lambda0, lambda1, theta) {
   # Return both the positive and negative roots
   return(c(abs_x, -abs_x))
 }
+
+
+s1_range <- function(n, p){
+  max_s1 = p/sqrt(n)
+  min_s1 = 1/(4*sqrt(n*log(p)))
+  ret <- c(min_s1, max_s1)
+  ret
+}
+
+s0_ladder <- function(s1, p, step){
+  lambda1 <- 1/s1
+  top_of_range <- p^2
+  bottom_of_range <- lambda1 + step
+
+  if (bottom_of_range > top_of_range) {
+    return(numeric(0))
+  }
+
+  1/seq(from = bottom_of_range, to = top_of_range, by = step)
+}
+
+s0_ladder(10, 100, 100)
