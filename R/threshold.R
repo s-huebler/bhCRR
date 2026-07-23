@@ -62,9 +62,9 @@ d_bound <- function(lambda0, lambda1, n){
   2*n -(1/(lambda0-lambda1) - sqrt(2*n))^2
 }
 
-c_plus <- function(n, lambda0, lambda1){
-  0.5*(1+sqrt(1-4*n/(lambda0-lambda1)^2))
-}
+# c_plus <- function(n, lambda0, lambda1){
+#   0.5*(1+sqrt(1-4*n/(lambda0-lambda1)^2))
+# }
 
 
 pstar <- function(x, lambda0, lambda1, theta){
@@ -124,3 +124,56 @@ s0_ladder <- function(s1, p, step){
 }
 
 s0_ladder(10, 100, 100)
+
+s0_upper_range <- function(n, s1){
+  lambda1 <- 1/s1
+
+  lambda0 <- 2*sqrt(n)+lambda1
+  1/lambda0-0.0001
+}
+
+c_plus <- function(n, s0, s1){
+  lambda0 <- 1/s0
+  lambda1 <- 1/s1
+  0.5*(1+sqrt(1-4*n/(lambda0-lambda1)^2))
+}
+
+
+zero_gap <- function(n, s0, s1, theta){
+  lambda0 <- 1/s0
+  lambda1 <- 1/s1
+
+  1/(lambda0-lambda1)*log((1-theta)/theta*lambda0/lambda1*c_plus(n, s0, s1)/(1-c_plus(n, s0, s1)))
+}
+
+# zero_gap_solve_s0 <- function(n, s1, theta, beta_min){
+#   lambda1 <- 1/s1
+#
+#   a <- -theta/(1-theta)
+#   b <- lambda1*exp(-lambda1*beta_min)
+#   c <- exp(-lambda1*beta_min)
+#   d <- exp(lambda1^2/(2*n) + (n*beta_min^2)/2)
+#
+#   1/(a*b*(c-d))
+#
+# }
+
+solve_for_s0 <- function(beta_min, n, s1, theta, lower_bound = 0.001, upper_bound = 0.05) {
+
+  # The objective function: we want the result of this to be 0
+  objective_fun <- function(s0) {
+    zero_gap(n, s0, s1, theta) - beta_min
+  }
+
+  # Try to find the root
+  # extendInt = "yes" tells R to automatically widen the search interval
+  # if the root doesn't fall exactly between lower_bound and upper_bound.
+  result <- uniroot(
+    objective_fun,
+    interval = c(lower_bound, upper_bound),
+    extendInt = "yes"
+  )
+
+  # uniroot returns a list; we just extract the root (the s0 value)
+  return(result$root)
+}

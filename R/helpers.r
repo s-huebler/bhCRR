@@ -82,3 +82,29 @@ rlaplace <- function(n, mu = 0, b = 1) {
 leave_one_out_mean <- function(x) {
   (sum(x) - x) / (length(x) - 1)
 }
+
+
+plot_score_heatmap <- function(df) {
+
+  # Ensure the dataframe is valid
+  if (!all(c("s0", "s1", "score_mean") %in% colnames(df))) {
+    stop("Dataframe must contain 's0', 's1', and 'score_mean' columns.")
+  }
+
+  # Create the heatmap using ggplot2
+  p <- ggplot(data = df, aes(x = as.factor(s0), y = as.factor(s1), fill = score_mean)) +
+    geom_tile(color = "white", size = 0.5) + # Adds white borders between tiles
+    scale_fill_viridis_c(option = "plasma", name = "Score Mean") + # Applies a colorblind-friendly continuous color scale
+    labs(
+      title = "Heatmap of Score Mean by s0 and s1",
+      x = "s0",
+      y = "s1"
+    ) +
+    theme_minimal() +
+    theme(
+      panel.grid = element_blank(), # Removes background grid lines
+      axis.text.x = element_text(angle = 45, hjust = 1) # Tilts x-axis labels if there are many
+    )
+
+  return(p)
+}

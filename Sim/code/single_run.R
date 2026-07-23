@@ -65,9 +65,11 @@ y <- as.matrix(sim_data %>%
 
 #################### SSL Model ################
 
+ssl_psdh_time1 <- Sys.time()
+
 #Initial model fit
 mod <- fit_ssl_psdh(x, y,
-                    ss=c(0.04, 0.7),
+                    ss=c(0.04, 0.6),
                     initial_sparsity = 0.05,
                     theta_a = 1,
                     theta_b = 1,
@@ -79,32 +81,76 @@ mod <- fit_ssl_psdh(x, y,
                                                 length = 10),
                     inner_maxit_start = 1000)
 
-#Check each part of tuning is working
-fol <- generate_foldid(nobs=nobs, nfolds=10, foldid=NULL, ncv=2)
+#Tuning
 
-eval_time <- quantile(y[y[,2]==1,1], .5)
+#Find reasonable scale area for s0 based on what is reasonable/possible for s1 and what the clinically relevant treatment effects might be
 
-predicted <- predict_from_ssl_psdh(mod, x, eval_time)
+#Fix theta as the estimated proportion of non-zero coefficients in the untuned model
+theta_guess <- sum(mod$coefficients$Estimate != 0)/nrow(mod$coefficients)
 
-cindex <- wolbers_c(y, predicted, eval_time)
-
-cv_ssl_psdh(mod, fol$foldid, 0.04, 0.6, 2, .5)
-
-test <- matrix(NA,
-               nrow = length(seq(0.03, 0.08, 0.01)),
-               ncol = length(seq(0.6, 1, .15)))
-
-loops_time1 <- Sys.time()
-for(i in seq(0.03, 0.08, 0.01)){
-  for(j in seq(0.6, 1, .15)){
-    test[i,j]<- cv_ssl_psdh(mod, fol$foldid, i, j, 2, .5)$measures[1]
-  }
+#Find bounds for s1, make sure that reasonable range (0.5 - 1) falls within the bounds
+s1_bounds <- s1_range(nobs, npredictors)
+if(s1_bounds[1] > 0.5 | 1 > s1_bounds[2]){
+  s1_guess1 <- s1_bounds[2]
+  s1_guess2 <- s1_bounds[2]
+}else{
+  s1_guess1 <- 0.5
+  s1_guess2 <- 1
 }
-loops_time2 <- Sys.time()
-print(loops_time2-loops_time1)
+
+#Supply clinically relevant minimum treatment effect (this value will set where the zero gap is)
+
+zero_gap_target <- 0.1
+
+#Make sure the tuning covers around this area where I solve for the upper bound of s0 across a couple of guesses of s1 and maybe a couple potential zero gap targets
+s0_upper_bound1 <- s0_upper_range(nobs, s1_guess1)
+solve_for_s0(beta_min = zero_gap_target, n = nobs, s1 = s1_guess1, theta = theta_guess, lower_bound = 0.0001, upper_bound = s0_upper_bound1)
+
+s0_upper_bound2 <- s0_upper_range(nobs, s1_guess2)
+solve_for_s0(beta_min = zero_gap_target, n = nobs, s1 = s1_guess2, theta = theta_guess, lower_bound = 0.0001, upper_bound = s0_upper_bound2)
+
+#Absolute smallest s0 could be to have a zero gap, just checking that we aren't under that
+solve_for_s0(beta_min = 0.01, n = nobs, s1 = s1_guess2, theta = theta_guess, lower_bound = 0.0001, upper_bound = s0_upper_bound2)
 
 
-tune_time1 <- Sys.time()
-tuning <- tune_ssl_psdh(mod, seq(0.03, 0.08, 0.01), seq(0.6, 1, .15), nfolds=10, ncv=2, foldid=NULL)
-tune_time2 <- Sys.time()
-print(tune_time2-tune_time1)
+
+
+# Run the tuning
+tuning1 <- tune_ssl_psdh(mod, seq(0.005, 0.034, 0.004),
+                        c(0.5, 0.75, 1), nfolds=10, ncv=2, foldid=NULL)
+plot_score_heatmap(tuning1)
+
+# Zoom in a bit
+tuning2 <-  tune_ssl_psdh(mod, seq(0.015, 0.025, 0.002),
+                          c(0.45, 0.5, 0.55), nfolds=10, ncv=2, foldid=NULL)
+plot_score_heatmap(tuning2)
+
+# Make sure there is only 1 max value
+tuning2 %>%
+  filter(score_mean == max(tuning2$score_mean))
+
+# Check that the zero gap is still reasonable
+zero_gap(200, 0.023, 0.45, .2)
+
+
+
+final_mod <-fit_ssl_psdh(x, y,
+                         ss=c(0.023, 0.45),
+                         initial_sparsity = 0.05,
+                         theta_a = 1,
+                         theta_b = 1,
+                         maxit = 100,
+                         epsilon=1e-04,
+                         init = NULL,
+                         init_lam_path = 10^seq(log10(0.1),
+                                                log10(0.001),
+                                                length = 10),
+                         inner_maxit_start = 1000)
+
+
+
+ssl_psdh_time2 <- Sys.time()
+ssl_psdh_time = ssl_psdh_time2 - ssl_psdh_time1
+
+
+
