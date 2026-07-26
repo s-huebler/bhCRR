@@ -18,8 +18,18 @@ cv_fastCrrp <- function(x, time, status, k = 5, penalty = "LASSO",
                         eval_quantile = 0.5) {
 
   n <- nrow(x)
-  set.seed(42)
+  # Assign CV folds reproducibly without leaking the seed into the caller's
+  # RNG stream: save the current global seed, set our fixed seed for the fold
+  # assignment only, then restore the caller's state.
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv))
+    get(".Random.seed", envir = .GlobalEnv) else NULL
+  set.seed(9134)
   fold_ids <- sample(rep(1:k, length.out = n))
+  if (!is.null(old_seed)) {
+    assign(".Random.seed", old_seed, envir = .GlobalEnv)
+  } else {
+    rm(".Random.seed", envir = .GlobalEnv)
+  }
 
   # 1. Fit the full model
   fit_full <- fastCrrp(Crisk(time, status, cencode = 0, failcode = 1) ~ x,

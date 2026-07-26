@@ -158,7 +158,7 @@ bhcrr_check_grid <- function(n, theta, s0_seq, s1_seq,
 #' @export
 bhcrr_tune_preflight <- function(mod,
                                  beta_min = 0.1, beta_floor = 0.01,
-                                 reasonable_s1 = c(0.5, 1),
+                                 reasonable_s1 = c(0.2, 1),
                                  n_s0 = 8L, n_s1 = 3L,
                                  s0_seq = NULL, s1_seq = NULL,
                                  n = NROW(mod$x), p = NCOL(mod$x)) {

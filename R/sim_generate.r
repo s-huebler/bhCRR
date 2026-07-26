@@ -58,6 +58,21 @@ sim_generate <- function(spec,
     class(spec) <- unique(c("sim_spec", class(spec)))
   }
 
+  # The seed governs all data generation below, so restore the caller's RNG
+  # stream on exit (rather than inline) to keep the whole function reproducible
+  # when seeded while avoiding a global seed leak.
+  if (!is.null(seed) || !is.null(spec$seed)) {
+    old_seed <- if (exists(".Random.seed", envir = .GlobalEnv))
+      get(".Random.seed", envir = .GlobalEnv) else NULL
+    on.exit({
+      if (!is.null(old_seed)) {
+        assign(".Random.seed", old_seed, envir = .GlobalEnv)
+      } else if (exists(".Random.seed", envir = .GlobalEnv)) {
+        rm(".Random.seed", envir = .GlobalEnv)
+      }
+    }, add = TRUE)
+  }
+
   if (!is.null(seed)) {
     set.seed(seed)
   } else if (!is.null(spec$seed)) {
@@ -360,6 +375,11 @@ sim_generate_truth <- function(trspec, p, seed) {
     s <- trspec$sparsity
   }
 
+  # Select the active predictor set reproducibly without leaking the seed into
+  # the caller's RNG stream: save the current global seed, seed the selection
+  # only, then restore the caller's state.
+  old_seed <- if (exists(".Random.seed", envir = .GlobalEnv))
+    get(".Random.seed", envir = .GlobalEnv) else NULL
   if (!is.null(seed)) {
     set.seed(seed)
   } else {
@@ -371,6 +391,12 @@ sim_generate_truth <- function(trspec, p, seed) {
   active_predictors_cause2 <- active_predictors[((s - trspec$share_active_set) + 1):length(active_predictors)]
   shared_predictors        <- intersect(active_predictors_cause1,
                                         active_predictors_cause2)
+
+  if (!is.null(old_seed)) {
+    assign(".Random.seed", old_seed, envir = .GlobalEnv)
+  } else {
+    rm(".Random.seed", envir = .GlobalEnv)
+  }
 
   list(shared_multiplier  = trspec$shared_multiplier,
        cause1             = active_predictors_cause1,
