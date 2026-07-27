@@ -49,9 +49,9 @@ if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .Glob
 #################### Batch Configuration ################
 # ---- edit these to control the sweep ----
 nobs             <- 200                 # sample size (fixed across runs)
-npredictors_grid <- c(100)      # set of npredictors to sweep over
+npredictors_grid <- c(205)      # set of npredictors to sweep over
 run_start        <- 4           # e.g., set to 1 for first batch, 11 for second
-run_end          <- 10           # e.g., set to 10 for first batch, 20 for second
+run_end          <- 100           # e.g., set to 10 for first batch, 20 for second
 
 # Active (nonzero) coefficients, padded with zeros to reach npredictors.
 beta1_active <- c(0.40, -0.50, 0.60, 0.75, -0.80)
@@ -142,6 +142,312 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   ssl_psdh_time2 <- Sys.time()
   ssl_psdh_time  <- ssl_psdh_time2 - ssl_psdh_time1
 
+  ## ----- Other comparators (LASSO / aLASSO / SCAD / MCP) -----
+  # Standardize ONCE and feed this same matrix to every comparator, mirroring
+  # single_run.R. This puts the adaptive weights on the same coefficient scale
+  # as the penalized fits and avoids method-to-method preprocessing differences.
+  predictor_names <- paste0("X_", seq_len(npredictors))
+  colnames(x) <- predictor_names
+
+  x_center <- colMeans(x)
+  x_scale  <- apply(x, 2L, stats::sd)
+  bad_scale <- !is.finite(x_scale) | x_scale <= sqrt(.Machine$double.eps)
+  if (any(bad_scale)) {
+    stop("Predictors with zero or invalid standard deviation: ",
+         paste(predictor_names[bad_scale], collapse = ", "))
+  }
+  x_std <- sweep(x, 2L, x_center, FUN = "-")
+  x_std <- sweep(x_std, 2L, x_scale, FUN = "/")
+  colnames(x_std) <- predictor_names
+
+  fit_data <- data.frame(
+    TTE    = sim_data$TTE,
+    Status = sim_data$Status,
+    x_std,
+    check.names = FALSE
+  )
+
+  fg_formula <- stats::as.formula(
+    paste0("Crisk(TTE, Status, cencode = 0, failcode = 1) ~ ",
+           paste(predictor_names, collapse = " + "))
+  )
+
+  nlambda             <- 100L
+  lambda_min_ratio    <- 0.001
+  algorithm_tolerance <- 1e-7
+  max_iterations      <- 5000L
+
+  # fastcmprsk releases differ in whether fastCrrp() exposes getBreslowJumps.
+  fit_fastcrrp <- function(penalty, penalty_factor = NULL, gamma = NULL,
+                           lambda = NULL) {
+    args <- list(
+      formula = fg_formula,
+      data = fit_data,
+      eps = algorithm_tolerance,
+      max.iter = max_iterations,
+      standardize = FALSE,
+      penalty = penalty,
+      lambda.min.ratio = lambda_min_ratio,
+      nlambda = nlambda
+    )
+
+    if (!is.null(penalty_factor)) {
+      if (length(penalty_factor) != npredictors ||
+          any(!is.finite(penalty_factor)) ||
+          any(penalty_factor <= 0)) {
+        stop("penalty_factor must contain one positive finite value per predictor.")
+      }
+      args$penalty.factor <- as.numeric(penalty_factor)
+    }
+
+    if (!is.null(gamma)) args$gamma <- gamma
+
+    if (!is.null(lambda)) {
+      if (any(!is.finite(lambda)) || any(lambda < 0)) {
+        stop("lambda must contain finite non-negative values.")
+      }
+      args$lambda <- as.numeric(lambda)
+    }
+
+    if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrrp))) {
+      args$getBreslowJumps <- FALSE
+    }
+
+    fit <- do.call(fastcmprsk::fastCrrp, args)
+    beta_path <- as.matrix(stats::coef(fit))
+
+    if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
+      beta_path <- t(beta_path)
+      fit$coef <- beta_path
+    }
+    if (nrow(beta_path) != npredictors) {
+      stop("Unexpected coefficient-matrix dimensions returned by fastCrrp().")
+    }
+
+    rownames(fit$coef) <- predictor_names
+    fit
+  }
+
+  fit_initial_finegray <- function() {
+    args <- list(
+      formula = fg_formula,
+      data = fit_data,
+      eps = algorithm_tolerance,
+      max.iter = max_iterations,
+      standardize = FALSE,
+      variance = FALSE
+    )
+    if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrr))) {
+      args$getBreslowJumps <- FALSE
+    }
+    do.call(fastcmprsk::fastCrr, args)
+  }
+
+  select_by_bic <- function(fit, method_label) {
+    beta_path <- as.matrix(stats::coef(fit))
+    if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
+      beta_path <- t(beta_path)
+    }
+
+    # Paper's simplified df choice: model size rather than the effective-df
+    # trace (also what AIC.fcrrp uses internally).
+    df_path  <- colSums(beta_path != 0)
+    bic_path <- -2 * as.numeric(fit$logLik) + log(nobs) * df_path
+
+    if (length(bic_path) != ncol(beta_path)) {
+      stop("BIC path and coefficient path have incompatible lengths.")
+    }
+
+    valid <- is.finite(bic_path)
+    if (!is.null(fit$converged) && length(fit$converged) == length(bic_path)) {
+      valid <- valid & as.logical(fit$converged)
+    }
+    if (!any(valid)) {
+      stop("No finite, converged solution was available for ", method_label, ".")
+    }
+
+    bic_for_selection <- bic_path
+    bic_for_selection[!valid] <- Inf
+    index <- which.min(bic_for_selection)
+
+    beta_std <- as.numeric(beta_path[, index])
+    names(beta_std) <- predictor_names
+
+    # x_std = (x - center) / scale, so divide by scale to return coefficients to
+    # original predictor units. Centering is absorbed by the baseline hazard.
+    beta_raw <- beta_std / x_scale
+    names(beta_raw) <- predictor_names
+
+    selected <- beta_std != 0
+
+    list(
+      method    = method_label,
+      index     = index,
+      lambda    = as.numeric(fit$lambda.path[index]),
+      bic       = as.numeric(bic_path[index]),
+      df        = as.integer(df_path[index]),
+      converged = if (length(fit$converged) == length(bic_path)) {
+        as.logical(fit$converged[index])
+      } else {
+        NA
+      },
+      beta_std  = beta_std,
+      beta_raw  = beta_raw,
+      selected  = selected,
+      bic_path  = bic_path,
+      df_path   = df_path
+    )
+  }
+
+  # fastCrrp()'s built-in lambda grid degenerates when there are no censored
+  # observations (the IPCW/score projection collapses to roundoff). Build one
+  # clean geometric grid from the KKT condition of the null Fine-Gray model and
+  # share it across all comparators. See single_run.R for the full rationale.
+  fg_lambda_path <- function(x_std, ftime, status,
+                             failcode = 1L, cencode = 0L,
+                             nlambda = 100L, lambda_min_ratio = 0.001) {
+    n <- length(ftime)
+    p <- ncol(x_std)
+
+    cen <- as.integer(status == cencode)
+    if (any(cen == 1L)) {
+      kmC  <- survival::survfit(survival::Surv(ftime, cen) ~ 1)
+      Gfun <- stats::stepfun(kmC$time, c(1, kmC$surv))
+    } else {
+      Gfun <- function(t) rep(1, length(t))
+    }
+
+    ev <- which(status == failcode)
+    if (length(ev) == 0L) {
+      stop("No cause-", failcode, " events; cannot construct a lambda path.")
+    }
+
+    grad <- numeric(p)
+    for (i in ev) {
+      ti          <- ftime[i]
+      at_risk     <- ftime >= ti
+      comp_before <- ftime < ti & status != failcode & status != cencode
+      w           <- numeric(n)
+      w[at_risk]  <- 1
+      if (any(comp_before)) {
+        w[comp_before] <- Gfun(ti) / Gfun(ftime[comp_before])
+      }
+      S    <- sum(w)
+      xbar <- colSums(w * x_std) / S
+      grad <- grad + (x_std[i, ] - xbar)
+    }
+
+    lambda_max <- max(abs(grad)) / n
+    if (!is.finite(lambda_max) || lambda_max < 1e-8) {
+      stop("Degenerate lambda.max (", format(lambda_max, digits = 3),
+           "): the null-score projection collapsed. Inspect the outcome/design.")
+    }
+
+    10^seq(log10(lambda_max),
+           log10(lambda_min_ratio * lambda_max),
+           length.out = nlambda)
+  }
+
+  other_time1 <- Sys.time()
+
+  # LASSO: build the robust shared lambda grid, then fit on it.
+  reference_lambda <- fg_lambda_path(
+    x_std, fit_data$TTE, fit_data$Status,
+    failcode = 1L, cencode = 0L,
+    nlambda = nlambda, lambda_min_ratio = lambda_min_ratio
+  )
+  fit_lasso <- fit_fastcrrp(penalty = "LASSO", lambda = reference_lambda)
+
+  # Adaptive LASSO: theta_j = 1 / abs(beta_hat_j) from the unpenalized FG fit
+  # (p < n), falling back to a ridge endpoint if that fit is unavailable.
+  initial_fit       <- NULL
+  initial_beta_std  <- NULL
+  initial_estimator <- NULL
+
+  if (npredictors < nobs) {
+    initial_fit <- tryCatch(
+      fit_initial_finegray(),
+      error = function(e) {
+        warning("Unpenalized fastCrr() failed: ", conditionMessage(e))
+        NULL
+      }
+    )
+
+    if (!is.null(initial_fit)) {
+      candidate <- as.numeric(stats::coef(initial_fit))
+      initial_converged <- is.null(initial_fit$converged) ||
+        all(as.logical(initial_fit$converged))
+      if (initial_converged &&
+          length(candidate) == npredictors &&
+          all(is.finite(candidate))) {
+        initial_beta_std  <- candidate
+        initial_estimator <- "unpenalized fastCrr"
+      }
+    }
+  }
+
+  if (is.null(initial_beta_std)) {
+    warning("Using a ridge-regularized initial estimate for adaptive-LASSO weights.")
+    initial_fit <- fit_fastcrrp(penalty = "RIDGE", lambda = reference_lambda)
+    ridge_beta  <- as.matrix(stats::coef(initial_fit))
+    ridge_valid <- rep(TRUE, ncol(ridge_beta))
+    if (!is.null(initial_fit$converged) &&
+        length(initial_fit$converged) == ncol(ridge_beta)) {
+      ridge_valid <- as.logical(initial_fit$converged)
+    }
+    ridge_valid <- ridge_valid & apply(ridge_beta, 2L, function(z) all(is.finite(z)))
+    if (!any(ridge_valid)) {
+      stop("No usable ridge solution was available for adaptive-LASSO weights.")
+    }
+    ridge_index <- which.max(replace(as.numeric(initial_fit$logLik), !ridge_valid, -Inf))
+    initial_beta_std  <- as.numeric(ridge_beta[, ridge_index])
+    initial_estimator <- "ridge fastCrrp endpoint"
+  }
+
+  names(initial_beta_std) <- predictor_names
+
+  adaptive_power    <- 1
+  aLASSO_floor      <- 1e-4
+  aLASSO_weight_cap <- 1e4
+  adaptive_weights  <- 1 / pmax(abs(initial_beta_std), aLASSO_floor)^adaptive_power
+  adaptive_weights  <- pmin(adaptive_weights, aLASSO_weight_cap)
+  adaptive_weights  <- adaptive_weights / min(adaptive_weights)
+  names(adaptive_weights) <- predictor_names
+
+  fit_alasso <- fit_fastcrrp(
+    penalty = "LASSO",
+    penalty_factor = adaptive_weights,
+    lambda = reference_lambda
+  )
+
+  # SCAD (gamma = 3.7) and MCP (gamma = 2.7): the paper's fixed concavity params.
+  fit_scad <- fit_fastcrrp(penalty = "SCAD", gamma = 3.7, lambda = reference_lambda)
+  fit_mcp  <- fit_fastcrrp(penalty = "MCP",  gamma = 2.7, lambda = reference_lambda)
+
+  fits <- list(LASSO = fit_lasso, aLASSO = fit_alasso, SCAD = fit_scad, MCP = fit_mcp)
+
+  # All comparators were handed the same reference grid explicitly; verify so
+  # comparisons cannot silently use different tuning grids.
+  same_lambda_grid <- vapply(
+    fits,
+    function(z) isTRUE(all.equal(z$lambda.path, reference_lambda, tolerance = 1e-12)),
+    logical(1)
+  )
+  if (!all(same_lambda_grid)) {
+    stop("The fitted models did not use the same lambda grid: ",
+         paste(names(same_lambda_grid)[!same_lambda_grid], collapse = ", "))
+  }
+
+  selected_models <- list(
+    LASSO  = select_by_bic(fit_lasso,  "LASSO"),
+    aLASSO = select_by_bic(fit_alasso, "adaptive LASSO"),
+    SCAD   = select_by_bic(fit_scad,   "SCAD"),
+    MCP    = select_by_bic(fit_mcp,    "MCP")
+  )
+
+  other_time2 <- Sys.time()
+  other_time  <- other_time2 - other_time1
+
   ## ----- Bundle everything needed for downstream diagnostics -----
   list(
     meta = list(nobs = nobs,
@@ -150,7 +456,8 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
                 beta2 = beta2,
                 zero_gap_target = zero_gap_target,
                 timestamp = Sys.time(),
-                ssl_psdh_time = ssl_psdh_time),
+                ssl_psdh_time = ssl_psdh_time,
+                other_time = other_time),
     sim_data  = sim_data,
     x         = x,
     y         = y,
@@ -158,7 +465,10 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
     autotune  = autotune,
     best      = list(s0 = best_s0, s1 = best_s1),
     final_mod = final_mod,
-    fg_true   = fg_true    # <-- Add this line
+    fg_true   = fg_true,
+    # BIC-selected comparators (LASSO / aLASSO / SCAD / MCP). Each element is the
+    # select_by_bic() summary, incl. beta_raw (original units) and beta_std.
+    selected_models = selected_models
   )
 }
 

@@ -4,14 +4,22 @@
 #   (1) assigns the model object to a variable named exactly like the file
 #       (e.g. file n200_p25_run1.Rdata -> object `n200_p25_run1`), and
 #   (2) builds one long tidy data frame per npredictors group, with 1 row per
-#       predictor per run and columns:
-#         predictor, True_beta, Estimate, nobs, run_number
+#       predictor per model per run and columns:
+#         predictor, True, FG, Model, Estimate, Bias, nobs, run_number
+#
+# The Model column identifies which method each Estimate came from
+#   (SSL, LASSO, aLASSO, SCAD, MCP), mirroring the mod_comparison_long table at
+#   the bottom of single_run.R. True is the padded cause-1 coefficient, FG is the
+#   low-dimensional Fine-Gray estimate fit on the true active set (NA elsewhere),
+#   and Bias = Estimate - True.
 #
 # Each per-group table is assigned to a variable `betas_p25`, `betas_p50`, ...
 # and all are collected in the named list `beta_tables`.
 #
-# Note: the fitted model lives in result$final_mod (cause-1 subdistribution
-# hazard), and result$meta$beta1 holds the true (padded) cause-1 coefficients.
+# Note: the SSL fit lives in result$final_mod (cause-1 subdistribution hazard),
+# the BIC-selected comparators live in result$selected_models (each with a
+# beta_raw vector in original predictor units), and result$meta$beta1 holds the
+# true (padded) cause-1 coefficients.
 
 
 repo_root <- "/Users/sophiehuebler/Documents/bhCRR"
@@ -72,20 +80,50 @@ for (i in seq_along(files)) {
     c(beta1_active_fallback, rep(0, p_f - length(beta1_active_fallback)))
   }
 
-  # (3) Extract FG_True estimates
-  fg_estimates <- rep(NA, p_f)
+  # (3) Extract FG (low-dim Fine-Gray on the true active set) estimates. These
+  # are shared across every model row for a given predictor/run.
+  fg_estimates <- rep(NA_real_, p_f)
   active_idx <- which(true_beta != 0)
   fg_estimates[active_idx] <- res$fg_true$coef
 
-  df <- data.frame(
-    predictor  = coefs$Variable,
-    True_beta  = true_beta,
-    Estimate   = coefs$Estimate,
-    FG_True    = fg_estimates,
-    nobs       = nobs_f,
-    run_number = run_f,
+  predictors <- coefs$Variable
+
+  # (4) SSL estimates (from result$final_mod).
+  ssl_df <- data.frame(
+    predictor = predictors,
+    True      = true_beta,
+    FG        = fg_estimates,
+    Model     = "SSL",
+    Estimate  = coefs$Estimate,
     stringsAsFactors = FALSE
   )
+
+  # (5) Comparator estimates (LASSO / aLASSO / SCAD / MCP) from selected_models.
+  # beta_raw is named by predictor and already on the original coefficient scale.
+  comp_df <- NULL
+  if (!is.null(res$selected_models)) {
+    comp_df <- do.call(rbind, lapply(names(res$selected_models), function(mn) {
+      beta_raw <- res$selected_models[[mn]]$beta_raw
+      data.frame(
+        predictor = predictors,
+        True      = true_beta,
+        FG        = fg_estimates,
+        Model     = mn,
+        Estimate  = as.numeric(beta_raw[predictors]),
+        stringsAsFactors = FALSE
+      )
+    }))
+  } else {
+    warning(sprintf("%s has no selected_models -- only SSL estimates recorded.", nm))
+  }
+
+  # (6) Stack SSL + comparators into one long table for this run.
+  df <- rbind(ssl_df, comp_df)
+  df$Bias       <- df$Estimate - df$True
+  df$nobs       <- nobs_f
+  df$run_number <- run_f
+  df <- df[, c("predictor", "True", "FG", "Model",
+               "Estimate", "Bias", "nobs", "run_number")]
 
   key <- paste0("p", p_f)
   beta_tables[[key]] <- rbind(beta_tables[[key]], df)

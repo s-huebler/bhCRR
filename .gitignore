@@ -6,4 +6,4 @@
 .quarto
 inst/doc
 scratch.r
-Sim/Local_Testing/*.Rdata
+Sim/Local_Testing/**/*.Rdata
