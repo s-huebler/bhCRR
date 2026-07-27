@@ -13,7 +13,7 @@
   "snapshot.dev": false,
   "snapshot.type": "implicit",
   "use.cache": true,
-  "vcs.ignore.cellar": true,
+  "vcs.ignore.cellar": false,
   "vcs.ignore.library": true,
   "vcs.ignore.local": true,
   "vcs.manage.ignores": true
