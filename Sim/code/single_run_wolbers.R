@@ -262,60 +262,92 @@ fit_initial_finegray <- function() {
   do.call(fastcmprsk::fastCrr, args)
 }
 
-select_by_bic <- function(fit, method_label) {
+select_by_wolbers <- function(fit, method_label, eval_quantile = 0.5){
+  
   beta_path <- as.matrix(stats::coef(fit))
   if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
     beta_path <- t(beta_path)
   }
-
-  # This is the paper's simplified df choice: model size rather than the
-  # effective-df trace. It is also what AIC.fcrrp uses internally.
-  df_path <- colSums(beta_path != 0)
-  bic_path <- -2 * as.numeric(fit$logLik) + log(nobs) * df_path
-
-  if (length(bic_path) != ncol(beta_path)) {
-    stop("BIC path and coefficient path have incompatible lengths.")
+  
+  df_path  <- colSums(beta_path != 0)
+  
+  # Calculate evaluation time as median event time for cause 1
+  eval_time <- as.numeric(stats::quantile(fit_data$TTE[fit_data$Status == 1], eval_quantile))
+  
+  # Prepare predictor matrix and true responses for all patients
+  X <- as.matrix(fit_data[, predictor_names])
+  y_true_mat <- as.matrix(fit_data[, c("TTE", "Status")])
+  
+  n_lambda <- ncol(beta_path)
+  wolbers_path <- rep(NA, n_lambda)
+  
+  # Setup dummy data once to save time
+  dummy_data <- fit_data[, c("TTE", "Status", predictor_names)]
+  dummy_data$Event <- as.integer(dummy_data$Status == 1)
+  
+  for(k in 1:n_lambda) {
+    coefs <- as.numeric(beta_path[, k])
+    names(coefs) <- predictor_names
+    
+    # Fit dummy model to extract baseline hazard using predefined coefficients
+    dummy_model <- survival::coxph(
+      survival::Surv(TTE, Event) ~ . - Status - TTE, 
+      data = dummy_data,
+      init = coefs,
+      iter = 0
+    )
+    
+    bh <- survival::basehaz(dummy_model, centered = FALSE)
+    idx <- findInterval(eval_time, bh$time)
+    base_haz_t <- if (idx == 0) 0 else bh$hazard[idx]
+    
+    # Calculate absolute risk
+    linear_predictors <- X %*% coefs
+    risk_score <- as.vector(1 - exp(-base_haz_t * exp(linear_predictors)))
+    
+    # Calculate IPCW Wolbers C-index
+    wolbers_path[k] <- wolbers_c(y_true = y_true_mat, risk_score = risk_score, evaluation_time = eval_time)
   }
-
-  valid <- is.finite(bic_path)
-  if (!is.null(fit$converged) && length(fit$converged) == length(bic_path)) {
+  
+  valid <- is.finite(wolbers_path)
+  if (!is.null(fit$converged) && length(fit$converged) == length(wolbers_path)) {
     valid <- valid & as.logical(fit$converged)
   }
   if (!any(valid)) {
     stop("No finite, converged solution was available for ", method_label, ".")
   }
-
-  bic_for_selection <- bic_path
-  bic_for_selection[!valid] <- Inf
-  index <- which.min(bic_for_selection)
-
+  
+  # Maximize the Wolbers C-index
+  metric_for_selection <- wolbers_path
+  metric_for_selection[!valid] <- -Inf
+  index <- which.max(metric_for_selection)
+  
   beta_std <- as.numeric(beta_path[, index])
   names(beta_std) <- predictor_names
-
-  # Since x_std = (x - center) / scale, divide by scale to return coefficients
-  # to the original predictor units. Centering is absorbed by the baseline
-  # subdistribution hazard.
+  
+  # x_std = (x - center) / scale, so divide by scale to return coefficients to
+  # original predictor units. Centering is absorbed by the baseline hazard.
   beta_raw <- beta_std / x_scale
   names(beta_raw) <- predictor_names
-
+  
   selected <- beta_std != 0
-
+  
   list(
-    method = method_label,
-    index = index,
-    lambda = as.numeric(fit$lambda.path[index]),
-    bic = as.numeric(bic_path[index]),
-    df = as.integer(df_path[index]),
-    converged = if (length(fit$converged) == length(bic_path)) {
+    method       = method_label,
+    index        = index,
+    lambda       = as.numeric(fit$lambda.path[index]),
+    wolbers_c    = as.numeric(wolbers_path[index]),
+    df           = as.integer(df_path[index]),
+    converged    = if (length(fit$converged) == length(wolbers_path)) {
       as.logical(fit$converged[index])
     } else {
       NA
     },
-    beta_std = beta_std,
-    beta_raw = beta_raw,
-    selected = selected,
-    bic_path = bic_path,
-    df_path = df_path
+    beta_std     = beta_std,
+    beta_raw     = beta_raw,
+    selected     = selected,
+    wolbers_path = wolbers_path,
+    df_path      = df_path
   )
 }
 
@@ -541,10 +573,10 @@ if (!all(same_lambda_grid)) {
 }
 
 selected_models <- list(
-  LASSO = select_by_bic(fit_lasso, "LASSO"),
-  aLASSO = select_by_bic(fit_alasso, "adaptive LASSO"),
-  SCAD = select_by_bic(fit_scad, "SCAD"),
-  MCP = select_by_bic(fit_mcp, "MCP")
+  LASSO = select_by_wolbers(fit_lasso, "LASSO"),
+  aLASSO = select_by_wolbers(fit_alasso, "adaptive LASSO"),
+  SCAD = select_by_wolbers(fit_scad, "SCAD"),
+  MCP = select_by_wolbers(fit_mcp, "MCP")
 )
 
 
@@ -562,14 +594,15 @@ mod_comparison_long <- mod_comparison %>%
 
 # Which lambdas actually converged, and is BIC being forced to a grid edge?
 diag_one <- function(fit, sel, nm) {
-  bic <- sel$bic_path
-  idx <- which.min(replace(bic, !is.finite(bic), Inf))
+  # Modify diag_one to pull the new path variable
+  metric_path <- sel$wolbers_path
+  idx <- which.max(replace(metric_path, !is.finite(metric_path), -Inf))
   data.frame(
     method       = nm,
-    n_lambda     = length(bic),
+    n_lambda     = length(metric_path),
     n_converged  = sum(as.logical(fit$converged)),
-    bic_idx      = idx,
-    at_grid_edge = idx %in% c(1L, length(bic)),
+    metric_idx   = idx,
+    at_grid_edge = idx %in% c(1L, length(metric_path)),
     df_at_sel    = sel$df,
     df_range     = paste0(min(sel$df_path), "-", max(sel$df_path)),
     lambda_sel   = signif(sel$lambda, 3)
@@ -582,5 +615,4 @@ do.call(rbind, Map(diag_one,
 # aLASSO grid mis-scaling: how many leading all-zero (null) columns each path has.
 # If aLASSO has many more than LASSO, its grid top is set too high (weights ignored).
 sapply(selected_models, function(s) which(s$df_path > 0)[1] - 1L)
-
 

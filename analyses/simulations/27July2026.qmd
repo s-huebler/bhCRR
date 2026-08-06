@@ -183,6 +183,11 @@ plot_metrics(betas_p205, geom = "col")
 ```
 
 ```{r}
+plot_model_comparison(betas_p5)
+plot_metrics(betas_p5, geom = "col")
+```
+
+```{r}
 plot_model_comparison(betas_p5%>% filter(Model %in% c("LASSO","SSL")))
 plot_metrics(betas_p5%>% filter(Model %in% c("LASSO","SSL")), geom = "col")
 ```

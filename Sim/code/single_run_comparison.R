@@ -31,7 +31,7 @@ library(survival)
 
 # To change per scenario
 nobs = 200
-npredictors = 25
+npredictors = 206
 beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80)
 beta2_active = c(0, 0.3, 0, 0, -0.2)
 
@@ -319,6 +319,110 @@ select_by_bic <- function(fit, method_label) {
   )
 }
 
+
+select_by_wolbers <- function(fit, method_label, eval_quantile = 0.5){
+
+  beta_path <- as.matrix(stats::coef(fit))
+  if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
+    beta_path <- t(beta_path)
+  }
+
+  df_path  <- colSums(beta_path != 0)
+
+  # Calculate evaluation time as median event time for cause 1
+  eval_time <- as.numeric(stats::quantile(fit_data$TTE[fit_data$Status == 1], eval_quantile))
+
+  # Prepare predictor matrix and true responses for all patients
+  X <- as.matrix(fit_data[, predictor_names])
+  y_true_mat <- as.matrix(fit_data[, c("TTE", "Status")])
+
+  n_lambda <- ncol(beta_path)
+  wolbers_path <- rep(NA, n_lambda)
+
+  # Setup dummy data once to save time
+  dummy_data <- fit_data[, c("TTE", "Status", predictor_names)]
+  dummy_data$Event <- as.integer(dummy_data$Status == 1)
+
+  # Build the formula explicitly to avoid the EncodeVars() warning
+    dummy_formula <- stats::as.formula(paste("survival::Surv(TTE, Event) ~", paste(predictor_names, collapse = " + ")))
+
+    for(k in 1:n_lambda) {
+      coefs <- as.numeric(beta_path[, k])
+      names(coefs) <- predictor_names
+
+      # Skip if coefficients are NA
+      if (any(is.na(coefs))) next
+
+      # Fit dummy model to extract baseline hazard using predefined coefficients
+      # Wrapped in tryCatch: extreme coefficients at small lambdas can cause
+      # overflow in exp(X*beta) inside coxph, throwing a .Machine$double.xmax error.
+      bh_result <- tryCatch({
+        dummy_model <- survival::coxph(
+          dummy_formula,
+          data = dummy_data,
+          init = coefs,
+          iter = 0
+        )
+        survival::basehaz(dummy_model, centered = FALSE)
+      }, error = function(e) {
+        NULL
+      })
+
+      if (is.null(bh_result)) next
+
+      idx <- findInterval(eval_time, bh_result$time)
+      base_haz_t <- if (idx == 0) 0 else bh_result$hazard[idx]
+
+    # Calculate absolute risk
+    linear_predictors <- X %*% coefs
+    risk_score <- as.vector(1 - exp(-base_haz_t * exp(linear_predictors)))
+
+    # Calculate IPCW Wolbers C-index
+    wolbers_path[k] <- wolbers_c(y_true = y_true_mat, risk_score = risk_score, evaluation_time = eval_time)
+  }
+
+  valid <- is.finite(wolbers_path)
+  if (!is.null(fit$converged) && length(fit$converged) == length(wolbers_path)) {
+    valid <- valid & as.logical(fit$converged)
+  }
+  if (!any(valid)) {
+    stop("No finite, converged solution was available for ", method_label, ".")
+  }
+
+  # Maximize the Wolbers C-index
+  metric_for_selection <- wolbers_path
+  metric_for_selection[!valid] <- -Inf
+  index <- which.max(metric_for_selection)
+
+  beta_std <- as.numeric(beta_path[, index])
+  names(beta_std) <- predictor_names
+
+  # x_std = (x - center) / scale, so divide by scale to return coefficients to
+  # original predictor units. Centering is absorbed by the baseline hazard.
+  beta_raw <- beta_std / x_scale
+  names(beta_raw) <- predictor_names
+
+  selected <- beta_std != 0
+
+  list(
+    method       = method_label,
+    index        = index,
+    lambda       = as.numeric(fit$lambda.path[index]),
+    wolbers_c    = as.numeric(wolbers_path[index]),
+    df           = as.integer(df_path[index]),
+    converged    = if (length(fit$converged) == length(wolbers_path)) {
+      as.logical(fit$converged[index])
+    } else {
+      NA
+    },
+    beta_std     = beta_std,
+    beta_raw     = beta_raw,
+    selected     = selected,
+    wolbers_path = wolbers_path,
+    df_path      = df_path
+  )
+}
+
 #################### Shared Lambda Grid ################
 
 # fastCrrp()'s built-in lambda grid is generated from a null-score projection,
@@ -540,47 +644,80 @@ if (!all(same_lambda_grid)) {
   )
 }
 
+
 selected_models <- list(
-  LASSO = select_by_bic(fit_lasso, "LASSO"),
-  aLASSO = select_by_bic(fit_alasso, "adaptive LASSO"),
-  SCAD = select_by_bic(fit_scad, "SCAD"),
-  MCP = select_by_bic(fit_mcp, "MCP")
+  LASSO_BIC = select_by_bic(fit_lasso, "LASSO_BIC"),
+  LASSO_Wolbers = select_by_wolbers(fit_lasso, "LASSO_Wolbers"),
+  aLASSO_BIC = select_by_bic(fit_alasso, "aLASSO_BIC"),
+  aLASSO_Wolbers = select_by_wolbers(fit_alasso, "aLASSO_Wolbers"),
+  SCAD_BIC = select_by_bic(fit_scad, "SCAD_BIC"),
+  SCAD_Wolbers = select_by_wolbers(fit_scad, "SCAD_Wolbers"),
+  MCP_BIC = select_by_bic(fit_mcp, "MCP_BIC"),
+  MCP_Wolbers = select_by_wolbers(fit_mcp, "MCP_Wolbers")
 )
 
 
+mod_comparison <- bind_cols(
+  final_mod$coefficients,
+  beta1,
+  c(fg_true$coef, rep(NA, npredictors-length(beta1_active))),
+  selected_models$LASSO_BIC$beta_raw,
+  selected_models$LASSO_Wolbers$beta_raw,
+  selected_models$aLASSO_BIC$beta_raw,
+  selected_models$aLASSO_Wolbers$beta_raw,
+  selected_models$SCAD_BIC$beta_raw,
+  selected_models$SCAD_Wolbers$beta_raw,
+  selected_models$MCP_BIC$beta_raw,
+  selected_models$MCP_Wolbers$beta_raw
+)
 
-mod_comparison <- bind_cols(final_mod$coefficients,beta1, c(fg_true$coef, rep(NA, npredictors-length(beta1_active))), selected_models$LASSO$beta_raw, selected_models$aLASSO$beta_raw, selected_models$SCAD$beta_raw, selected_models$MCP$beta_raw, )
-names(mod_comparison)<- c("Variable", "SSL", "True", "FG", "LASSO", "aLASSO", "SCAD", "MCP")
+names(mod_comparison)<- c("predictor", "SSL", "True", "FG", "LASSO_BIC", "LASSO_Wolbers", "aLASSO_BIC", "aLASSO_Wolbers", "SCAD_BIC", "SCAD_Wolbers", "MCP_BIC", "MCP_Wolbers")
+
 mod_comparison <- mod_comparison %>%
-  select(c("Variable", "True", "FG", "SSL",  "LASSO", "aLASSO", "SCAD", "MCP"))
+  select(c("predictor", "True", "FG", "SSL", "LASSO_BIC", "LASSO_Wolbers", "aLASSO_BIC", "aLASSO_Wolbers", "SCAD_BIC", "SCAD_Wolbers", "MCP_BIC", "MCP_Wolbers"))
 
 mod_comparison_long <- mod_comparison %>%
-  pivot_longer(c("SSL",  "LASSO", "aLASSO", "SCAD", "MCP"),
+  pivot_longer(c("SSL", "LASSO_BIC", "LASSO_Wolbers", "aLASSO_BIC", "aLASSO_Wolbers", "SCAD_BIC", "SCAD_Wolbers", "MCP_BIC", "MCP_Wolbers"),
                names_to = "Model",
                values_to = "Estimate")%>%
   mutate(Bias = Estimate - True)
 
-# Which lambdas actually converged, and is BIC being forced to a grid edge?
+# Which lambdas actually converged, and is BIC/Wolbers being forced to a grid edge?
 diag_one <- function(fit, sel, nm) {
-  bic <- sel$bic_path
-  idx <- which.min(replace(bic, !is.finite(bic), Inf))
+  # Dynamically handle whether this model used Wolbers (max) or BIC (min)
+  if ("wolbers_path" %in% names(sel)) {
+    metric_path <- sel$wolbers_path
+    idx <- which.max(replace(metric_path, !is.finite(metric_path), -Inf))
+  } else {
+    metric_path <- sel$bic_path
+    idx <- which.min(replace(metric_path, !is.finite(metric_path), Inf))
+  }
+
   data.frame(
     method       = nm,
-    n_lambda     = length(bic),
+    n_lambda     = length(metric_path),
     n_converged  = sum(as.logical(fit$converged)),
-    bic_idx      = idx,
-    at_grid_edge = idx %in% c(1L, length(bic)),
+    metric_idx   = idx,
+    at_grid_edge = idx %in% c(1L, length(metric_path)),
     df_at_sel    = sel$df,
     df_range     = paste0(min(sel$df_path), "-", max(sel$df_path)),
     lambda_sel   = signif(sel$lambda, 3)
   )
 }
+
+# Pass the correct fit model corresponding to each selection metric
+fit_list <- list(
+  fit_lasso, fit_lasso,
+  fit_alasso, fit_alasso,
+  fit_scad, fit_scad,
+  fit_mcp, fit_mcp
+)
+
 do.call(rbind, Map(diag_one,
-                   list(fit_lasso, fit_alasso, fit_scad, fit_mcp),
-                   selected_models, c("LASSO","aLASSO","SCAD","MCP")))
+                   fit_list,
+                   selected_models,
+                   names(selected_models)))
 
 # aLASSO grid mis-scaling: how many leading all-zero (null) columns each path has.
-# If aLASSO has many more than LASSO, its grid top is set too high (weights ignored).
 sapply(selected_models, function(s) which(s$df_path > 0)[1] - 1L)
-
 

@@ -49,9 +49,9 @@ if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .Glob
 #################### Batch Configuration ################
 # ---- edit these to control the sweep ----
 nobs             <- 200                 # sample size (fixed across runs)
-npredictors_grid <- c(205)      # set of npredictors to sweep over
-run_start        <- 4           # e.g., set to 1 for first batch, 11 for second
-run_end          <- 100           # e.g., set to 10 for first batch, 20 for second
+npredictors_grid <- c(206)      # set of npredictors to sweep over
+run_start        <- 1           # e.g., set to 1 for first batch, 11 for second
+run_end          <- 10           # e.g., set to 10 for first batch, 20 for second
 
 # Active (nonzero) coefficients, padded with zeros to reach npredictors.
 beta1_active <- c(0.40, -0.50, 0.60, 0.75, -0.80)
@@ -299,74 +299,108 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
     )
   }
 
-  # select_by_wolbers <- function(fit, method_label, eval_quantile = 0.5){
-  #
-  #   beta_path <- as.matrix(stats::coef(fit))
-  #   if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
-  #     beta_path <- t(beta_path)
-  #   }
-  #
-  #   # Paper's simplified df choice: model size rather than the effective-df
-  #   # trace (also what AIC.fcrrp uses internally).
-  #   df_path  <- colSums(beta_path != 0)
-  #   bic_path <- -2 * as.numeric(fit$logLik) + log(nobs) * df_path
-  #
-  #   if (length(bic_path) != ncol(beta_path)) {
-  #     stop("BIC path and coefficient path have incompatible lengths.")
-  #   }
-  #
-  #   valid <- is.finite(bic_path)
-  #   if (!is.null(fit$converged) && length(fit$converged) == length(bic_path)) {
-  #     valid <- valid & as.logical(fit$converged)
-  #   }
-  #   if (!any(valid)) {
-  #     stop("No finite, converged solution was available for ", method_label, ".")
-  #   }
-  #
-  #   bic_for_selection <- bic_path
-  #   bic_for_selection[!valid] <- Inf
-  #   #index <- which.min(bic_for_selection)
-  #
-  #   original_data <- fit$call$data
-  #
-  #   dummy_model <- coxph(Surv(TTE, Status) ~ .,
-  #                        data = original_data)
-  #   eval_time <- as.numeric(quantile(y[y[,2] == 1, 1], eval_quantile))
-  #
-  #   bh <- basehaz(dummy_model, centered = F)
-  #
-  #   idx <- findInterval(eval_time, bh$time)
-  #
-  #   ###INSERT THE PREDICTED RISK HERE
-  #
-  #   beta_std <- as.numeric(beta_path[, index])
-  #   names(beta_std) <- predictor_names
-  #
-  #   # x_std = (x - center) / scale, so divide by scale to return coefficients to
-  #   # original predictor units. Centering is absorbed by the baseline hazard.
-  #   beta_raw <- beta_std / x_scale
-  #   names(beta_raw) <- predictor_names
-  #
-  #   selected <- beta_std != 0
-  #
-  #   list(
-  #     method    = method_label,
-  #     index     = index,
-  #     lambda    = as.numeric(fit$lambda.path[index]),
-  #     bic       = as.numeric(bic_path[index]),
-  #     df        = as.integer(df_path[index]),
-  #     converged = if (length(fit$converged) == length(bic_path)) {
-  #       as.logical(fit$converged[index])
-  #     } else {
-  #       NA
-  #     },
-  #     beta_std  = beta_std,
-  #     beta_raw  = beta_raw,
-  #     selected  = selected,
-  #     bic_path  = bic_path,
-  #     df_path   = df_path
-  #   )
-  # }
+  select_by_wolbers <- function(fit, method_label, eval_quantile = 0.5){
+
+    beta_path <- as.matrix(stats::coef(fit))
+    if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
+      beta_path <- t(beta_path)
+    }
+
+    df_path  <- colSums(beta_path != 0)
+
+    # Calculate evaluation time as median event time for cause 1
+    eval_time <- as.numeric(stats::quantile(fit_data$TTE[fit_data$Status == 1], eval_quantile))
+
+    # Prepare predictor matrix and true responses for all patients
+    X <- as.matrix(fit_data[, predictor_names])
+    y_true_mat <- as.matrix(fit_data[, c("TTE", "Status")])
+
+    n_lambda <- ncol(beta_path)
+    wolbers_path <- rep(NA, n_lambda)
+
+    # Setup dummy data once to save time
+    dummy_data <- fit_data[, c("TTE", "Status", predictor_names)]
+    dummy_data$Event <- as.integer(dummy_data$Status == 1)
+
+    # Build the formula explicitly to avoid the EncodeVars() warning
+    dummy_formula <- stats::as.formula(paste("survival::Surv(TTE, Event) ~", paste(predictor_names, collapse = " + ")))
+
+    for(k in 1:n_lambda) {
+      coefs <- as.numeric(beta_path[, k])
+      names(coefs) <- predictor_names
+
+      # Skip if coefficients are NA
+      if (any(is.na(coefs))) next
+
+      # Fit dummy model to extract baseline hazard using predefined coefficients
+      # Wrapped in tryCatch: extreme coefficients at small lambdas can cause
+      # overflow in exp(X*beta) inside coxph, throwing a .Machine$double.xmax error.
+      bh_result <- tryCatch({
+        dummy_model <- survival::coxph(
+          dummy_formula,
+          data = dummy_data,
+          init = coefs,
+          iter = 0
+        )
+        survival::basehaz(dummy_model, centered = FALSE)
+      }, error = function(e) {
+        NULL
+      })
+
+      if (is.null(bh_result)) next
+
+      idx <- findInterval(eval_time, bh_result$time)
+      base_haz_t <- if (idx == 0) 0 else bh_result$hazard[idx]
+
+      # Calculate absolute risk
+      linear_predictors <- X %*% coefs
+      risk_score <- as.vector(1 - exp(-base_haz_t * exp(linear_predictors)))
+
+      # Calculate IPCW Wolbers C-index
+      wolbers_path[k] <- wolbers_c(y_true = y_true_mat, risk_score = risk_score, evaluation_time = eval_time)
+    }
+
+    valid <- is.finite(wolbers_path)
+    if (!is.null(fit$converged) && length(fit$converged) == length(wolbers_path)) {
+      valid <- valid & as.logical(fit$converged)
+    }
+    if (!any(valid)) {
+      stop("No finite, converged solution was available for ", method_label, ".")
+    }
+
+    # Maximize the Wolbers C-index
+    metric_for_selection <- wolbers_path
+    metric_for_selection[!valid] <- -Inf
+    index <- which.max(metric_for_selection)
+
+    beta_std <- as.numeric(beta_path[, index])
+    names(beta_std) <- predictor_names
+
+    # x_std = (x - center) / scale, so divide by scale to return coefficients to
+    # original predictor units. Centering is absorbed by the baseline hazard.
+    beta_raw <- beta_std / x_scale
+    names(beta_raw) <- predictor_names
+
+    selected <- beta_std != 0
+
+    list(
+      method       = method_label,
+      index        = index,
+      lambda       = as.numeric(fit$lambda.path[index]),
+      wolbers_c    = as.numeric(wolbers_path[index]),
+      df           = as.integer(df_path[index]),
+      converged    = if (length(fit$converged) == length(wolbers_path)) {
+        as.logical(fit$converged[index])
+      } else {
+        NA
+      },
+      beta_std     = beta_std,
+      beta_raw     = beta_raw,
+      selected     = selected,
+      wolbers_path = wolbers_path,
+      df_path      = df_path
+    )
+  }
 
   # fastCrrp()'s built-in lambda grid degenerates when there are no censored
   # observations (the IPCW/score projection collapses to roundoff). Build one
@@ -508,10 +542,14 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   }
 
   selected_models <- list(
-    LASSO  = select_by_bic(fit_lasso,  "LASSO"),
-    aLASSO = select_by_bic(fit_alasso, "adaptive LASSO"),
-    SCAD   = select_by_bic(fit_scad,   "SCAD"),
-    MCP    = select_by_bic(fit_mcp,    "MCP")
+    LASSO_BIC = select_by_bic(fit_lasso, "LASSO_BIC"),
+    LASSO_Wolbers = select_by_wolbers(fit_lasso, "LASSO_Wolbers"),
+    aLASSO_BIC = select_by_bic(fit_alasso, "aLASSO_BIC"),
+    aLASSO_Wolbers = select_by_wolbers(fit_alasso, "aLASSO_Wolbers"),
+    SCAD_BIC = select_by_bic(fit_scad, "SCAD_BIC"),
+    SCAD_Wolbers = select_by_wolbers(fit_scad, "SCAD_Wolbers"),
+    MCP_BIC = select_by_bic(fit_mcp, "MCP_BIC"),
+    MCP_Wolbers = select_by_wolbers(fit_mcp, "MCP_Wolbers")
   )
 
   other_time2 <- Sys.time()
@@ -535,8 +573,7 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
     best      = list(s0 = best_s0, s1 = best_s1),
     final_mod = final_mod,
     fg_true   = fg_true,
-    # BIC-selected comparators (LASSO / aLASSO / SCAD / MCP). Each element is the
-    # select_by_bic() summary, incl. beta_raw (original units) and beta_std.
+    # Comparators (LASSO / aLASSO / SCAD / MCP) selected by both BIC and Wolbers.
     selected_models = selected_models
   )
 }
