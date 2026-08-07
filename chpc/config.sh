@@ -1,0 +1,92 @@
+# =============================================================================
+# chpc/config.sh  --  the ONE file you source before submitting.
+#
+#   ssh <you>@notchpeak.chpc.utah.edu
+#   cd ~/bhCRR                       # your CHPC checkout of the repo
+#   source chpc/config.sh            # (optional; run_sim.sh sources it too)
+#   ./chpc/run_sim.sh run_start=10 run_end=40
+#
+# Every value below is set only if not already in the environment -- so any
+# key=value override parsed by run_sim.sh (or an env var you export by hand) WINS
+# over the default here. So `./chpc/run_sim.sh nobs=140` overrides NOBS, and
+# `CHPC_PARTITION=notchpeak-shared-short ./chpc/run_sim.sh` overrides the
+# partition, without you touching this file.
+#
+# Allocation is prefilled for the qiaox / lonepeak setup (carried over from the
+# ODSiData CHPC config). The only thing to confirm once is R_MODULE.
+# =============================================================================
+
+# ---- Paths ------------------------------------------------------------------
+# Where the repo lives on CHPC (this file's grandparent dir by default).
+: "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
+
+# Shared scratch base -- must be visible from every compute node so the job
+# array and the parse job all see the same files. CHPC general scratch:
+#   /scratch/general/vast/$USER   or   /scratch/general/nfs1/$USER
+: "${SCRATCH_BASE:=/scratch/general/vast/$USER/bhCRR}"
+
+# ---- R environment ----------------------------------------------------------
+# `module load` name. renv.lock pins R 4.5.1, so match the minor version.
+: "${R_MODULE:=R/4.5.1}"          # <-- confirm this module exists: `module spider R`
+# 1 = run renv::restore() before the models (recommended, matches renv.lock).
+: "${USE_RENV:=1}"
+
+# ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
+# Set these to your CHPC allocation. Override at submit time with env vars, e.g.
+#   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./chpc/run_sim.sh nobs=140
+export CHPC_ACCOUNT="${CHPC_ACCOUNT:-qiaox}"          # sbatch -A / --account
+# Default to a SHARED partition, not a whole-node one. These jobs (each array
+# task = a few cores + tens of GB) do not need a full node; a whole-node
+# partition makes the job wait for an entire free node, the main cause of long
+# queue waits. lonepeak-shared (qiaox allocation) is shared, has generous
+# walltime, and usually has free nodes. It lives on the lonepeak scheduler, so
+# CHPC_CLUSTER below routes sbatch there.
+#
+# Common overrides (set on the run_sim.sh command line or as env vars):
+#   whole node:        CHPC_CLUSTER=lonepeak  CHPC_PARTITION=lonepeak
+#   back to kingspeak: CHPC_CLUSTER=""        CHPC_PARTITION=kingspeak-shared
+#   free short (<=8h): CHPC_CLUSTER=notchpeak CHPC_ACCOUNT=notchpeak-shared-short \
+#                      CHPC_PARTITION=notchpeak-shared-short
+export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak-shared}"  # sbatch -p / --partition
+# Each CHPC cluster runs its OWN Slurm controller, so a partition is only valid
+# on its own cluster -- submitting a lonepeak partition from a kingspeak context
+# fails with "invalid partition specified". Empty = your login cluster's
+# scheduler; set this (paired with a matching account/partition) to reach another
+# cluster. run_sim.sh turns this into `sbatch --clusters=$CHPC_CLUSTER`.
+# Note the `-` (not `:-`): an explicitly-set empty CHPC_CLUSTER="" is preserved
+# (routes to your login cluster), while leaving it unset defaults to lonepeak.
+export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters ("" = login cluster)
+
+# ---- SLURM resource requests (per job; tune freely) -------------------------
+: "${SB_TIME:=0:20:00}"           # walltime per array task
+: "${SB_MEM:=16G}"                # memory per array task
+: "${SB_CPUS:=4}"                 # cpus-per-task
+: "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job
+
+# ---- Simulation defaults (override any of these on the run_sim.sh line) ------
+: "${NOBS:=200}"                                   # sample size
+: "${NPREDICTORS:=206}"                            # single value OR comma list, e.g. 25,50,206
+: "${RUN_START:=1}"                                # first run index (inclusive)
+: "${RUN_END:=10}"                                 # last  run index (inclusive)
+: "${RUNS_PER_TASK:=1}"                            # runs handled by each array task
+: "${ZERO_GAP_TARGET:=0.1}"                        # clinically-relevant min treatment effect
+: "${BETA1_ACTIVE:=0.40,-0.50,0.60,0.75,-0.80}"    # active cause-1 coefficients
+: "${BETA2_ACTIVE:=0,0.3,0,0,-0.2}"                # active cause-2 coefficients
+
+# CHPC_ACCOUNT / CHPC_PARTITION / CHPC_CLUSTER are already exported inline above.
+export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV \
+       SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
+       NOBS NPREDICTORS RUN_START RUN_END RUNS_PER_TASK ZERO_GAP_TARGET \
+       BETA1_ACTIVE BETA2_ACTIVE
+
+# Fail fast if the allocation was left unset (mirrors ODSiData's check).
+check_allocation() {
+    if [[ -z "$CHPC_ACCOUNT" || "$CHPC_ACCOUNT" == "CHANGE_ME" ]]; then
+        echo "ERROR: set CHPC_ACCOUNT in chpc/config.sh (or export it) before submitting." >&2
+        return 1
+    fi
+    if [[ -z "$CHPC_PARTITION" ]]; then
+        echo "ERROR: set CHPC_PARTITION in chpc/config.sh (or export it) before submitting." >&2
+        return 1
+    fi
+}
