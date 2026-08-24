@@ -58,6 +58,28 @@
 ## subdistribution. beta1 here stays a subdistribution coefficient and is NOT
 ## the same object as Binder's alpha_1. Same design matrix, different mechanism.
 ##
+## DETERMINISM OF THE BLOCK ASSIGNMENT. The column-to-block map is a pure
+## function of npredictors, block_props, block_rho, active_block and layout. It
+## uses no RNG at all: the RNG is touched only when drawing the latents and the
+## noise, which decides the VALUES in a column, never which block a column
+## belongs to. So across replicates of one scenario, X_17 sits in the same block
+## every single time, and pooling runs by predictor name is safe.
+##
+## What does move the map is changing the inputs above, npredictors most of all,
+## since block sizes are apportioned from proportions. X_17 at p = 25 is not
+## X_17 at p = 205. Two guards for that:
+##
+##   * `signature` in the returned list is a readable one-line fingerprint of the
+##     assignment. Save it per run and refuse to pool runs whose signatures
+##     differ, rather than silently mixing two different block maps.
+##   * `block_id` lets the caller pin the assignment explicitly instead of
+##     deriving it from proportions. That also allows uneven, paper-faithful
+##     layouts such as Binder & Schumacher's 0.05p / 0.1p / 0.2p / 0.3p bands.
+##
+## Always store the realized map with the run and read it back. Never recompute
+## it downstream from the scenario parameters, or a later edit to block_props
+## will silently relabel results already on disk.
+##
 ## RNG. No seed is set here. Set one in the calling script if a scenario needs
 ## to be reproducible.
 ###############################################################################
@@ -74,10 +96,13 @@ generate_block_X <- function(nobs,
                              latent_balanced  = TRUE,
                              unit_variance    = TRUE,
                              layout           = c("active_first", "contiguous"),
+                             block_id         = NULL,
                              predictor_prefix = "X_") {
 
   latent <- match.arg(latent)
   layout <- match.arg(layout)
+  block_id_in <- block_id
+  block_id <- NULL
 
   ## 1. Scalar inputs -------------------------------------------------------
   if (length(nobs) != 1L || !is.finite(nobs) || nobs < 2L) {
@@ -146,19 +171,13 @@ generate_block_X <- function(nobs,
   }
 
   ## 4. Block sizes ---------------------------------------------------------
-  ## Largest-remainder (Hamilton) apportionment so the block sizes sum to
-  ## exactly npredictors. A block carrying rho > 0 needs at least two members
-  ## for a within-block correlation to exist at all; an uncorrelated block needs
-  ## one. With the default three blocks that floor is 5 predictors.
-  target <- block_props / sum(block_props) * npredictors
-  block_size <- floor(target)
-  shortfall <- npredictors - sum(block_size)
-  if (shortfall > 0L) {
-    bump <- order(target - floor(target), decreasing = TRUE)[seq_len(shortfall)]
-    block_size[bump] <- block_size[bump] + 1L
-  }
-  names(block_size) <- block_names
-
+  ## A pinned block_id fixes the sizes outright. Otherwise use largest-remainder
+  ## (Hamilton) apportionment so the block sizes sum to exactly npredictors.
+  ## Either way this is deterministic: no RNG is consulted anywhere in steps 4
+  ## or 5, so the same scenario parameters always yield the same column map.
+  ## A block carrying rho > 0 needs at least two members for a within-block
+  ## correlation to exist at all; an uncorrelated block needs one. With the
+  ## default three blocks that floor is 5 predictors.
   min_size <- ifelse(block_rho > 0, 2L, 1L)
   names(min_size) <- block_names
   if (npredictors < sum(min_size)) {
@@ -166,23 +185,56 @@ generate_block_X <- function(nobs,
          "specification; it needs at least ", sum(min_size),
          " (2 per correlated block, 1 per uncorrelated block).")
   }
-  adjusted <- FALSE
-  repeat {
-    short <- which(block_size < min_size)
-    if (!length(short)) break
-    donor <- which.max(block_size - min_size)
-    if (block_size[donor] - min_size[donor] <= 0L) {
-      stop("Cannot satisfy the minimum size of every block at npredictors = ",
-           npredictors, "; raise npredictors or change block_props.")
+
+  if (is.null(block_id_in)) {
+    target <- block_props / sum(block_props) * npredictors
+    block_size <- floor(target)
+    shortfall <- npredictors - sum(block_size)
+    if (shortfall > 0L) {
+      bump <- order(target - floor(target), decreasing = TRUE)[seq_len(shortfall)]
+      block_size[bump] <- block_size[bump] + 1L
     }
-    block_size[short[1L]] <- block_size[short[1L]] + 1L
-    block_size[donor] <- block_size[donor] - 1L
-    adjusted <- TRUE
-  }
-  if (adjusted) {
-    warning("block_props were adjusted so every block meets its minimum size. ",
-            "Realized sizes: ",
-            paste(block_names, block_size, sep = "=", collapse = ", "), ".")
+    names(block_size) <- block_names
+
+    adjusted <- FALSE
+    repeat {
+      short <- which(block_size < min_size)
+      if (!length(short)) break
+      donor <- which.max(block_size - min_size)
+      if (block_size[donor] - min_size[donor] <= 0L) {
+        stop("Cannot satisfy the minimum size of every block at npredictors = ",
+             npredictors, "; raise npredictors or change block_props.")
+      }
+      block_size[short[1L]] <- block_size[short[1L]] + 1L
+      block_size[donor] <- block_size[donor] - 1L
+      adjusted <- TRUE
+    }
+    if (adjusted) {
+      warning("block_props were adjusted so every block meets its minimum size. ",
+              "Realized sizes: ",
+              paste(block_names, block_size, sep = "=", collapse = ", "), ".")
+    }
+  } else {
+    ## Pinned assignment. block_props is ignored and the sizes are read off the
+    ## supplied map, so an uneven, paper-faithful layout can be handed in whole.
+    if (length(block_id_in) != npredictors) {
+      stop("block_id must have one entry per predictor (expected ", npredictors,
+           ", got ", length(block_id_in), ").")
+    }
+    block_id_in <- as.character(block_id_in)
+    unknown_pin <- setdiff(block_id_in, block_names)
+    if (length(unknown_pin)) {
+      stop("block_id names blocks that are not in block_props: ",
+           paste(unique(unknown_pin), collapse = ", "), ".")
+    }
+    block_size <- as.integer(table(factor(block_id_in, levels = block_names)))
+    names(block_size) <- block_names
+    too_small <- which(block_size < min_size)
+    if (length(too_small)) {
+      stop("Pinned block_id leaves block(s) ",
+           paste(block_names[too_small], collapse = ", "),
+           " below the minimum size needed for their rho.")
+    }
   }
 
   active_per_block <- table(factor(active_block, levels = block_names))
@@ -202,7 +254,24 @@ generate_block_X <- function(nobs,
   block_id <- character(npredictors)
   active_idx <- integer(n_active)
 
-  if (layout == "active_first") {
+  if (!is.null(block_id_in)) {
+    ## Pinned map is used verbatim; the actives are then located within it.
+    block_id <- block_id_in
+    if (layout == "active_first") {
+      if (n_active > 0L &&
+          !identical(block_id[seq_len(n_active)], active_block)) {
+        stop("A pinned block_id must agree with active_block in its first ",
+             n_active, " entries under layout = \"active_first\".")
+      }
+      active_idx <- seq_len(n_active)
+    } else {
+      for (k in seq_len(n_active)) {
+        b <- active_block[k]
+        free <- setdiff(which(block_id == b), active_idx[seq_len(k - 1L)])
+        active_idx[k] <- free[1L]
+      }
+    }
+  } else if (layout == "active_first") {
     if (n_active > 0L) {
       block_id[seq_len(n_active)] <- active_block
       active_idx <- seq_len(n_active)
@@ -305,12 +374,29 @@ generate_block_X <- function(nobs,
     stringsAsFactors = FALSE
   )
 
-  ## 10. Return -------------------------------------------------------------
+  ## 10. Assignment fingerprint ---------------------------------------------
+  ## Readable one-liner identifying the column-to-block map. Two runs with the
+  ## same signature have literally the same map, so their per-block summaries
+  ## can be pooled. Two runs with different signatures cannot, and the string
+  ## says which input moved. Kept human-readable rather than hashed so a
+  ## mismatch is diagnosable without rerunning anything.
+  signature <- paste0(
+    "p=", npredictors,
+    "|blocks=", paste(block_names, collapse = ","),
+    "|size=", paste(as.integer(block_size), collapse = ","),
+    "|rho=", paste(format(as.numeric(block_rho), digits = 6), collapse = ","),
+    "|layout=", layout,
+    "|active=", paste(active_block, collapse = ","),
+    "|pinned=", !is.null(block_id_in)
+  )
+
+  ## 11. Return -------------------------------------------------------------
   list(
     X          = X,
     block_id   = block_id,
     block_size = block_size,
     block_rho  = block_rho,
+    signature  = signature,
     beta1      = beta1,
     beta2      = beta2,
     active_idx = active_idx,

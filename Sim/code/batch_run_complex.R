@@ -6,6 +6,13 @@
 # simulateTwoCauseFineGrayModel() draws fresh data, so every run produces a
 # different dataset and therefore a different fitted model.
 #
+# The predictor VALUES therefore change from run to run, but the column-to-block
+# assignment does not: generate_block_X() derives it from npredictors,
+# block_props, block_rho and active_block with no RNG involved. X_17 is in the
+# same block in run 1 and run 100, which is what makes per-block pooling in
+# parse_batch_run.R valid. meta$block_signature records the map so a mismatch
+# across pooled runs is caught rather than averaged over.
+#
 # Files are named like: n200_p25_run1.Rdata
 # Each file contains a single object `result` (a list); load with:
 #   load("Sim/Local_Testing/n200_p25_run1.Rdata"); str(result, max.level = 1)
@@ -40,6 +47,10 @@ source(file.path(repo_root, "R/tune_ssl_psdh.r"))
 source(file.path(repo_root, "R/threshold.R"))
 source(file.path(repo_root, "R/tuning_diagnostics.r"))
 
+# Block-correlated design matrix generator, shared with single_run_complex.R so
+# the two scripts cannot drift apart.
+source(file.path(repo_root, "Sim/code/generate_block_X.R"))
+
 # Start from a clean, non-deterministic RNG state. Remove any existing global
 # seed so each run draws fresh data (belt-and-suspenders with the seed-leak
 # fixes now in the CV/sim functions).
@@ -49,13 +60,32 @@ if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .Glob
 #################### Batch Configuration ################
 # ---- edit these to control the sweep ----
 nobs             <- 200                 # sample size (fixed across runs)
-npredictors_grid <- c(205)      # set of npredictors to sweep over
+npredictors_grid <- c(10)      # set of npredictors to sweep over
 run_start        <- 4           # e.g., set to 1 for first batch, 11 for second
-run_end          <- 100           # e.g., set to 10 for first batch, 20 for second
+run_end          <- 50           # e.g., set to 10 for first batch, 20 for second
 
-# Active (nonzero) coefficients, padded with zeros to reach npredictors.
+# Effects of the designed active predictors. beta1_active, beta2_active and
+# active_block are aligned elementwise: entry k is one predictor, with its
+# cause-1 effect, its cause-2 effect, and the block it is planted in.
 beta1_active <- c(0.40, -0.50, 0.60, 0.75, -0.80)
 beta2_active <- c(0,     0.3,  0,    0,   -0.2)
+active_block <- c("strong", "strong", "weak", "weak", "indep")
+
+# Predictor correlation blocks. Must match single_run_complex.R for the two to
+# be comparable. The column-to-block map is deterministic given these settings
+# plus npredictors, so a given predictor sits in the same block in every run of
+# a sweep; meta$block_signature records the map so parse_batch_run.R can refuse
+# to pool runs whose maps differ.
+block_props <- c(indep = 0.50, weak = 0.25, strong = 0.25)
+block_rho   <- c(indep = 0.00, weak = 0.30, strong = 0.60)
+latent_type <- "gaussian"
+latent_q    <- c(indep = 0.5, weak = 0.4, strong = 0.5)
+
+# Random exponential censoring, ported from single_run_complex.R so the batch
+# generates the same kind of data. Set cens_rate = 0 for no random censoring.
+cens_rate <- 0.05
+u_min <- 100
+u_max <- 100
 
 zero_gap_target <- 0.1   # clinically relevant minimum treatment effect
 
@@ -67,27 +97,68 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # Generates fresh data, fits the initial model, autotunes, refits, and returns
 # a bundled result list. No set.seed() here on purpose.
 run_once <- function(nobs, npredictors, beta1_active, beta2_active,
+                     active_block, block_props, block_rho, latent_type,
+                     latent_q, cens_rate, u_min, u_max,
                      zero_gap_target) {
 
   ## ----- Data generation -----
-  beta1 <- c(beta1_active, rep(0, npredictors - length(beta1_active)))
-  beta2 <- c(beta2_active, rep(0, npredictors - length(beta2_active)))
+  # Block-correlated design matrix. The column-to-block map uses no RNG, so it
+  # is identical across every run of this sweep at a given npredictors.
+  design <- generate_block_X(nobs          = nobs,
+                             npredictors   = npredictors,
+                             beta1_active  = beta1_active,
+                             beta2_active  = beta2_active,
+                             active_block  = active_block,
+                             block_props   = block_props,
+                             block_rho     = block_rho,
+                             latent        = latent_type,
+                             latent_q      = latent_q,
+                             unit_variance = TRUE,
+                             layout        = "active_first")
+
+  beta1 <- design$beta1
+  beta2 <- design$beta2
+  X_design <- design$X
 
   sim <- simulateTwoCauseFineGrayModel(nobs = nobs,
                                        beta1 = beta1,
                                        beta2 = beta2,
-                                       X = NULL,
-                                       u.min = 100,
-                                       u.max = 100,
+                                       X = X_design,
+                                       u.min = u_min,
+                                       u.max = u_max,
                                        p = 0.5,
                                        returnX = TRUE)
+
+  # Guard against the generator substituting its own design matrix, which would
+  # make the event times unrelated to the covariates we are analysing.
+  if (!isTRUE(all.equal(unname(as.matrix(sim$X)), unname(X_design),
+                        tolerance = 1e-12))) {
+    stop("simulateTwoCauseFineGrayModel() did not return the supplied design ",
+         "matrix unchanged; the event times were not generated from X_design.")
+  }
+
+  # Random exponential censoring: C_i ~ Exp(cens_rate), censored where C_i lands
+  # before the simulated event time. Overwrite sim$ftime / sim$fstatus so the
+  # oracle Fine-Gray fit below sees the censored data too.
+  if (!is.finite(cens_rate) || cens_rate < 0) {
+    stop("cens_rate must be a finite, non-negative Exponential rate.")
+  }
+  if (cens_rate > 0) {
+    cens_time <- stats::rexp(nobs, rate = cens_rate)
+    is_censored <- cens_time < sim$ftime
+    sim$ftime[is_censored] <- cens_time[is_censored]
+    sim$fstatus[is_censored] <- 0
+  }
+  event_mix <- c(censored = mean(sim$fstatus == 0),
+                 cause1   = mean(sim$fstatus == 1),
+                 cause2   = mean(sim$fstatus == 2))
 
   sim_data <- cbind(data.frame(ID = 1:nobs,
                                TTE = sim$ftime,
                                Status = as.integer(sim$fstatus)),
-                    sim$X)
+                    X_design)
 
-  names(sim_data) <- c("ID", "TTE", "Status", paste0("X_", 1:(ncol(sim_data) - 3)))
+  names(sim_data) <- c("ID", "TTE", "Status", design$meta$name)
 
   x <- as.matrix(sim_data %>% select(starts_with("X")))
   y <- as.matrix(sim_data %>%
@@ -146,7 +217,7 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   # Standardize ONCE and feed this same matrix to every comparator, mirroring
   # single_run.R. This puts the adaptive weights on the same coefficient scale
   # as the penalized fits and avoids method-to-method preprocessing differences.
-  predictor_names <- paste0("X_", seq_len(npredictors))
+  predictor_names <- design$meta$name
   colnames(x) <- predictor_names
 
   x_center <- colMeans(x)
@@ -521,12 +592,27 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   list(
     meta = list(nobs = nobs,
                 npredictors = npredictors,
-                beta1 = beta1,
-                beta2 = beta2,
+                beta1 = unname(beta1),
+                beta2 = unname(beta2),
                 zero_gap_target = zero_gap_target,
                 timestamp = Sys.time(),
                 ssl_psdh_time = ssl_psdh_time,
-                other_time = other_time),
+                other_time = other_time,
+                # Per-predictor correlation stratum. Saved with the run rather
+                # than recomputed downstream, so a later edit to block_props
+                # cannot silently relabel results already on disk. Joined by
+                # name in parse_batch_run.R, never by position.
+                block_map = design$meta[, c("name", "block", "rho",
+                                            "designed", "active1", "active2")],
+                block_size = design$block_size,
+                block_rho = design$block_rho,
+                # Fingerprint of the column-to-block map. Runs pooled into one
+                # table must share this string, or their blocks mean different
+                # things and per-block summaries are meaningless.
+                block_signature = design$signature,
+                design_settings = design$settings,
+                cens_rate = cens_rate,
+                event_mix = event_mix),
     sim_data  = sim_data,
     x         = x,
     y         = y,
@@ -552,7 +638,9 @@ for (npredictors in npredictors_grid) {
     message(sprintf("[%s] %s starting...", format(Sys.time(), "%H:%M:%S"), tag))
 
     result <- tryCatch(
-      run_once(nobs, npredictors, beta1_active, beta2_active, zero_gap_target),
+      run_once(nobs, npredictors, beta1_active, beta2_active,
+               active_block, block_props, block_rho, latent_type,
+               latent_q, cens_rate, u_min, u_max, zero_gap_target),
       error = function(e) {
         message(sprintf("  !! %s FAILED: %s", tag, conditionMessage(e)))
         list(meta = list(nobs = nobs, npredictors = npredictors, run = run,

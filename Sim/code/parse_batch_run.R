@@ -5,7 +5,19 @@
 #       (e.g. file n200_p25_run1.Rdata -> object `n200_p25_run1`), and
 #   (2) builds one long tidy data frame per npredictors group, with 1 row per
 #       predictor per model per run and columns:
-#         predictor, True, FG, Model, Estimate, Bias, nobs, run_number
+#         predictor, Block, BlockRho, True, FG, Model, Estimate, Bias, nobs,
+#         run_number
+#
+# Block / BlockRho come from result$meta$block_map, which batch_run_complex.R
+# saves per run. They are joined BY PREDICTOR NAME, never by position, and are
+# added only when the run actually carries a block map, so older result files
+# predating the block structure still parse (their Block is NA).
+#
+# Runs pooled into one group table must share result$meta$block_signature. The
+# assignment is deterministic within a scenario, so a mismatch means the block
+# specification itself changed partway through the batch and the per-block
+# summaries would be pooling incomparable strata. That is reported, not averaged
+# over.
 #
 # The Model column identifies which method each Estimate came from
 #   (SSL, LASSO, aLASSO, SCAD, MCP), mirroring the mod_comparison_long table at
@@ -47,6 +59,8 @@ meta_tbl <- meta_tbl[ord, , drop = FALSE]
 model_objects <- character(0)   # names of model objects created in .GlobalEnv
 beta_tables   <- list()         # per-npredictors long data frames
 skipped       <- character(0)   # files with no fitted model (failed runs)
+block_sigs    <- list()         # block_signature seen per npredictors group
+no_block_map  <- character(0)   # runs with no saved block map
 
 for (i in seq_along(files)) {
   f  <- files[i]
@@ -122,10 +136,46 @@ for (i in seq_along(files)) {
   df$Bias       <- df$Estimate - df$True
   df$nobs       <- nobs_f
   df$run_number <- run_f
-  df <- df[, c("predictor", "True", "FG", "Model",
-               "Estimate", "Bias", "nobs", "run_number")]
 
   key <- paste0("p", p_f)
+
+  # (7) Correlation stratum, joined by predictor name. Runs written before the
+  # block structure existed have no map, so their Block stays NA rather than
+  # being guessed at.
+  bm <- res$meta$block_map
+  if (!is.null(bm)) {
+    hit <- match(df$predictor, bm$name)
+    if (anyNA(hit)) {
+      warning(sprintf("%s: %d predictor(s) absent from block_map -- Block set NA.",
+                      nm, sum(is.na(hit))))
+    }
+    df$Block    <- bm$block[hit]
+    df$BlockRho <- bm$rho[hit]
+  } else {
+    no_block_map <- c(no_block_map, nm)
+    df$Block    <- NA_character_
+    df$BlockRho <- NA_real_
+  }
+
+  # (8) The block map must be constant across every run pooled into a group.
+  # It is deterministic given the scenario, so a mismatch means the block spec
+  # changed mid-batch and these runs cannot be summarised together.
+  sig <- res$meta$block_signature
+  if (!is.null(sig)) {
+    if (is.null(block_sigs[[key]])) {
+      block_sigs[[key]] <- sig
+    } else if (!identical(block_sigs[[key]], sig)) {
+      stop(sprintf(paste0("%s has a different block assignment from earlier ",
+                          "runs in group %s.\n  earlier: %s\n  this run: %s\n",
+                          "Per-block summaries would pool incomparable strata. ",
+                          "Separate these runs or re-run the batch."),
+                   nm, key, block_sigs[[key]], sig))
+    }
+  }
+
+  df <- df[, c("predictor", "Block", "BlockRho", "True", "FG", "Model",
+               "Estimate", "Bias", "nobs", "run_number")]
+
   beta_tables[[key]] <- rbind(beta_tables[[key]], df)
 }
 
@@ -145,3 +195,40 @@ message(sprintf("Built %d group table(s): %s",
 if (length(skipped) > 0)
   message(sprintf("Skipped %d failed run(s): %s",
                   length(skipped), paste(skipped, collapse = ", ")))
+if (length(no_block_map) > 0)
+  message(sprintf("%d run(s) carried no block map (Block is NA): %s",
+                  length(no_block_map), paste(no_block_map, collapse = ", ")))
+for (key in names(block_sigs)) {
+  message(sprintf("Block assignment for %s: %s", key, block_sigs[[key]]))
+}
+
+
+#################### Per-block false positives ################
+# The diagnostic the block structure exists for: among predictors whose true
+# cause-1 coefficient is 0, how often does each method give a non-zero estimate,
+# split by correlation stratum. A strong-block rate well above the independent
+# one is selection leaking across correlated neighbours.
+false_positive_by_block <- function(df) {
+  fp <- df[df$True == 0 & !is.na(df$Block), ]
+  if (nrow(fp) == 0) return(NULL)
+  agg <- aggregate(list(n = fp$Estimate != 0),
+                   by = list(Block = fp$Block, BlockRho = fp$BlockRho,
+                             Model = fp$Model),
+                   FUN = function(z) c(rate = mean(z), count = sum(z),
+                                       total = length(z)))
+  out <- do.call(data.frame, agg)
+  names(out) <- c("Block", "BlockRho", "Model", "fp_rate", "n_false_pos",
+                  "n_null_predictors")
+  out[order(out$Model, out$BlockRho), ]
+}
+
+fp_tables <- lapply(beta_tables, false_positive_by_block)
+fp_tables <- fp_tables[!vapply(fp_tables, is.null, logical(1))]
+for (key in names(fp_tables)) {
+  assign(paste0("fp_", key), fp_tables[[key]], envir = .GlobalEnv)
+}
+if (length(fp_tables) > 0) {
+  message(sprintf("Built %d false-positive table(s): %s",
+                  length(fp_tables),
+                  paste(paste0("fp_", names(fp_tables)), collapse = ", ")))
+}
