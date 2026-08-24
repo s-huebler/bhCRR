@@ -27,9 +27,9 @@
 
 # ---- R environment ----------------------------------------------------------
 # `module load` name. renv.lock pins R 4.5.1, so match the minor version.
-: "${R_MODULE:=R/4.5.1}"          # <-- confirm this module exists: `module spider R`
+: "${R_MODULE:=R/4.5.2}"          # <-- confirm this module exists: `module spider R`
 # 1 = run renv::restore() before the models (recommended, matches renv.lock).
-: "${USE_RENV:=1}"
+: "${USE_RENV:=0}"
 
 # ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
 # Set these to your CHPC allocation. Override at submit time with env vars, e.g.
