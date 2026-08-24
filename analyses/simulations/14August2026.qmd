@@ -277,7 +277,7 @@ plot_metrics <- function(data,
 }
 ```
 
-# Different tunings
+# Different dimensions
 
 ```{r}
 #source("./Sim/code/single_run_comparison.R")
@@ -286,4 +286,14 @@ plot_metrics <- function(data,
 ```{r}
 plot_model_comparison(betas_p10)
 plot_metrics(betas_p10)
+```
+
+```{r}
+plot_model_comparison(betas_p220 %>% filter(Model != "MCP"))
+plot_metrics(betas_p220)
+```
+
+```{r}
+plot_model_comparison(betas_p221)
+plot_metrics(betas_p221)
 ```

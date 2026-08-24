@@ -7,6 +7,12 @@
 #       predictor per model per run and columns:
 #         predictor, Block, BlockRho, True, FG, Model, Estimate, Bias, nobs,
 #         run_number
+#   (3) builds a second, wide data frame with 1 row per model per run holding
+#       that fit's tuning parameters, convergence status, iteration count and
+#       selection confusion counts (TP/FP/TN/FN), both overall and per
+#       correlation block when the run carries a block map. See the
+#       "Per-run model performance" section at the bottom for the exact
+#       column list.
 #
 # Block / BlockRho come from result$meta$block_map, which batch_run_complex.R
 # saves per run. They are joined BY PREDICTOR NAME, never by position, and are
@@ -41,6 +47,70 @@ in_dir    <- file.path(repo_root, "Sim/Local_Testing")
 beta1_active_fallback <- c(0.40, -0.50, 0.60, 0.75, -0.80)
 
 
+#################### Performance-table settings ################
+# A predictor counts as "selected" when abs(Estimate) > selection_tol. Every
+# method here returns exact zeros for unselected predictors, so 0 is the honest
+# default; raise it only if you deliberately want a magnitude-based rule, and
+# say so when you report the numbers.
+selection_tol <- 0
+
+# Concavity parameters are fixed in the batch script and are NOT written into
+# the saved result objects, so they cannot be recovered from disk. These values
+# are an ANNOTATION copied from batch_run_complex.R -- if you change gamma
+# there, change it here too, or set the entries to NA_real_ rather than let the
+# column assert something the run did not do.
+comparator_gamma <- c(LASSO  = NA_real_,
+                      aLASSO = NA_real_,
+                      SCAD   = 3.7,
+                      MCP    = 2.7)
+
+# Where to write the per-run performance table. Set to NULL to skip writing.
+perf_csv <- file.path(in_dir, "model_performance.csv")
+
+
+#################### Small helpers ################
+# base R gained %||% in 4.4.0; define it only if this session predates that.
+if (!exists("%||%")) {
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+}
+
+# Confusion counts for one fitted model against the true cause-1 coefficients.
+# "Positive" means the method put a non-zero coefficient on the predictor;
+# "true" means the data-generating coefficient was non-zero.
+confusion_counts <- function(true_beta, estimate, tol = 0) {
+  keep <- !is.na(estimate) & !is.na(true_beta)
+  sel  <- keep & abs(estimate) > tol
+  act  <- keep & true_beta != 0
+  c(TP = sum(sel & act),
+    FP = sum(sel & !act),
+    TN = sum(!sel & !act & keep),
+    FN = sum(!sel & act))
+}
+
+# One row of confusion counts: overall, then one set per correlation block.
+# block_levels is empty for runs with no block map, which simply drops the
+# per-block columns rather than inventing strata.
+performance_counts <- function(sub, block_levels, tol = 0) {
+  out <- as.list(confusion_counts(sub$True, sub$Estimate, tol))
+  for (b in block_levels) {
+    idx <- !is.na(sub$Block) & sub$Block == b
+    cnt <- confusion_counts(sub$True[idx], sub$Estimate[idx], tol)
+    names(cnt) <- paste0(names(cnt), "_", b)
+    out <- c(out, as.list(cnt))
+  }
+  out
+}
+
+# rbind that tolerates a differing column set (e.g. a run with no block map
+# stacked onto runs that have one). Missing cells become NA instead of an error.
+rbind_fill <- function(a, b) {
+  if (is.null(a)) return(b)
+  for (cc in setdiff(names(a), names(b))) b[[cc]] <- NA
+  for (cc in setdiff(names(b), names(a))) a[[cc]] <- NA
+  rbind(a, b[, names(a), drop = FALSE])
+}
+
+
 #################### Locate & order files ################
 files <- list.files(in_dir, pattern = "\\.Rdata$", full.names = TRUE)
 if (length(files) == 0) stop("No .Rdata files found in ", in_dir)
@@ -58,6 +128,7 @@ meta_tbl <- meta_tbl[ord, , drop = FALSE]
 #################### Cycle through files ################
 model_objects <- character(0)   # names of model objects created in .GlobalEnv
 beta_tables   <- list()         # per-npredictors long data frames
+perf_tables   <- list()         # per-npredictors model x run performance rows
 skipped       <- character(0)   # files with no fitted model (failed runs)
 block_sigs    <- list()         # block_signature seen per npredictors group
 no_block_map  <- character(0)   # runs with no saved block map
@@ -177,6 +248,61 @@ for (i in seq_along(files)) {
                "Estimate", "Bias", "nobs", "run_number")]
 
   beta_tables[[key]] <- rbind(beta_tables[[key]], df)
+
+  # (9) One performance row per model for this run: tuning parameters,
+  # convergence, iterations, and the selection confusion counts. Tuning
+  # parameters that do not apply to a method stay NA (s0/s1 are SSL-only;
+  # lambda is comparator-only; gamma is SCAD/MCP-only).
+  block_levels <- if (!is.null(bm)) sort(unique(as.character(bm$block))) else character(0)
+
+  for (mn in unique(df$Model)) {
+    sub <- df[df$Model == mn, , drop = FALSE]
+
+    if (identical(mn, "SSL")) {
+      # Tuned (s0, s1) from bhcrr_autotune, with the fitted object's own ss as
+      # a fallback for runs saved before result$best existed.
+      s0_v   <- res$best$s0 %||% res$final_mod$ss[1]
+      s1_v   <- res$best$s1 %||% res$final_mod$ss[2]
+      lam_v  <- NA_real_
+      gam_v  <- NA_real_
+      conv_v <- if (is.null(res$final_mod$conv)) NA else isTRUE(res$final_mod$conv)
+      # EM iterations completed. fit_ssl_psdh() increments this at the END of
+      # each pass and breaks before incrementing on the converging pass, so it
+      # is one less than the number of EM passes actually run.
+      iter_v <- res$final_mod$iterations %||% NA_integer_
+    } else {
+      sm     <- res$selected_models[[mn]]
+      s0_v   <- NA_real_
+      s1_v   <- NA_real_
+      lam_v  <- sm$lambda %||% NA_real_
+      gam_v  <- unname(comparator_gamma[mn])
+      conv_v <- if (is.null(sm$converged)) NA else as.logical(sm$converged)
+      # fastCrrp() reports convergence per lambda but not an iteration count,
+      # and select_by_bic() does not record one, so this is NA for the
+      # comparators unless the batch script starts saving it.
+      iter_v <- sm$iterations %||% NA_integer_
+    }
+
+    row <- data.frame(
+      run_id      = nm,
+      nobs        = nobs_f,
+      npredictors = p_f,
+      run_number  = run_f,
+      Model       = mn,
+      s0          = as.numeric(s0_v),
+      s1          = as.numeric(s1_v),
+      lambda      = as.numeric(lam_v),
+      gamma       = as.numeric(gam_v),
+      converged   = as.logical(conv_v),
+      iterations  = as.integer(iter_v),
+      stringsAsFactors = FALSE
+    )
+    row <- cbind(row, as.data.frame(performance_counts(sub, block_levels,
+                                                       selection_tol)))
+    rownames(row) <- NULL
+
+    perf_tables[[key]] <- rbind_fill(perf_tables[[key]], row)
+  }
 }
 
 
@@ -200,6 +326,45 @@ if (length(no_block_map) > 0)
                   length(no_block_map), paste(no_block_map, collapse = ", ")))
 for (key in names(block_sigs)) {
   message(sprintf("Block assignment for %s: %s", key, block_sigs[[key]]))
+}
+
+
+#################### Per-run model performance ################
+# One row per model per run:
+#   run_id, nobs, npredictors, run_number, Model
+#   s0, s1        -- SSL spike/slab scales (NA for every other method)
+#   lambda        -- BIC-selected shrinkage for LASSO/aLASSO/SCAD/MCP (NA for SSL)
+#   gamma         -- concavity for SCAD/MCP (NA elsewhere); see comparator_gamma
+#   converged     -- did the fit converge
+#   iterations    -- EM iterations for SSL; NA for the comparators (not recorded)
+#   TP/FP/TN/FN   -- selection confusion counts against the true cause-1 support
+#   TP_<block>, FP_<block>, TN_<block>, FN_<block>
+#                 -- the same counts within each correlation stratum, present
+#                    only for runs that carried a block map
+#
+# Each group is exposed as perf_p25, perf_p50, ... and all groups are stacked
+# into model_performance.
+for (key in names(perf_tables)) {
+  rownames(perf_tables[[key]]) <- NULL
+  assign(paste0("perf_", key), perf_tables[[key]], envir = .GlobalEnv)
+}
+
+model_performance <- NULL
+for (key in names(perf_tables)) {
+  model_performance <- rbind_fill(model_performance, perf_tables[[key]])
+}
+if (!is.null(model_performance)) rownames(model_performance) <- NULL
+assign("model_performance", model_performance, envir = .GlobalEnv)
+
+if (!is.null(model_performance)) {
+  message(sprintf("Built performance table: %d row(s) across %d group(s): %s",
+                  nrow(model_performance), length(perf_tables),
+                  paste(paste0("perf_", names(perf_tables)), collapse = ", ")))
+
+  if (!is.null(perf_csv)) {
+    utils::write.csv(model_performance, perf_csv, row.names = FALSE)
+    message(sprintf("  -> wrote %s", perf_csv))
+  }
 }
 
 

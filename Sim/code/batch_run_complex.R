@@ -60,15 +60,16 @@ if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .Glob
 #################### Batch Configuration ################
 # ---- edit these to control the sweep ----
 nobs             <- 200                 # sample size (fixed across runs)
-npredictors_grid <- c(10)      # set of npredictors to sweep over
-run_start        <- 4           # e.g., set to 1 for first batch, 11 for second
-run_end          <- 50           # e.g., set to 10 for first batch, 20 for second
+npredictors_grid <- c(221)      # set of npredictors to sweep over
+run_start        <- 1           # e.g., set to 1 for first batch, 11 for second
+run_end          <- 10           # e.g., set to 10 for first batch, 20 for second
 
 # Effects of the designed active predictors. beta1_active, beta2_active and
 # active_block are aligned elementwise: entry k is one predictor, with its
 # cause-1 effect, its cause-2 effect, and the block it is planted in.
 beta1_active <- c(0.40, -0.50, 0.60, 0.75, -0.80)
-beta2_active <- c(0,     0.3,  0,    0,   -0.2)
+#beta2_active <- c(0,     0.3,  0,    0,   -0.2)
+beta2_active <- -beta1_active
 active_block <- c("strong", "strong", "weak", "weak", "indep")
 
 # Predictor correlation blocks. Must match single_run_complex.R for the two to
