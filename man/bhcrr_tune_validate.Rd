@@ -11,7 +11,8 @@ bhcrr_tune_validate(
   s0_seq,
   s1_seq,
   beta_min = 0.1,
-  gap_band = c(0.5, 2)
+  gap_band = c(0.5, 2),
+  s1_fixed = length(unique(s1_seq)) < 2L
 )
 }
 \arguments{
@@ -27,6 +28,12 @@ bhcrr_tune_validate(
 
 \item{gap_band}{Length-2 numeric. Multiplicative band around \code{beta_min}
 the optimum's zero gap should fall in. Default \code{c(0.5, 2)}.}
+
+\item{s1_fixed}{Logical. Was \code{s1} coerced to a single value rather than
+searched? Defaults to \code{TRUE} when \code{s1_seq} holds one distinct
+value. A fixed \code{s1} is not a searched dimension, so the optimum can
+never be "on its boundary"; the edge test is skipped for it and only
+\code{s0} can trigger a widen.}
 }
 \value{
 A list: \code{checks}, \code{all_pass}, \code{best} (one-row data

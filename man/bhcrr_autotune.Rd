@@ -10,6 +10,7 @@ bhcrr_autotune(
   beta_floor = 0.01,
   s0_seq = NULL,
   s1_seq = NULL,
+  fix_s1 = NULL,
   nfolds = 10L,
   ncv = 2L,
   foldid = NULL,
@@ -27,9 +28,17 @@ gap.}
 \item{s0_seq, s1_seq}{Optional numeric vectors. Starting grid; if \code{NULL},
 uses the pre-flight recommendation.}
 
+\item{fix_s1}{Optional single numeric. Coerce the slab scale to this value
+and search \code{s0} only. It overrides \code{s1_seq}, and it pins the
+\code{s1} dimension out of the auto-widen loop entirely: \code{s0} still
+widens on a boundary maximum exactly as before, while \code{s1} is never
+widened, so the run's \code{s1} is the value you asked for and nothing
+else. Default \code{NULL} (search both dimensions).}
+
 \item{nfolds, ncv, foldid}{Passed to \code{\link{tune_ssl_psdh}}.}
 
-\item{max_widen}{Integer. Maximum number of auto-widen retries (0 disables).}
+\item{max_widen}{Integer. Maximum number of auto-widen retries (0 disables).
+Applies to \code{s0} only when \code{fix_s1} is supplied.}
 
 \item{gap_band}{Length-2 numeric. Band for \code{\link{bhcrr_tune_validate}}.}
 
@@ -39,14 +48,23 @@ uses the pre-flight recommendation.}
 An object of class \code{"bhcrr_autotune"}: a list with the
 \code{preflight} object, the final \code{tuning} data frame, the
 \code{validation} result, the \code{best} pair, the final \code{s0_seq} /
-\code{s1_seq}, the full \code{history}, \code{n_attempts}, \code{flags},
-and \code{all_pass}.
+\code{s1_seq}, the full \code{history}, \code{n_attempts},
+\code{widen_stalled} (did the loop stop because a widen added no new
+points?), \code{flags}, and \code{all_pass}.
 }
 \description{
 Runs the whole loop for an unmanned simulation: derive/validate the grid,
 tune, validate the result, and if the optimum lands on a grid edge, widen the
 offending dimension(s) and re-tune (up to \code{max_widen} times). Never
 halts; failures surface as warnings and in the returned \code{$flags}.
+}
+\details{
+A widen that adds no new grid points ends the loop rather than spending an
+attempt re-fitting the identical grid: the attempt just completed stands as
+the final one, and \code{$widen_stalled} is \code{TRUE}. This is the usual
+outcome when the optimum sits on the low edge of an \code{s0} sequence that
+already starts near the floor, since every candidate point below it is
+clamped away.
 }
 \seealso{
 \code{\link{bhcrr_tune_preflight}}, \code{\link{tune_ssl_psdh}}

@@ -8,9 +8,10 @@ bhcrr_tune_preflight(
   mod,
   beta_min = 0.1,
   beta_floor = 0.01,
-  reasonable_s1 = c(0.5, 1),
+  reasonable_s1 = c(0.2, 1),
   n_s0 = 8L,
   n_s1 = 3L,
+  fix_s1 = NULL,
   s0_seq = NULL,
   s1_seq = NULL,
   n = NROW(mod$x),
@@ -27,12 +28,22 @@ target zero gap).}
 \item{beta_floor}{Numeric. Absolute smallest meaningful zero gap.}
 
 \item{reasonable_s1}{Length-2 numeric. The \code{s1} range you'd like
-covered, pre-clamp. Default \code{c(0.5, 1)}.}
+covered, pre-clamp. Default \code{c(0.5, 1)}. Ignored when \code{fix_s1}
+is supplied.}
 
-\item{n_s0, n_s1}{Integer. Number of points in each recommended sequence.}
+\item{n_s0, n_s1}{Integer. Number of points in each recommended sequence.
+\code{n_s1} is ignored when \code{fix_s1} is supplied.}
+
+\item{fix_s1}{Optional single numeric. Pin the slab scale to this value
+instead of searching it: the recommended grid becomes a pure \code{s0}
+sweep at \code{s1 = fix_s1}, and \code{reasonable_s1} / \code{n_s1} are
+ignored. The value is used as given even if it falls outside the feasible
+band \code{s1_range(n, p)} - that is reported as a check row, not silently
+clamped, since coercing \code{s1} is a deliberate act.}
 
 \item{s0_seq, s1_seq}{Optional numeric vectors. A grid to validate instead of
-/ alongside the recommendation.}
+/ alongside the recommendation. When \code{fix_s1} is supplied, any
+\code{s1_seq} given here is replaced by \code{fix_s1}.}
 
 \item{n, p}{Integer. Observations and predictors; default to the dimensions of
 \code{mod$x}.}
