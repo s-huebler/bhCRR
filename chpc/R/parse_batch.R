@@ -1,7 +1,9 @@
 #################### CHPC Parse Batch Run ################
 # CHPC/SLURM-portable adaptation of Sim/code/parse_batch_run.R.
 #
-# Reads every n<nobs>_p<p>_run<run>.Rdata in $SCRATCH_RUN_DIR, groups by
+# Reads every n<nobs>_p<p>_run<run>.Rdata under $SCRATCH_RUN_DIR (RECURSIVELY,
+# since run_batch.R files each npredictors value into its own p<P> subdir),
+# groups by
 # npredictors, and produces three output tables per group in
 # Sim/chpc_results/:
 #
@@ -116,8 +118,16 @@ rbind_fill <- function(a, b) {
 
 
 #################### Locate & order files ################
-files <- list.files(in_dir, pattern = "\\.Rdata$", full.names = TRUE)
-if (length(files) == 0) stop("No .Rdata files found in ", in_dir)
+# recursive = TRUE: run_batch.R writes into per-npredictors p<P> subdirectories.
+# Grouping is still driven by the p in each FILENAME, never by which directory a
+# file sits in, so a flattened or hand-copied layout parses identically. Point
+# in_dir at the parent to parse every p, or at one p<P> subdir to scope it.
+files <- list.files(in_dir, pattern = "\\.Rdata$", full.names = TRUE,
+                    recursive = TRUE)
+if (length(files) == 0) {
+  stop("No .Rdata files found under ", in_dir,
+       " (searched recursively, including any p<P> subdirectories).")
+}
 
 # Parse n / p / run from each filename and sort naturally (p, then run).
 meta_tbl <- regmatches(basename(files),

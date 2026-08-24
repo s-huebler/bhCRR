@@ -80,16 +80,38 @@ if exported (e.g. `CHPC_PARTITION=notchpeak-shared-short ./chpc/run_sim.sh`).
 
 1. `run_sim.sh` splits `run_start..run_end` into `runs_per_task`-sized chunks and
    submits a **job array** (`--array=0-N`). Each task writes
-   `n<nobs>_p<p>_run<run>.Rdata` to `$SCRATCH_BASE/runs_n<nobs>/`.
+   `n<nobs>_p<p>_run<run>.Rdata` into a **per-npredictors subdirectory**,
+   `$SCRATCH_BASE/runs_n<nobs>/p<npredictors>/`:
+
+   ```
+   $SCRATCH_BASE/runs_n200/
+     p15/   n200_p15_run1.Rdata  n200_p15_run2.Rdata  ...
+     p221/  n200_p221_run1.Rdata ...
+   ```
 2. A **parse job** is submitted with `--dependency=afterok` on the array. When
    every task succeeds it groups all `.Rdata` by `npredictors` and writes, for
    each group, to `Sim/chpc_results/`:
    - `betas_p<P>_n<NOBS>.csv`
    - `betas_p<P>_n<NOBS>.Rdata` (loads an object named `betas_p<P>`)
 
-Runs with the same `nobs` accumulate in the same scratch dir, so
-`run_start=10 run_end=40` **adds** to an earlier `1..10` batch and the parse picks
-up everything present.
+Runs with the same `nobs` and `npredictors` accumulate in the same `p<P>` subdir,
+so `run_start=10 run_end=40` **adds** to an earlier `1..10` batch and the parse
+picks up everything present. Adding a new `npredictors` value just creates a new
+subdir alongside the existing ones, so a grid can be widened incrementally.
+
+The split exists because the column-to-block map is derived from `npredictors`:
+`X_17` at p=25 is not `X_17` at p=221, so runs at different p describe different
+strata and must never be pooled into one summary table.
+
+`parse_batch.R` lists recursively and groups by the `p` in each **filename**, not
+by directory, so `SCRATCH_RUN_DIR` doubles as the parse scope:
+
+```bash
+# every npredictors present under this nobs
+SCRATCH_RUN_DIR=$SCRATCH_BASE/runs_n200      Rscript chpc/R/parse_batch.R
+# just p=15
+SCRATCH_RUN_DIR=$SCRATCH_BASE/runs_n200/p15  Rscript chpc/R/parse_batch.R
+```
 
 ## Pulling results to local
 

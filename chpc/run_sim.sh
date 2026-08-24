@@ -50,8 +50,20 @@ check_allocation || exit 1     # from config.sh: CHPC_ACCOUNT / CHPC_PARTITION s
 CLUSTER_FLAG=()
 [[ -n "${CHPC_CLUSTER:-}" ]] && CLUSTER_FLAG=(--clusters="$CHPC_CLUSTER")
 
-# Per-nobs scratch dir so different sample sizes never mix. Runs with the same
-# nobs accumulate here (so run_start=10 run_end=40 adds to an earlier 1..10).
+# Per-nobs scratch PARENT dir. Each npredictors value then gets its own
+# subdirectory beneath it, created by run_batch.R as it sweeps the grid:
+#
+#   $SCRATCH_BASE/runs_n200/p15/n200_p15_run1.Rdata
+#   $SCRATCH_BASE/runs_n200/p221/n200_p221_run1.Rdata
+#
+# The block map is a function of npredictors, so runs at different p must never
+# be pooled into one summary. Separate directories make that structural rather
+# than a convention parse_batch.R has to enforce after the fact.
+#
+# parse_batch.R lists recursively, so this variable doubles as the parse scope:
+# point it at the parent to parse every p present, or at a single p<P> subdir to
+# parse just that one. Runs sharing the same n and p accumulate in their subdir,
+# so run_start=10 run_end=40 still adds to an earlier 1..10 batch.
 SCRATCH_RUN_DIR="$SCRATCH_BASE/runs_n${NOBS}"
 export SCRATCH_RUN_DIR
 mkdir -p "$REPO_ROOT/chpc/logs" "$REPO_ROOT/Sim/chpc_results"

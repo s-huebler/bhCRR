@@ -5,7 +5,8 @@
 # passed through by run_array.slurm). Nothing is hardcoded to the Mac.
 #
 #   REPO_ROOT        path to the repo checkout on CHPC
-#   SCRATCH_RUN_DIR  shared-scratch dir where per-run RData is written
+#   SCRATCH_RUN_DIR  shared-scratch PARENT dir; each npredictors value gets its
+#                    own p<P> subdirectory beneath it (see the sweep at the end)
 #   NOBS             sample size
 #   NPREDICTORS      comma list, e.g. "25,50,221"
 #   RUN_SUBSTART     first run index this array task handles (from run_array.slurm)
@@ -583,6 +584,16 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
 
 #################### Sweep (this task's runs only) ################
 for (npredictors in npredictors_grid) {
+
+  # Per-npredictors subdirectory. The column-to-block map is derived from
+  # npredictors, so runs at different p describe different strata and must not be
+  # pooled into one summary table. Keeping them in separate directories makes
+  # that structural. parse_batch.R recurses, so pointing it at the parent still
+  # picks up every p (grouped, as before, by the p in each FILENAME), while
+  # pointing it at one p<P> subdir scopes the parse to that scenario alone.
+  out_dir_p <- file.path(out_dir, sprintf("p%d", npredictors))
+  dir.create(out_dir_p, showWarnings = FALSE, recursive = TRUE)
+
   for (run in run_start:run_end) {
 
     # Resolve neg_beta1 sentinel so every run uses -beta1_active as cause-2 effect.
@@ -602,7 +613,7 @@ for (npredictors in npredictors_grid) {
       }
     )
 
-    out_file <- file.path(out_dir, paste0(tag, ".Rdata"))
+    out_file <- file.path(out_dir_p, paste0(tag, ".Rdata"))
     save(result, file = out_file, compress = "xz")
     message(sprintf("  -> saved %s", out_file))
   }
