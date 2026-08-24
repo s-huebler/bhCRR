@@ -58,26 +58,41 @@ export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak-shared}"  # sbatch -p / --part
 export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters ("" = login cluster)
 
 # ---- SLURM resource requests (per job; tune freely) -------------------------
-: "${SB_TIME:=0:20:00}"           # walltime per array task
+: "${SB_TIME:=2:00:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
 : "${SB_MEM:=16G}"                # memory per array task
 : "${SB_CPUS:=4}"                 # cpus-per-task
 : "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job
 
 # ---- Simulation defaults (override any of these on the run_sim.sh line) ------
 : "${NOBS:=200}"                                   # sample size
-: "${NPREDICTORS:=206}"                            # single value OR comma list, e.g. 25,50,206
+: "${NPREDICTORS:=221}"                            # single value OR comma list, e.g. 25,50,221
 : "${RUN_START:=1}"                                # first run index (inclusive)
 : "${RUN_END:=10}"                                 # last  run index (inclusive)
 : "${RUNS_PER_TASK:=1}"                            # runs handled by each array task
 : "${ZERO_GAP_TARGET:=0.1}"                        # clinically-relevant min treatment effect
 : "${BETA1_ACTIVE:=0.40,-0.50,0.60,0.75,-0.80}"    # active cause-1 coefficients
-: "${BETA2_ACTIVE:=0,0.3,0,0,-0.2}"                # active cause-2 coefficients
+: "${BETA2_ACTIVE:=neg_beta1}"                      # cause-2 coefficients; "neg_beta1" = -BETA1_ACTIVE
+#
+# Named-vector variables below use "name=val,name=val" format. run_sim.sh parses
+# overrides with key="${arg%%=*}" / val="${arg#*=}", which splits only on the FIRST
+# '=', so extra '=' inside the value are safe. Example:
+#   ./chpc/run_sim.sh block_rho=indep=0.0,weak=0.5,strong=0.8
+: "${ACTIVE_BLOCK:=strong,strong,weak,weak,indep}"   # block labels aligned with BETA1_ACTIVE
+: "${BLOCK_PROPS:=indep=0.50,weak=0.25,strong=0.25}" # block proportions (name=val,...)
+: "${BLOCK_RHO:=indep=0.00,weak=0.30,strong=0.60}"   # within-block correlations (name=val,...)
+: "${LATENT_TYPE:=gaussian}"                          # latent variable distribution
+: "${LATENT_Q:=indep=0.5,weak=0.4,strong=0.5}"       # latent quantile per block (name=val,...)
+: "${CENS_RATE:=0.05}"                                # Exp rate for random censoring (0 = none)
+: "${U_MIN:=100}"                                     # lower bound for observation window
+: "${U_MAX:=100}"                                     # upper bound for observation window
 
 # CHPC_ACCOUNT / CHPC_PARTITION / CHPC_CLUSTER are already exported inline above.
 export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV \
        SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
        NOBS NPREDICTORS RUN_START RUN_END RUNS_PER_TASK ZERO_GAP_TARGET \
-       BETA1_ACTIVE BETA2_ACTIVE
+       BETA1_ACTIVE BETA2_ACTIVE \
+       ACTIVE_BLOCK BLOCK_PROPS BLOCK_RHO LATENT_TYPE LATENT_Q \
+       CENS_RATE U_MIN U_MAX
 
 # Fail fast if the allocation was left unset (mirrors ODSiData's check).
 check_allocation() {

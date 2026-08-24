@@ -54,7 +54,12 @@ CLUSTER_FLAG=()
 # nobs accumulate here (so run_start=10 run_end=40 adds to an earlier 1..10).
 SCRATCH_RUN_DIR="$SCRATCH_BASE/runs_n${NOBS}"
 export SCRATCH_RUN_DIR
-mkdir -p "$SCRATCH_RUN_DIR" "$REPO_ROOT/chpc/logs" "$REPO_ROOT/Sim/chpc_results"
+mkdir -p "$REPO_ROOT/chpc/logs" "$REPO_ROOT/Sim/chpc_results"
+if [[ "$DRYRUN" != "0" ]]; then
+  echo "  [dryrun] scratch dir NOT created: $SCRATCH_RUN_DIR"
+else
+  mkdir -p "$SCRATCH_RUN_DIR"
+fi
 
 # ---- 4. Array geometry -------------------------------------------------------
 total_runs=$(( RUN_END - RUN_START + 1 ))
@@ -73,6 +78,15 @@ bhCRR CHPC submission
   npredictors    : $NPREDICTORS
   runs           : $RUN_START .. $RUN_END  ($total_runs runs)
   runs/task      : $RUNS_PER_TASK  ->  array 0-$array_max ($ntasks tasks)
+  -- scenario --
+  beta1_active   : $BETA1_ACTIVE
+  beta2_active   : $BETA2_ACTIVE
+  active_block   : $ACTIVE_BLOCK
+  block_props    : $BLOCK_PROPS
+  block_rho      : $BLOCK_RHO
+  latent_type    : $LATENT_TYPE
+  latent_q       : $LATENT_Q
+  cens_rate      : $CENS_RATE  u_min: $U_MIN  u_max: $U_MAX
 ------------------------------------------------------------
 EOF
 

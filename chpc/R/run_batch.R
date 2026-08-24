@@ -1,5 +1,5 @@
 #################### CHPC Batch Runner ################
-# CHPC/SLURM-portable adaptation of Sim/code/batch_run_comparison.R.
+# CHPC/SLURM-portable adaptation of Sim/code/batch_run_complex.R.
 #
 # All configuration comes from environment variables (set by config.sh and
 # passed through by run_array.slurm). Nothing is hardcoded to the Mac.
@@ -7,12 +7,24 @@
 #   REPO_ROOT        path to the repo checkout on CHPC
 #   SCRATCH_RUN_DIR  shared-scratch dir where per-run RData is written
 #   NOBS             sample size
-#   NPREDICTORS      comma list, e.g. "25,50,206"
+#   NPREDICTORS      comma list, e.g. "25,50,221"
 #   RUN_SUBSTART     first run index this array task handles (from run_array.slurm)
 #   RUN_SUBEND       last  run index this array task handles
 #   ZERO_GAP_TARGET  clinically-relevant minimum treatment effect
 #   BETA1_ACTIVE     comma list of active cause-1 coefficients
-#   BETA2_ACTIVE     comma list of active cause-2 coefficients
+#   BETA2_ACTIVE     comma list OR sentinel "neg_beta1" (default); cause-2 coefficients
+#   ACTIVE_BLOCK     comma list of block labels aligned with BETA1_ACTIVE
+#                      e.g. "strong,strong,weak,weak,indep"
+#   BLOCK_PROPS      named num "name=value,...", block proportions summing to 1
+#                      e.g. "indep=0.50,weak=0.25,strong=0.25"
+#   BLOCK_RHO        named num "name=value,...", within-block correlations
+#                      e.g. "indep=0.00,weak=0.30,strong=0.60"
+#   LATENT_TYPE      latent variable distribution, default "gaussian"
+#   LATENT_Q         named num "name=value,...", latent quantile per block
+#                      e.g. "indep=0.5,weak=0.4,strong=0.5"
+#   CENS_RATE        Exp rate for random censoring (0 = none), default "0.05"
+#   U_MIN            lower bound for uniform observation window, default "100"
+#   U_MAX            upper bound for uniform observation window, default "100"
 #
 # Files are named n<nobs>_p<p>_run<run>.Rdata, one object `result` each -- the
 # exact contract chpc/R/parse_batch.R (and the original parse_batch_run.R)
@@ -31,15 +43,64 @@ get_env <- function(name, default = NULL) {
 num_list <- function(s) as.numeric(strsplit(s, ",", fixed = TRUE)[[1]])
 int_list <- function(s) as.integer(strsplit(s, ",", fixed = TRUE)[[1]])
 
-repo_root       <- get_env("REPO_ROOT")
-out_dir         <- get_env("SCRATCH_RUN_DIR")
-nobs            <- as.integer(get_env("NOBS", "200"))
-npredictors_grid<- int_list(get_env("NPREDICTORS", "206"))
-run_start       <- as.integer(get_env("RUN_SUBSTART", get_env("RUN_START", "1")))
-run_end         <- as.integer(get_env("RUN_SUBEND",   get_env("RUN_END",   "10")))
-zero_gap_target <- as.numeric(get_env("ZERO_GAP_TARGET", "0.1"))
-beta1_active    <- num_list(get_env("BETA1_ACTIVE", "0.40,-0.50,0.60,0.75,-0.80"))
-beta2_active    <- num_list(get_env("BETA2_ACTIVE", "0,0.3,0,0,-0.2"))
+# Parse "name=value,name=value" into a named numeric vector.
+named_num_list <- function(s) {
+  pairs <- strsplit(s, ",", fixed = TRUE)[[1]]
+  kv    <- strsplit(pairs, "=", fixed = TRUE)
+  nms   <- vapply(kv, `[[`, character(1), 1L)
+  vals  <- as.numeric(vapply(kv, `[[`, character(1), 2L))
+  setNames(vals, nms)
+}
+# Parse "a,b,c" into a character vector.
+chr_list <- function(s) strsplit(s, ",", fixed = TRUE)[[1]]
+
+repo_root        <- get_env("REPO_ROOT")
+out_dir          <- get_env("SCRATCH_RUN_DIR")
+nobs             <- as.integer(get_env("NOBS", "200"))
+npredictors_grid <- int_list(get_env("NPREDICTORS", "221"))
+run_start        <- as.integer(get_env("RUN_SUBSTART", get_env("RUN_START", "1")))
+run_end          <- as.integer(get_env("RUN_SUBEND",   get_env("RUN_END",   "10")))
+zero_gap_target  <- as.numeric(get_env("ZERO_GAP_TARGET", "0.1"))
+beta1_active     <- num_list(get_env("BETA1_ACTIVE", "0.40,-0.50,0.60,0.75,-0.80"))
+
+beta2_active_raw <- get_env("BETA2_ACTIVE", "neg_beta1")
+if (beta2_active_raw == "neg_beta1") {
+  message("  BETA2_ACTIVE: sentinel 'neg_beta1' -- will use -beta1_active each run")
+} else {
+  beta2_active <- num_list(beta2_active_raw)
+  message("  BETA2_ACTIVE: explicit list -- ", paste(beta2_active, collapse = ", "))
+}
+
+active_block <- chr_list(get_env("ACTIVE_BLOCK",
+                                 "strong,strong,weak,weak,indep"))
+block_props  <- named_num_list(get_env("BLOCK_PROPS",
+                                       "indep=0.50,weak=0.25,strong=0.25"))
+block_rho    <- named_num_list(get_env("BLOCK_RHO",
+                                       "indep=0.00,weak=0.30,strong=0.60"))
+latent_type  <- get_env("LATENT_TYPE", "gaussian")
+latent_q     <- named_num_list(get_env("LATENT_Q",
+                                       "indep=0.5,weak=0.4,strong=0.5"))
+cens_rate    <- as.numeric(get_env("CENS_RATE", "0.05"))
+u_min        <- as.numeric(get_env("U_MIN", "100"))
+u_max        <- as.numeric(get_env("U_MAX", "100"))
+
+# Validate block consistency: BLOCK_PROPS, BLOCK_RHO and LATENT_Q must carry
+# the same block names, and every entry in ACTIVE_BLOCK must be one of them.
+block_names_ref <- sort(names(block_props))
+if (!identical(sort(names(block_rho)), block_names_ref)) {
+  stop("BLOCK_RHO names (", paste(sort(names(block_rho)), collapse = ", "),
+       ") do not match BLOCK_PROPS names (", paste(block_names_ref, collapse = ", "), ").")
+}
+if (!identical(sort(names(latent_q)), block_names_ref)) {
+  stop("LATENT_Q names (", paste(sort(names(latent_q)), collapse = ", "),
+       ") do not match BLOCK_PROPS names (", paste(block_names_ref, collapse = ", "), ").")
+}
+bad_active <- setdiff(active_block, block_names_ref)
+if (length(bad_active) > 0) {
+  stop("ACTIVE_BLOCK contains unknown block name(s): ",
+       paste(bad_active, collapse = ", "),
+       ". Known blocks: ", paste(block_names_ref, collapse = ", "), ".")
+}
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -48,6 +109,8 @@ message(sprintf("  out_dir=%s", out_dir))
 message(sprintf("  nobs=%d  npredictors=%s  runs=%d..%d  zero_gap=%.3g",
                 nobs, paste(npredictors_grid, collapse = ","),
                 run_start, run_end, zero_gap_target))
+message(sprintf("  active_block=%s  cens_rate=%.3g  u_min=%.3g  u_max=%.3g",
+                paste(active_block, collapse = ","), cens_rate, u_min, u_max))
 
 
 #################### Set Up (load everything once) ################
@@ -79,35 +142,75 @@ source(file.path(repo_root, "R/tune_ssl_psdh.r"))
 source(file.path(repo_root, "R/threshold.R"))
 source(file.path(repo_root, "R/tuning_diagnostics.r"))
 
+# Block-correlated design matrix generator. Lives outside R/ on purpose:
+# it is simulation-only code, not package code.
+source(file.path(repo_root, "Sim/code/generate_block_X.R"))
+
 # Start from a clean, non-deterministic RNG state.
 if (exists(".Random.seed", envir = .GlobalEnv)) rm(".Random.seed", envir = .GlobalEnv)
 
 
 #################### One Run ################
-# Verbatim from Sim/code/batch_run_comparison.R -- generates fresh data, fits
-# the initial model, autotunes, refits, and returns a bundled result list.
+# Port of run_once() from Sim/code/batch_run_complex.R -- generates fresh data,
+# fits the initial model, autotunes, refits, and returns a bundled result list.
 run_once <- function(nobs, npredictors, beta1_active, beta2_active,
+                     active_block, block_props, block_rho, latent_type,
+                     latent_q, cens_rate, u_min, u_max,
                      zero_gap_target) {
 
   ## ----- Data generation -----
-  beta1 <- c(beta1_active, rep(0, npredictors - length(beta1_active)))
-  beta2 <- c(beta2_active, rep(0, npredictors - length(beta2_active)))
+  design <- generate_block_X(nobs          = nobs,
+                             npredictors   = npredictors,
+                             beta1_active  = beta1_active,
+                             beta2_active  = beta2_active,
+                             active_block  = active_block,
+                             block_props   = block_props,
+                             block_rho     = block_rho,
+                             latent        = latent_type,
+                             latent_q      = latent_q,
+                             unit_variance = TRUE,
+                             layout        = "active_first")
+
+  beta1    <- design$beta1
+  beta2    <- design$beta2
+  X_design <- design$X
 
   sim <- simulateTwoCauseFineGrayModel(nobs = nobs,
                                        beta1 = beta1,
                                        beta2 = beta2,
-                                       X = NULL,
-                                       u.min = 100,
-                                       u.max = 100,
+                                       X = X_design,
+                                       u.min = u_min,
+                                       u.max = u_max,
                                        p = 0.5,
                                        returnX = TRUE)
+
+  # Guard against the generator substituting its own design matrix, which would
+  # make the event times unrelated to the covariates we are analysing.
+  if (!isTRUE(all.equal(unname(as.matrix(sim$X)), unname(X_design),
+                        tolerance = 1e-12))) {
+    stop("simulateTwoCauseFineGrayModel() did not return the supplied design ",
+         "matrix unchanged; the event times were not generated from X_design.")
+  }
+
+  if (!is.finite(cens_rate) || cens_rate < 0) {
+    stop("cens_rate must be a finite, non-negative Exponential rate.")
+  }
+  if (cens_rate > 0) {
+    cens_time <- stats::rexp(nobs, rate = cens_rate)
+    is_censored <- cens_time < sim$ftime
+    sim$ftime[is_censored]   <- cens_time[is_censored]
+    sim$fstatus[is_censored] <- 0
+  }
+  event_mix <- c(censored = mean(sim$fstatus == 0),
+                 cause1   = mean(sim$fstatus == 1),
+                 cause2   = mean(sim$fstatus == 2))
 
   sim_data <- cbind(data.frame(ID = 1:nobs,
                                TTE = sim$ftime,
                                Status = as.integer(sim$fstatus)),
-                    sim$X)
+                    X_design)
 
-  names(sim_data) <- c("ID", "TTE", "Status", paste0("X_", 1:(ncol(sim_data) - 3)))
+  names(sim_data) <- c("ID", "TTE", "Status", design$meta$name)
 
   x <- as.matrix(sim_data %>% select(starts_with("X")))
   y <- as.matrix(sim_data %>%
@@ -160,8 +263,8 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   ssl_psdh_time2 <- Sys.time()
   ssl_psdh_time  <- ssl_psdh_time2 - ssl_psdh_time1
 
-  ## ----- Other comparators (LASSO / aLASSO / SCAD / MCP) -----
-  predictor_names <- paste0("X_", seq_len(npredictors))
+  ## ----- Comparators: LASSO only (aLASSO / SCAD / MCP commented out) -----
+  predictor_names <- design$meta$name
   colnames(x) <- predictor_names
 
   x_center <- colMeans(x)
@@ -242,20 +345,21 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
     fit
   }
 
-  fit_initial_finegray <- function() {
-    args <- list(
-      formula = fg_formula,
-      data = fit_data,
-      eps = algorithm_tolerance,
-      max.iter = max_iterations,
-      standardize = FALSE,
-      variance = FALSE
-    )
-    if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrr))) {
-      args$getBreslowJumps <- FALSE
-    }
-    do.call(fastcmprsk::fastCrr, args)
-  }
+  # LASSO-ONLY: fit_initial_finegray() needed only for aLASSO initial weights
+  # fit_initial_finegray <- function() {
+  #   args <- list(
+  #     formula = fg_formula,
+  #     data = fit_data,
+  #     eps = algorithm_tolerance,
+  #     max.iter = max_iterations,
+  #     standardize = FALSE,
+  #     variance = FALSE
+  #   )
+  #   if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrr))) {
+  #     args$getBreslowJumps <- FALSE
+  #   }
+  #   do.call(fastcmprsk::fastCrr, args)
+  # }
 
   select_by_bic <- function(fit, method_label) {
     beta_path <- as.matrix(stats::coef(fit))
@@ -306,96 +410,6 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
       selected  = selected,
       bic_path  = bic_path,
       df_path   = df_path
-    )
-  }
-
-  select_by_wolbers <- function(fit, method_label, eval_quantile = 0.5){
-
-    beta_path <- as.matrix(stats::coef(fit))
-    if (nrow(beta_path) != npredictors && ncol(beta_path) == npredictors) {
-      beta_path <- t(beta_path)
-    }
-
-    df_path  <- colSums(beta_path != 0)
-
-    eval_time <- as.numeric(stats::quantile(fit_data$TTE[fit_data$Status == 1], eval_quantile))
-
-    X <- as.matrix(fit_data[, predictor_names])
-    y_true_mat <- as.matrix(fit_data[, c("TTE", "Status")])
-
-    n_lambda <- ncol(beta_path)
-    wolbers_path <- rep(NA, n_lambda)
-
-    dummy_data <- fit_data[, c("TTE", "Status", predictor_names)]
-    dummy_data$Event <- as.integer(dummy_data$Status == 1)
-
-    dummy_formula <- stats::as.formula(paste("survival::Surv(TTE, Event) ~", paste(predictor_names, collapse = " + ")))
-
-    for(k in 1:n_lambda) {
-      coefs <- as.numeric(beta_path[, k])
-      names(coefs) <- predictor_names
-
-      if (any(is.na(coefs))) next
-
-      bh_result <- tryCatch({
-        dummy_model <- survival::coxph(
-          dummy_formula,
-          data = dummy_data,
-          init = coefs,
-          iter = 0
-        )
-        survival::basehaz(dummy_model, centered = FALSE)
-      }, error = function(e) {
-        NULL
-      })
-
-      if (is.null(bh_result)) next
-
-      idx <- findInterval(eval_time, bh_result$time)
-      base_haz_t <- if (idx == 0) 0 else bh_result$hazard[idx]
-
-      linear_predictors <- X %*% coefs
-      risk_score <- as.vector(1 - exp(-base_haz_t * exp(linear_predictors)))
-
-      wolbers_path[k] <- wolbers_c(y_true = y_true_mat, risk_score = risk_score, evaluation_time = eval_time)
-    }
-
-    valid <- is.finite(wolbers_path)
-    if (!is.null(fit$converged) && length(fit$converged) == length(wolbers_path)) {
-      valid <- valid & as.logical(fit$converged)
-    }
-    if (!any(valid)) {
-      stop("No finite, converged solution was available for ", method_label, ".")
-    }
-
-    metric_for_selection <- wolbers_path
-    metric_for_selection[!valid] <- -Inf
-    index <- which.max(metric_for_selection)
-
-    beta_std <- as.numeric(beta_path[, index])
-    names(beta_std) <- predictor_names
-
-    beta_raw <- beta_std / x_scale
-    names(beta_raw) <- predictor_names
-
-    selected <- beta_std != 0
-
-    list(
-      method       = method_label,
-      index        = index,
-      lambda       = as.numeric(fit$lambda.path[index]),
-      wolbers_c    = as.numeric(wolbers_path[index]),
-      df           = as.integer(df_path[index]),
-      converged    = if (length(fit$converged) == length(wolbers_path)) {
-        as.logical(fit$converged[index])
-      } else {
-        NA
-      },
-      beta_std     = beta_std,
-      beta_raw     = beta_raw,
-      selected     = selected,
-      wolbers_path = wolbers_path,
-      df_path      = df_path
     )
   }
 
@@ -453,70 +467,72 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   )
   fit_lasso <- fit_fastcrrp(penalty = "LASSO", lambda = reference_lambda)
 
-  initial_fit       <- NULL
-  initial_beta_std  <- NULL
-  initial_estimator <- NULL
+  # LASSO-ONLY: aLASSO initial-estimate machinery commented out
+  # initial_fit       <- NULL
+  # initial_beta_std  <- NULL
+  # initial_estimator <- NULL
+  #
+  # if (npredictors < nobs) {
+  #   initial_fit <- tryCatch(
+  #     fit_initial_finegray(),
+  #     error = function(e) {
+  #       warning("Unpenalized fastCrr() failed: ", conditionMessage(e))
+  #       NULL
+  #     }
+  #   )
+  #
+  #   if (!is.null(initial_fit)) {
+  #     candidate <- as.numeric(stats::coef(initial_fit))
+  #     initial_converged <- is.null(initial_fit$converged) ||
+  #       all(as.logical(initial_fit$converged))
+  #     if (initial_converged &&
+  #         length(candidate) == npredictors &&
+  #         all(is.finite(candidate))) {
+  #       initial_beta_std  <- candidate
+  #       initial_estimator <- "unpenalized fastCrr"
+  #     }
+  #   }
+  # }
+  #
+  # if (is.null(initial_beta_std)) {
+  #   warning("Using a ridge-regularized initial estimate for adaptive-LASSO weights.")
+  #   initial_fit <- fit_fastcrrp(penalty = "RIDGE", lambda = reference_lambda)
+  #   ridge_beta  <- as.matrix(stats::coef(initial_fit))
+  #   ridge_valid <- rep(TRUE, ncol(ridge_beta))
+  #   if (!is.null(initial_fit$converged) &&
+  #       length(initial_fit$converged) == ncol(ridge_beta)) {
+  #     ridge_valid <- as.logical(initial_fit$converged)
+  #   }
+  #   ridge_valid <- ridge_valid & apply(ridge_beta, 2L, function(z) all(is.finite(z)))
+  #   if (!any(ridge_valid)) {
+  #     stop("No usable ridge solution was available for adaptive-LASSO weights.")
+  #   }
+  #   ridge_index <- which.max(replace(as.numeric(initial_fit$logLik), !ridge_valid, -Inf))
+  #   initial_beta_std  <- as.numeric(ridge_beta[, ridge_index])
+  #   initial_estimator <- "ridge fastCrrp endpoint"
+  # }
+  #
+  # names(initial_beta_std) <- predictor_names
+  #
+  # adaptive_power    <- 1
+  # aLASSO_floor      <- 1e-4
+  # aLASSO_weight_cap <- 1e4
+  # adaptive_weights  <- 1 / pmax(abs(initial_beta_std), aLASSO_floor)^adaptive_power
+  # adaptive_weights  <- pmin(adaptive_weights, aLASSO_weight_cap)
+  # adaptive_weights  <- adaptive_weights / min(adaptive_weights)
+  # names(adaptive_weights) <- predictor_names
+  #
+  # fit_alasso <- fit_fastcrrp(
+  #   penalty = "LASSO",
+  #   penalty_factor = adaptive_weights,
+  #   lambda = reference_lambda
+  # )
 
-  if (npredictors < nobs) {
-    initial_fit <- tryCatch(
-      fit_initial_finegray(),
-      error = function(e) {
-        warning("Unpenalized fastCrr() failed: ", conditionMessage(e))
-        NULL
-      }
-    )
+  # LASSO-ONLY: fit_scad and fit_mcp commented out
+  # fit_scad <- fit_fastcrrp(penalty = "SCAD", gamma = 3.7, lambda = reference_lambda)
+  # fit_mcp  <- fit_fastcrrp(penalty = "MCP",  gamma = 2.7, lambda = reference_lambda)
 
-    if (!is.null(initial_fit)) {
-      candidate <- as.numeric(stats::coef(initial_fit))
-      initial_converged <- is.null(initial_fit$converged) ||
-        all(as.logical(initial_fit$converged))
-      if (initial_converged &&
-          length(candidate) == npredictors &&
-          all(is.finite(candidate))) {
-        initial_beta_std  <- candidate
-        initial_estimator <- "unpenalized fastCrr"
-      }
-    }
-  }
-
-  if (is.null(initial_beta_std)) {
-    warning("Using a ridge-regularized initial estimate for adaptive-LASSO weights.")
-    initial_fit <- fit_fastcrrp(penalty = "RIDGE", lambda = reference_lambda)
-    ridge_beta  <- as.matrix(stats::coef(initial_fit))
-    ridge_valid <- rep(TRUE, ncol(ridge_beta))
-    if (!is.null(initial_fit$converged) &&
-        length(initial_fit$converged) == ncol(ridge_beta)) {
-      ridge_valid <- as.logical(initial_fit$converged)
-    }
-    ridge_valid <- ridge_valid & apply(ridge_beta, 2L, function(z) all(is.finite(z)))
-    if (!any(ridge_valid)) {
-      stop("No usable ridge solution was available for adaptive-LASSO weights.")
-    }
-    ridge_index <- which.max(replace(as.numeric(initial_fit$logLik), !ridge_valid, -Inf))
-    initial_beta_std  <- as.numeric(ridge_beta[, ridge_index])
-    initial_estimator <- "ridge fastCrrp endpoint"
-  }
-
-  names(initial_beta_std) <- predictor_names
-
-  adaptive_power    <- 1
-  aLASSO_floor      <- 1e-4
-  aLASSO_weight_cap <- 1e4
-  adaptive_weights  <- 1 / pmax(abs(initial_beta_std), aLASSO_floor)^adaptive_power
-  adaptive_weights  <- pmin(adaptive_weights, aLASSO_weight_cap)
-  adaptive_weights  <- adaptive_weights / min(adaptive_weights)
-  names(adaptive_weights) <- predictor_names
-
-  fit_alasso <- fit_fastcrrp(
-    penalty = "LASSO",
-    penalty_factor = adaptive_weights,
-    lambda = reference_lambda
-  )
-
-  fit_scad <- fit_fastcrrp(penalty = "SCAD", gamma = 3.7, lambda = reference_lambda)
-  fit_mcp  <- fit_fastcrrp(penalty = "MCP",  gamma = 2.7, lambda = reference_lambda)
-
-  fits <- list(LASSO = fit_lasso, aLASSO = fit_alasso, SCAD = fit_scad, MCP = fit_mcp)
+  fits <- list(LASSO = fit_lasso) # LASSO-ONLY: was list(LASSO, aLASSO, SCAD, MCP)
 
   same_lambda_grid <- vapply(
     fits,
@@ -528,15 +544,8 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
          paste(names(same_lambda_grid)[!same_lambda_grid], collapse = ", "))
   }
 
-  selected_models <- list(
-    LASSO_BIC = select_by_bic(fit_lasso, "LASSO_BIC"),
-    LASSO_Wolbers = select_by_wolbers(fit_lasso, "LASSO_Wolbers"),
-    aLASSO_BIC = select_by_bic(fit_alasso, "aLASSO_BIC"),
-    aLASSO_Wolbers = select_by_wolbers(fit_alasso, "aLASSO_Wolbers"),
-    SCAD_BIC = select_by_bic(fit_scad, "SCAD_BIC"),
-    SCAD_Wolbers = select_by_wolbers(fit_scad, "SCAD_Wolbers"),
-    MCP_BIC = select_by_bic(fit_mcp, "MCP_BIC"),
-    MCP_Wolbers = select_by_wolbers(fit_mcp, "MCP_Wolbers")
+  selected_models <- list( # LASSO-ONLY: was list(LASSO, aLASSO, SCAD, MCP)
+    LASSO = select_by_bic(fit_lasso, "LASSO")
   )
 
   other_time2 <- Sys.time()
@@ -545,12 +554,20 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   list(
     meta = list(nobs = nobs,
                 npredictors = npredictors,
-                beta1 = beta1,
-                beta2 = beta2,
+                beta1 = unname(beta1),
+                beta2 = unname(beta2),
                 zero_gap_target = zero_gap_target,
                 timestamp = Sys.time(),
                 ssl_psdh_time = ssl_psdh_time,
-                other_time = other_time),
+                other_time = other_time,
+                block_map = design$meta[, c("name", "block", "rho",
+                                            "designed", "active1", "active2")],
+                block_size      = design$block_size,
+                block_rho       = design$block_rho,
+                block_signature = design$signature,
+                design_settings = design$settings,
+                cens_rate       = cens_rate,
+                event_mix       = event_mix),
     sim_data  = sim_data,
     x         = x,
     y         = y,
@@ -568,11 +585,16 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
 for (npredictors in npredictors_grid) {
   for (run in run_start:run_end) {
 
+    # Resolve neg_beta1 sentinel so every run uses -beta1_active as cause-2 effect.
+    beta2_run <- if (beta2_active_raw == "neg_beta1") -beta1_active else beta2_active
+
     tag <- sprintf("n%d_p%d_run%d", nobs, npredictors, run)
     message(sprintf("[%s] %s starting...", format(Sys.time(), "%H:%M:%S"), tag))
 
     result <- tryCatch(
-      run_once(nobs, npredictors, beta1_active, beta2_active, zero_gap_target),
+      run_once(nobs, npredictors, beta1_active, beta2_run,
+               active_block, block_props, block_rho, latent_type,
+               latent_q, cens_rate, u_min, u_max, zero_gap_target),
       error = function(e) {
         message(sprintf("  !! %s FAILED: %s", tag, conditionMessage(e)))
         list(meta = list(nobs = nobs, npredictors = npredictors, run = run,

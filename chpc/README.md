@@ -1,6 +1,6 @@
 # bhCRR on CHPC (SLURM)
 
-Run the `batch_run_comparison` simulation as a parallel SLURM job array on the
+Run the `batch_run_complex` simulation as a parallel SLURM job array on the
 University of Utah CHPC, then automatically collect the per-parameter-set results
 (`betas_p<P>`) into `Sim/chpc_results/` to pull back to local for figures.
 
@@ -12,7 +12,7 @@ University of Utah CHPC, then automatically collect the per-parameter-set result
 | `run_sim.sh` | Entry point. Parses `key=value` overrides, submits the array + a dependent parse job. |
 | `run_array.slurm` | Array task: runs a chunk of run indices, writes one `.Rdata` per run to scratch. |
 | `parse.slurm` | Runs once after the array succeeds; builds `betas_p<P>`. |
-| `R/run_batch.R` | CHPC-portable version of `Sim/code/batch_run_comparison.R` (env-driven, renv). |
+| `R/run_batch.R` | CHPC-portable version of `Sim/code/batch_run_complex.R` (env-driven, renv). |
 | `R/parse_batch.R` | CHPC-portable version of `Sim/code/parse_batch_run.R`; writes CSV + `.Rdata`. |
 
 ## One-time setup
@@ -40,7 +40,7 @@ You can override any of these per-submission without editing the file, e.g.
 ssh <you>@notchpeak.chpc.utah.edu
 cd ~/bhCRR
 source chpc/config.sh          # optional — run_sim.sh sources it too
-./chpc/run_sim.sh              # defaults: nobs=200, npredictors=206, runs 1..10
+./chpc/run_sim.sh              # defaults: nobs=200, npredictors=221, runs 1..10
 ```
 
 Override any default on the command line (`key=value`, **no spaces** around `=`):
@@ -48,15 +48,33 @@ Override any default on the command line (`key=value`, **no spaces** around `=`)
 ```bash
 ./chpc/run_sim.sh run_start=10 run_end=40
 ./chpc/run_sim.sh nobs=140
-./chpc/run_sim.sh npredictors=25,50,206 run_end=100 runs_per_task=5
+./chpc/run_sim.sh npredictors=25,50,221 run_end=100 runs_per_task=5
 ./chpc/run_sim.sh nobs=140 dryrun=1     # print sbatch commands, submit nothing
+```
+
+`dryrun=1` is the way to confirm all scenario knobs (coefficients, block
+structure, censoring) before a real submission — the banner prints every resolved
+value. Off-cluster (Mac), point `SCRATCH_BASE` at a local writable path to avoid
+the `/scratch` mkdir failing:
+
+```bash
+SCRATCH_BASE=/tmp/bhcrr_dryrun ./chpc/run_sim.sh dryrun=1
+```
+
+Named-vector keys (`block_props`, `block_rho`, `latent_q`) use `name=val,name=val`
+format. The `run_sim.sh` parser splits only on the **first** `=`, so the extra `=`
+inside the value is safe:
+
+```bash
+./chpc/run_sim.sh block_rho=indep=0.0,weak=0.5,strong=0.8
 ```
 
 Keys map to the `UPPER_CASE` variables in `config.sh` (case-insensitive):
 `nobs, npredictors, run_start, run_end, runs_per_task, zero_gap_target,
-beta1_active, beta2_active`, plus SLURM knobs `sb_time, sb_mem, sb_cpus`. The
-allocation vars `CHPC_ACCOUNT, CHPC_PARTITION, CHPC_CLUSTER` are also honored if
-exported (e.g. `CHPC_PARTITION=notchpeak-shared-short ./chpc/run_sim.sh`).
+beta1_active, beta2_active, active_block, block_props, block_rho, latent_type,
+latent_q, cens_rate, u_min, u_max`, plus SLURM knobs `sb_time, sb_mem, sb_cpus`.
+The allocation vars `CHPC_ACCOUNT, CHPC_PARTITION, CHPC_CLUSTER` are also honored
+if exported (e.g. `CHPC_PARTITION=notchpeak-shared-short ./chpc/run_sim.sh`).
 
 ## What happens
 
