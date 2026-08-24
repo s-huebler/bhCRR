@@ -30,6 +30,11 @@
 : "${R_MODULE:=R/4.5.2}"          # <-- confirm this module exists: `module spider R`
 # 1 = run renv::restore() before the models (recommended, matches renv.lock).
 : "${USE_RENV:=0}"
+# CHPC's R is built against an external LAPACK, so it has no libRlapack.so.
+# Posit Package Manager's Linux binaries are built against an R that does, and
+# fail to load here ("libRlapack.so: cannot open shared object file"). Disabling
+# the PPM binary endpoint forces source installs that link against this R.
+: "${RENV_CONFIG_PPM_ENABLED:=FALSE}"
 
 # ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
 # Set these to your CHPC allocation. Override at submit time with env vars, e.g.
@@ -87,7 +92,7 @@ export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters (
 : "${U_MAX:=100}"                                     # upper bound for observation window
 
 # CHPC_ACCOUNT / CHPC_PARTITION / CHPC_CLUSTER are already exported inline above.
-export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV \
+export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV  RENV_CONFIG_PPM_ENABLED\
        SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
        NOBS NPREDICTORS RUN_START RUN_END RUNS_PER_TASK ZERO_GAP_TARGET \
        BETA1_ACTIVE BETA2_ACTIVE \
