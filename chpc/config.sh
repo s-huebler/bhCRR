@@ -63,7 +63,7 @@ export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak}"  # sbatch -p / --partition
 export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters ("" = login cluster)
 
 # ---- SLURM resource requests (per job; tune freely) -------------------------
-: "${SB_TIME:=2:00:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
+: "${SB_TIME:=00:10:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
 : "${SB_MEM:=16G}"                # memory per array task
 : "${SB_CPUS:=4}"                 # cpus-per-task
 : "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job
@@ -83,10 +83,10 @@ export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters (
 : "${SCENARIO:=}"
 
 : "${NOBS:=200}"                                   # sample size
-: "${NPREDICTORS:=221}"                            # single value OR comma list, e.g. 25,50,221
+: "${NPREDICTORS:=25}"                            # single value OR comma list, e.g. 25,50,221
 : "${RUN_START:=1}"                                # first run index (inclusive)
 : "${RUN_END:=10}"                                 # last  run index (inclusive)
-: "${RUNS_PER_TASK:=1}"                            # runs handled by each array task
+: "${RUNS_PER_TASK:=5}"                            # runs handled by each array task
 : "${ZERO_GAP_TARGET:=0.1}"                        # clinically-relevant min treatment effect
 : "${BETA1_ACTIVE:=0.40,-0.50,0.60,0.75,-0.80}"    # active cause-1 coefficients
 : "${BETA2_ACTIVE:=neg_beta1}"                      # cause-2 coefficients; "neg_beta1" = -BETA1_ACTIVE
