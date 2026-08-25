@@ -132,7 +132,7 @@ source(file.path(repo_root, "R/update_mixture_prob.r"))
 
 Rcpp::sourceCpp(file.path(repo_root, "src/cv_fastcrrp.cpp"))
 Rcpp::sourceCpp(file.path(repo_root, "src/RcppExports.cpp"))
-source(file.path(repo_root, "R/cv_fastCrrp_cpp.r"))
+source(file.path(repo_root, "R/cv_fastCrrp_cpp.R"))
 source(file.path(repo_root, "R/fit_ssl_psdh.r"))
 
 source(file.path(repo_root, "R/generate_foldid.r"))
