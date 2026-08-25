@@ -1,0 +1,7 @@
+"scenario","Block","BlockRho","Model","fp_rate","n_false_pos","n_null_predictors"
+"scenarioB","indep",0,"LASSO",0.115833333333333,139,1200
+"scenarioB","weak",0.3,"LASSO",0.1675,67,400
+"scenarioB","strong",0.6,"LASSO",0.0575,23,400
+"scenarioB","indep",0,"SSL",0.155833333333333,187,1200
+"scenarioB","weak",0.3,"SSL",0.17,68,400
+"scenarioB","strong",0.6,"SSL",0.105,42,400
