@@ -63,7 +63,7 @@ export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak}"  # sbatch -p / --partition
 export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters ("" = login cluster)
 
 # ---- SLURM resource requests (per job; tune freely) -------------------------
-: "${SB_TIME:=00:10:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
+: "${SB_TIME:=00:30:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
 : "${SB_MEM:=16G}"                # memory per array task
 : "${SB_CPUS:=4}"                 # cpus-per-task
 : "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job

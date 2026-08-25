@@ -7,7 +7,12 @@ Submit a bhCRR simulation on CHPC.
 
 REQUEST: $ARGUMENTS
 
-Work in ~/bhCRR. Follow these rules exactly.
+## Where you are
+
+Work in the CURRENT directory. Do not `cd` to a hardcoded path — this repo is
+not necessarily at `~/bhCRR`. Confirm you are in the right place with
+`git rev-parse --show-toplevel` and report that path. If it is not a git repo,
+or `chpc/run_sim.sh` is not present under it, stop and say so.
 
 ## How to read the request
 
@@ -41,16 +46,45 @@ value, STOP and ask. Do not submit a job you had to interpret.
 
 ## Preflight
 
-All of this is cheap shell — no R. See the Arbiter rule at the bottom.
+Each Bash call is a FRESH shell — nothing persists between them. Any command that
+needs `$SCRATCH_BASE`, `$R_MODULE`, `$CHPC_CLUSTER` or another config value must
+`source chpc/config.sh` in that same command.
 
 1. `git pull`, and report the resulting HEAD short SHA.
 2. Confirm `chpc/run_sim.sh` mentions `SCENARIO`. If it does not, the
    scenario-aware pipeline was never pushed to this checkout — stop and say so.
-3. Confirm the renv library exists and is populated:
-   `ls renv/library/R-4.5/x86_64-pc-linux-gnu | head` — and that `fastcmprsk`
-   and `tidyverse` are in it. `USE_RENV` defaults to 0, so a missing or thin
-   library means every array task fails. Do NOT try to fix it. Stop and say that
-   `renv::restore()` needs to run inside an `salloc` session first.
+3. Check the renv library. `USE_RENV` defaults to 0, so the array tasks use
+   whatever library `.Rprofile` activates; if that library is missing, every task
+   fails.
+
+   Load the same R the jobs will use BEFORE any R call — a bare `Rscript` on a
+   login node is a different R than the array gets, searching a different library:
+
+       source chpc/config.sh
+       module load "$R_MODULE"
+
+   Then ask R where its libraries are rather than assuming a path. On this
+   machine renv (1.1+) keeps the project library OUTSIDE the repo, under
+   `~/.cache/R/renv/library/<project>-<hash>/linux-rocky-8.10/R-4.5/...`, so an
+   absent `renv/library/` directory inside the repo is NORMAL and means nothing.
+   Never conclude anything from `ls renv/library`. Ask R:
+
+       Rscript -e 'cat(.libPaths(), sep="\n")' \
+               -e 'cat("fastcmprsk:", system.file(package="fastcmprsk"), "\n")' \
+               -e 'cat("tidyverse:", system.file(package="tidyverse"), "\n")'
+
+   Interpret the result:
+   - Both packages print a real path -> good, proceed.
+   - A package prints empty -> stop, and report it together with the full
+     `.libPaths()` output so I can see which library R actually searched.
+   - The command errors, or you cannot tell -> WARN loudly, say exactly what you
+     saw, and PROCEED with the submission anyway. An inconclusive check is not a
+     reason to block; a genuinely broken library shows up in the first task's log
+     within seconds, which is cheaper than a false stop.
+
+   Never try to fix the library yourself — `renv::restore()` is a compile job and
+   belongs in an `salloc` session, not here.
+
 4. Validate the scenario slug against `[A-Za-z0-9][A-Za-z0-9.-]*` — no
    underscores. If it doesn't match, stop and ask; never silently rewrite it.
 5. Pick the run range. If the request gives an explicit start, use it. Otherwise
@@ -60,6 +94,11 @@ All of this is cheap shell — no R. See the Arbiter rule at the bottom.
    chose in your report.
    An existing scenario directory is normal and expected — scenarios accumulate
    runs across submissions. It is not a reason to stop.
+6. Sanity-check the walltime against the workload. `SB_TIME` is per ARRAY TASK,
+   and each task runs `RUNS_PER_TASK` runs sequentially. Read both from
+   `chpc/config.sh` (or the overrides) and, if `SB_TIME` divided by
+   `RUNS_PER_TASK` leaves under ~5 minutes per run, say so plainly in your report
+   before submitting. Do not change either value on your own — just flag it.
 
 ## Submit
 
@@ -79,19 +118,23 @@ Stop and report instead of retrying if:
 
 - The exact command you ran, and a one-line list of what it overrode
   (or "defaults only" when it overrode nothing but the run range and scenario)
-- The run range used, and why, if it wasn't given explicitly
+- The resolved repo root, and the run range used
 - Array job ID + task count, and the parse job ID
 - Scratch path, and the `Sim/chpc_results/<scenario>/` files the parse job will
   write
+- Any walltime concern from preflight step 6
 - The `squeue` command to track it, with `-M $CHPC_CLUSTER` if that is set
 
 Run `squeue` ONCE to confirm the jobs are queued. Do not poll, wait, or watch.
 
-## Arbiter rule (non-negotiable)
+## Arbiter rule
 
 You are on a login node governed by Arbiter: roughly 15 core-minutes at or under
-4 GB before penalties escalate. Everything you do here is `git`, `ls`/`cat`, and
-`sbatch`. Do NOT run `Rscript`, `R`, `renv::restore()`, `Rcpp::sourceCpp`,
-`chpc/R/run_batch.R`, or `chpc/R/parse_batch.R` on this node — not even "just to
-check". Compiling and model fitting belong in the array; a re-parse belongs in an
-`salloc` job.
+4 GB before penalties escalate. Almost everything you do here is `git`,
+`ls`/`cat`, and `sbatch`.
+
+The line is compute time, not the R binary. A sub-second `Rscript -e` that only
+prints a path or a version is fine. What is forbidden here, always, is anything
+that COMPILES or FITS: `renv::restore()`, `Rcpp::sourceCpp`,
+`chpc/R/run_batch.R`, `chpc/R/parse_batch.R`, or any model fit. Those belong in
+the array, or in an `salloc` session for a re-parse.
