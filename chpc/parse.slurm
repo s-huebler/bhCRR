@@ -4,7 +4,8 @@
 # (--dependency=afterok). Collects every RData in $SCRATCH_RUN_DIR, groups by
 # npredictors, and writes betas_p<P>_n<NOBS>.{csv,Rdata} to Sim/chpc_results/.
 #
-# Inherits the environment from run_sim.sh via --export=ALL.
+# Inherits the environment from run_sim.sh via --export=ALL
+# (SCENARIO, SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, USE_RENV, and all DGP vars).
 # =============================================================================
 set -euo pipefail
 

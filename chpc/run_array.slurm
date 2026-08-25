@@ -3,8 +3,9 @@
 # chpc/run_array.slurm  --  one array task = a chunk of run indices.
 #
 # Submitted by run_sim.sh with --export=ALL, so every config.sh variable
-# (NOBS, NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK, SCRATCH_RUN_DIR,
-# REPO_ROOT, R_MODULE, USE_RENV, ZERO_GAP_TARGET, BETA1_ACTIVE, BETA2_ACTIVE)
+# (SCENARIO, NOBS, NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK,
+# SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, USE_RENV, ZERO_GAP_TARGET,
+# BETA1_ACTIVE, BETA2_ACTIVE)
 # is already in the environment. sbatch resource flags (--array, --account,
 # --time, ...) are set on the run_sim.sh command line, not here.
 # =============================================================================

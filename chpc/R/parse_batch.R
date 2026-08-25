@@ -1,37 +1,50 @@
 #################### CHPC Parse Batch Run ################
 # CHPC/SLURM-portable adaptation of Sim/code/parse_batch_run.R.
 #
-# Reads every n<nobs>_p<p>_run<run>.Rdata under $SCRATCH_RUN_DIR (RECURSIVELY,
-# since run_batch.R files each npredictors value into its own p<P> subdir),
-# groups by
-# npredictors, and produces three output tables per group in
-# Sim/chpc_results/:
+# Reads every p<P>_<scenario>_run<N>.Rdata under $SCRATCH_RUN_DIR, which now
+# points at one scenario directory containing p<P> subdirs. Files that do not
+# match the ^p<P>_<scenario>_run<N>.Rdata$ pattern are skipped with a message
+# (this includes old n<N>_p<P>_run<N> files); the parse errors out only if
+# zero files match the pattern.
 #
-#   betas_p<P>_n<N>.csv / .Rdata
+# All outputs go to Sim/chpc_results/<scenario>/. Per-group tables are produced
+# for each npredictors value (grouping key stays "p<P>"):
+#
+#   betas_p<P>_<scenario>.csv / .Rdata
 #     Long tidy table, one row per predictor per model per run:
-#       predictor, Block, BlockRho, True, FG, Model, Estimate, Bias, nobs,
-#       run_number
+#       scenario, predictor, Block, BlockRho, True, FG, Model, Estimate,
+#       Bias, nobs, run_number
 #     Block / BlockRho come from result$meta$block_map, joined by predictor
 #     name. Runs without a block map have Block = NA.
 #
-#   model_performance_p<P>_n<N>.csv
-#     One row per model per run: tuning params (s0/s1 for SSL, lambda for
-#     comparators), convergence, iteration count, and TP/FP/TN/FN overall
-#     and per correlation stratum when a block map is present.
+#   model_performance_p<P>_<scenario>.csv
+#     One row per model per run: scenario, run_id, nobs, npredictors,
+#     run_number, tuning params (s0/s1 for SSL, lambda for comparators),
+#     convergence, iteration count, and TP/FP/TN/FN overall and per
+#     correlation stratum when a block map is present.
 #
-#   false_positives_p<P>_n<N>.csv
+#   false_positives_p<P>_<scenario>.csv
 #     Null-predictor false-positive rates by Block x Model -- the key
 #     diagnostic for selection leakage across correlated neighbours.
 #
-# If more than one npredictors group is present, model_performance_n<N>.csv
+# If more than one npredictors group is present, model_performance_<scenario>.csv
 # (stacked across groups) is also written.
 #
-# Runs pooled into one group must share result$meta$block_signature; a
-# mismatch stops the parse so incomparable block maps cannot be silently
-# averaged over.
+# Checks performed:
+#   - Filename scenario token must equal SCENARIO (hard stop on mismatch).
+#   - nobs is read from res$meta$nobs (not the filename) and must be identical
+#     across every run in the scenario; hard stop if not, naming both values.
+#   - result$meta$block_signature must be identical within each p group.
+#   - result$meta$scenario_params is compared field-by-field (all.equal,
+#     tolerance 1e-8) against the first run's values; hard stop on any
+#     difference, naming the field, both values, and the run_id. Runs saved
+#     before scenario_params existed have it NULL -- warned and skipped.
+#
+# $SCRATCH_RUN_DIR/scenario.env is copied into out_dir if present, making the
+# results folder self-describing without the scratch tree.
 #
 # Config from the environment (set by config.sh / parse.slurm):
-#   REPO_ROOT, SCRATCH_RUN_DIR, NOBS
+#   REPO_ROOT, SCRATCH_RUN_DIR, SCENARIO
 
 
 #################### Config from environment ################
@@ -46,15 +59,16 @@ get_env <- function(name, default = NULL) {
 
 repo_root <- get_env("REPO_ROOT")
 in_dir    <- get_env("SCRATCH_RUN_DIR")
-out_dir   <- file.path(repo_root, "Sim", "chpc_results")
-nobs_env  <- as.integer(get_env("NOBS", "NA"))
+scenario  <- get_env("SCENARIO")
+out_dir   <- file.path(repo_root, "Sim", "chpc_results", scenario)
 
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 # Fallback true betas, only used if a file predates meta$beta1 being saved.
 beta1_active_fallback <- c(0.40, -0.50, 0.60, 0.75, -0.80)
 
-message(sprintf("parse_batch.R  in=%s", in_dir))
+message(sprintf("parse_batch.R  scenario=%s", scenario))
+message(sprintf("  in=%s", in_dir))
 message(sprintf("  out=%s", out_dir))
 
 
@@ -119,44 +133,114 @@ rbind_fill <- function(a, b) {
 
 #################### Locate & order files ################
 # recursive = TRUE: run_batch.R writes into per-npredictors p<P> subdirectories.
-# Grouping is still driven by the p in each FILENAME, never by which directory a
-# file sits in, so a flattened or hand-copied layout parses identically. Point
-# in_dir at the parent to parse every p, or at one p<P> subdir to scope it.
-files <- list.files(in_dir, pattern = "\\.Rdata$", full.names = TRUE,
-                    recursive = TRUE)
-if (length(files) == 0) {
+# Grouping is driven by the p in each FILENAME. Point in_dir at the scenario
+# root to parse every p, or at one p<P> subdir to scope it.
+all_files <- list.files(in_dir, pattern = "\\.Rdata$", full.names = TRUE,
+                        recursive = TRUE)
+if (length(all_files) == 0) {
   stop("No .Rdata files found under ", in_dir,
        " (searched recursively, including any p<P> subdirectories).")
 }
 
-# Parse n / p / run from each filename and sort naturally (p, then run).
-meta_tbl <- regmatches(basename(files),
-                       regexec("n(\\d+)_p(\\d+)_run(\\d+)", basename(files)))
-meta_tbl <- do.call(rbind, lapply(meta_tbl, function(m) as.integer(m[2:4])))
-colnames(meta_tbl) <- c("nobs", "npredictors", "run")
-ord   <- order(meta_tbl[, "npredictors"], meta_tbl[, "run"])
-files <- files[ord]
+# Match only the new p<P>_<scenario>_run<N>.Rdata format. Files that do not
+# match (including old n<N>_p<P>_run<N>.Rdata files) are skipped.
+rx <- "^p(\\d+)_([A-Za-z0-9][A-Za-z0-9.-]*)_run(\\d+)\\.Rdata$"
+rx_matches <- regmatches(basename(all_files), regexec(rx, basename(all_files)))
+matched    <- vapply(rx_matches, length, integer(1)) > 0
+
+if (any(!matched)) {
+  skipped_names <- basename(all_files)[!matched]
+  message(sprintf("Skipping %d file(s) that do not match p<P>_<scenario>_run<N>.Rdata:\n  %s",
+                  length(skipped_names),
+                  paste(skipped_names, collapse = "\n  ")))
+}
+if (!any(matched)) {
+  stop("No files matching p<P>_<scenario>_run<N>.Rdata found under ", in_dir, ".")
+}
+
+files      <- all_files[matched]
+rx_matches <- rx_matches[matched]
+
+# Verify every file's scenario token against SCENARIO before loading anything.
+file_scenarios <- vapply(rx_matches, function(m) m[[3L]], character(1))
+bad_sc <- file_scenarios != scenario
+if (any(bad_sc)) {
+  stop(sprintf(
+    "Scenario token mismatch in %d file(s) -- expected '%s':\n%s",
+    sum(bad_sc), scenario,
+    paste(sprintf("  %s  (token: '%s')", basename(files)[bad_sc],
+                  file_scenarios[bad_sc]),
+          collapse = "\n")))
+}
+
+meta_tbl <- data.frame(
+  npredictors = as.integer(vapply(rx_matches, function(m) m[[2L]], character(1))),
+  run         = as.integer(vapply(rx_matches, function(m) m[[4L]], character(1))),
+  stringsAsFactors = FALSE
+)
+ord      <- order(meta_tbl$npredictors, meta_tbl$run)
+files    <- files[ord]
 meta_tbl <- meta_tbl[ord, , drop = FALSE]
 
 
 #################### Cycle through files ################
-beta_tables  <- list()         # per-npredictors long data frames
-perf_tables  <- list()         # per-npredictors model x run performance rows
-skipped      <- character(0)   # files with no fitted model (failed runs)
-block_sigs   <- list()         # block_signature seen per npredictors group
-no_block_map <- character(0)   # runs with no saved block map
+beta_tables         <- list()          # per-npredictors long data frames
+perf_tables         <- list()          # per-npredictors model x run performance rows
+skipped             <- character(0)    # files with no fitted model (failed runs)
+block_sigs          <- list()          # block_signature seen per npredictors group
+no_block_map        <- character(0)    # runs with no saved block map
+nobs_check          <- NULL            # nobs seen on first loaded run
+scenario_params_ref <- NULL            # scenario_params from first run with the field
 
 for (i in seq_along(files)) {
   f  <- files[i]
-  nm <- tools::file_path_sans_ext(basename(f))   # e.g. "n200_p25_run1"
+  nm <- tools::file_path_sans_ext(basename(f))   # e.g. "p25_n200base_run1"
 
   e <- new.env()
   load(f, envir = e)             # loads object `result`
   res <- e$result
 
-  nobs_f <- meta_tbl[i, "nobs"]
-  p_f    <- meta_tbl[i, "npredictors"]
-  run_f  <- meta_tbl[i, "run"]
+  p_f   <- meta_tbl$npredictors[i]
+  run_f <- meta_tbl$run[i]
+
+  # nobs from meta (no longer encoded in the filename).
+  nobs_f <- as.integer(res$meta$nobs)
+  if (is.null(nobs_f) || is.na(nobs_f)) {
+    warning(sprintf("%s has no meta$nobs.", nm))
+    nobs_f <- NA_integer_
+  } else if (is.null(nobs_check)) {
+    nobs_check <- nobs_f
+  } else if (!identical(nobs_check, nobs_f)) {
+    stop(sprintf(
+      "nobs mismatch across runs in scenario '%s': '%s' has nobs=%d but earlier runs have nobs=%d.",
+      scenario, nm, nobs_f, nobs_check))
+  }
+
+  # scenario_params consistency (field-by-field; skip for pre-field runs).
+  sp <- res$meta$scenario_params
+  if (is.null(sp)) {
+    warning(sprintf(
+      "%s has no meta$scenario_params (saved before this field existed) -- skipping scenario-param check.",
+      nm))
+  } else if (is.null(scenario_params_ref)) {
+    scenario_params_ref <- sp
+  } else {
+    for (fld in names(scenario_params_ref)) {
+      if (!fld %in% names(sp)) {
+        stop(sprintf(
+          "scenario_params mismatch in run '%s': field '%s' is present in the reference run but missing here.",
+          nm, fld))
+      }
+      cmp <- all.equal(scenario_params_ref[[fld]], sp[[fld]], tolerance = 1e-8)
+      if (!isTRUE(cmp)) {
+        stop(sprintf(
+          "scenario_params mismatch in run '%s', field '%s':\n  reference: %s\n  this run:  %s",
+          nm, fld,
+          paste(scenario_params_ref[[fld]], collapse = ", "),
+          paste(sp[[fld]], collapse = ", ")))
+      }
+    }
+  }
 
   # Failed run (batch saved only meta with an error) -> skip the table.
   if (is.null(res$final_mod)) {
@@ -250,8 +334,9 @@ for (i in seq_along(files)) {
     }
   }
 
-  df <- df[, c("predictor", "Block", "BlockRho", "True", "FG", "Model",
-               "Estimate", "Bias", "nobs", "run_number")]
+  df$scenario <- scenario
+  df <- df[, c("scenario", "predictor", "Block", "BlockRho", "True", "FG",
+               "Model", "Estimate", "Bias", "nobs", "run_number")]
 
   beta_tables[[key]] <- rbind(beta_tables[[key]], df)
 
@@ -290,6 +375,7 @@ for (i in seq_along(files)) {
     }
 
     row <- data.frame(
+      scenario    = scenario,
       run_id      = nm,
       nobs        = nobs_f,
       npredictors = p_f,
@@ -340,6 +426,10 @@ false_positive_by_block <- function(df) {
 
 fp_tables <- lapply(beta_tables, false_positive_by_block)
 fp_tables <- fp_tables[!vapply(fp_tables, is.null, logical(1))]
+for (k in names(fp_tables)) {
+  fp_tables[[k]] <- cbind(scenario = scenario, fp_tables[[k]],
+                          stringsAsFactors = FALSE)
+}
 
 
 #################### Write per-group tables ################
@@ -347,12 +437,8 @@ written <- character(0)
 for (key in names(beta_tables)) {
   tbl <- beta_tables[[key]]
 
-  # nobs tag for the filename: use the value seen in the data (should be uniform
-  # within a per-nobs scratch dir), falling back to the NOBS env var.
-  ntag <- if (length(unique(tbl$nobs)) == 1L) unique(tbl$nobs) else nobs_env
-
   # ---- betas ----
-  base       <- sprintf("betas_%s_n%s", key, ntag)
+  base       <- sprintf("betas_%s_%s", key, scenario)
   csv_path   <- file.path(out_dir, paste0(base, ".csv"))
   rdata_path <- file.path(out_dir, paste0(base, ".Rdata"))
 
@@ -371,7 +457,7 @@ for (key in names(beta_tables)) {
   if (!is.null(perf_tables[[key]])) {
     rownames(perf_tables[[key]]) <- NULL
     perf_path <- file.path(out_dir,
-                           sprintf("model_performance_%s_n%s.csv", key, ntag))
+                           sprintf("model_performance_%s_%s.csv", key, scenario))
     write.csv(perf_tables[[key]], perf_path, row.names = FALSE)
     written <- c(written, perf_path)
     message(sprintf("  wrote %s  (%d rows)",
@@ -381,7 +467,7 @@ for (key in names(beta_tables)) {
   # ---- false positives ----
   if (!is.null(fp_tables[[key]])) {
     fp_path <- file.path(out_dir,
-                         sprintf("false_positives_%s_n%s.csv", key, ntag))
+                         sprintf("false_positives_%s_%s.csv", key, scenario))
     write.csv(fp_tables[[key]], fp_path, row.names = FALSE)
     written <- c(written, fp_path)
     message(sprintf("  wrote %s  (%d rows)",
@@ -400,14 +486,23 @@ if (length(perf_tables) > 1L) {
   }
   if (!is.null(all_perf)) {
     rownames(all_perf) <- NULL
-    ntag_stack <- if (!is.na(nobs_env)) nobs_env else "unknown"
     stack_path <- file.path(out_dir,
-                            sprintf("model_performance_n%s.csv", ntag_stack))
+                            sprintf("model_performance_%s.csv", scenario))
     write.csv(all_perf, stack_path, row.names = FALSE)
     written <- c(written, stack_path)
     message(sprintf("  wrote %s  (%d rows, all groups)",
                     basename(stack_path), nrow(all_perf)))
   }
+}
+
+
+#################### Copy scenario.env ################
+scenario_env_src <- file.path(in_dir, "scenario.env")
+if (file.exists(scenario_env_src)) {
+  scenario_env_dst <- file.path(out_dir, "scenario.env")
+  file.copy(scenario_env_src, scenario_env_dst, overwrite = TRUE)
+  written <- c(written, scenario_env_dst)
+  message(sprintf("  copied scenario.env -> %s", out_dir))
 }
 
 

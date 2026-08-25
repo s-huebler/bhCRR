@@ -7,7 +7,9 @@
 #   REPO_ROOT        path to the repo checkout on CHPC
 #   SCRATCH_RUN_DIR  shared-scratch PARENT dir; each npredictors value gets its
 #                    own p<P> subdirectory beneath it (see the sweep at the end)
-#   NOBS             sample size
+#   SCENARIO         scenario name (^[A-Za-z0-9][A-Za-z0-9.-]*$); required, no
+#                    default -- pass scenario=<name> to run_sim.sh
+#   NOBS             sample size (part of the scenario; recorded in scenario_params)
 #   NPREDICTORS      comma list, e.g. "25,50,221"
 #   RUN_SUBSTART     first run index this array task handles (from run_array.slurm)
 #   RUN_SUBEND       last  run index this array task handles
@@ -27,9 +29,10 @@
 #   U_MIN            lower bound for uniform observation window, default "100"
 #   U_MAX            upper bound for uniform observation window, default "100"
 #
-# Files are named n<nobs>_p<p>_run<run>.Rdata, one object `result` each -- the
-# exact contract chpc/R/parse_batch.R (and the original parse_batch_run.R)
-# expects. set.seed() is intentionally NOT called: each run draws fresh data.
+# Files are named p<P>_<scenario>_run<N>.Rdata, one object `result` each -- the
+# exact contract chpc/R/parse_batch.R expects. n is part of the scenario
+# definition (recorded in scenario_params and scenario.env) and no longer appears
+# in filenames. set.seed() is intentionally NOT called: each run draws fresh data.
 
 
 #################### Config from environment ################
@@ -57,6 +60,11 @@ chr_list <- function(s) strsplit(s, ",", fixed = TRUE)[[1]]
 
 repo_root        <- get_env("REPO_ROOT")
 out_dir          <- get_env("SCRATCH_RUN_DIR")
+scenario         <- get_env("SCENARIO")
+if (!grepl("^[A-Za-z0-9][A-Za-z0-9.-]*$", scenario)) {
+  stop("SCENARIO '", scenario, "' is invalid. Use only letters, digits, dots, and hyphens ",
+       "(no underscores -- they are delimiters in p<P>_<scenario>_run<N> filenames).")
+}
 nobs             <- as.integer(get_env("NOBS", "200"))
 npredictors_grid <- int_list(get_env("NPREDICTORS", "221"))
 run_start        <- as.integer(get_env("RUN_SUBSTART", get_env("RUN_START", "1")))
@@ -107,11 +115,32 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 message(sprintf("run_batch.R  repo=%s", repo_root))
 message(sprintf("  out_dir=%s", out_dir))
-message(sprintf("  nobs=%d  npredictors=%s  runs=%d..%d  zero_gap=%.3g",
-                nobs, paste(npredictors_grid, collapse = ","),
+message(sprintf("  scenario=%s  nobs=%d  npredictors=%s  runs=%d..%d  zero_gap=%.3g",
+                scenario, nobs, paste(npredictors_grid, collapse = ","),
                 run_start, run_end, zero_gap_target))
 message(sprintf("  active_block=%s  cens_rate=%.3g  u_min=%.3g  u_max=%.3g",
                 paste(active_block, collapse = ","), cens_rate, u_min, u_max))
+
+# Build the scenario parameter record once. beta2_active is stored as the
+# resolved numeric vector; beta2_active_spec preserves the original
+# specification so the neg_beta1 intent survives alongside the value.
+beta2_active_resolved <- if (beta2_active_raw == "neg_beta1") -beta1_active else beta2_active
+scenario_params <- list(
+  nobs              = nobs,
+  zero_gap_target   = zero_gap_target,
+  beta1_active      = beta1_active,
+  beta2_active      = beta2_active_resolved,
+  beta2_active_spec = beta2_active_raw,
+  active_block      = active_block,
+  block_props       = block_props,
+  block_rho         = block_rho,
+  latent_type       = latent_type,
+  latent_q          = latent_q,
+  cens_rate         = cens_rate,
+  u_min             = u_min,
+  u_max             = u_max,
+  n_active          = length(beta1_active)
+)
 
 
 #################### Set Up (load everything once) ################
@@ -553,7 +582,9 @@ run_once <- function(nobs, npredictors, beta1_active, beta2_active,
   other_time  <- other_time2 - other_time1
 
   list(
-    meta = list(nobs = nobs,
+    meta = list(scenario        = scenario,
+                scenario_params = scenario_params,
+                nobs = nobs,
                 npredictors = npredictors,
                 beta1 = unname(beta1),
                 beta2 = unname(beta2),
@@ -599,7 +630,7 @@ for (npredictors in npredictors_grid) {
     # Resolve neg_beta1 sentinel so every run uses -beta1_active as cause-2 effect.
     beta2_run <- if (beta2_active_raw == "neg_beta1") -beta1_active else beta2_active
 
-    tag <- sprintf("n%d_p%d_run%d", nobs, npredictors, run)
+    tag <- sprintf("p%d_%s_run%d", npredictors, scenario, run)
     message(sprintf("[%s] %s starting...", format(Sys.time(), "%H:%M:%S"), tag))
 
     result <- tryCatch(
@@ -608,7 +639,8 @@ for (npredictors in npredictors_grid) {
                latent_q, cens_rate, u_min, u_max, zero_gap_target),
       error = function(e) {
         message(sprintf("  !! %s FAILED: %s", tag, conditionMessage(e)))
-        list(meta = list(nobs = nobs, npredictors = npredictors, run = run,
+        list(meta = list(scenario = scenario, scenario_params = scenario_params,
+                         nobs = nobs, npredictors = npredictors, run = run,
                          timestamp = Sys.time(), error = conditionMessage(e)))
       }
     )

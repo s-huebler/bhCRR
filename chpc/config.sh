@@ -69,6 +69,19 @@ export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters (
 : "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job
 
 # ---- Simulation defaults (override any of these on the run_sim.sh line) ------
+#
+# SCENARIO names a user-maintained set of data-generating settings. All DGP
+# parameters below (NOBS through U_MAX) are considered part of the scenario
+# definition -- changing any of them requires a new scenario name. n (NOBS) is
+# part of the scenario and therefore drops out of individual file naming.
+#
+# NOT part of the scenario: NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK
+# (these control how you sweep or extend a scenario, not what the scenario is),
+# and all SLURM / account knobs.
+#
+# There is no default -- you must pass scenario=<name> on the run_sim.sh line.
+: "${SCENARIO:=}"
+
 : "${NOBS:=200}"                                   # sample size
 : "${NPREDICTORS:=221}"                            # single value OR comma list, e.g. 25,50,221
 : "${RUN_START:=1}"                                # first run index (inclusive)
@@ -92,8 +105,9 @@ export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters (
 : "${U_MAX:=100}"                                     # upper bound for observation window
 
 # CHPC_ACCOUNT / CHPC_PARTITION / CHPC_CLUSTER are already exported inline above.
-export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV  RENV_CONFIG_PPM_ENABLED\
+export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV RENV_CONFIG_PPM_ENABLED \
        SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
+       SCENARIO \
        NOBS NPREDICTORS RUN_START RUN_END RUNS_PER_TASK ZERO_GAP_TARGET \
        BETA1_ACTIVE BETA2_ACTIVE \
        ACTIVE_BLOCK BLOCK_PROPS BLOCK_RHO LATENT_TYPE LATENT_Q \
