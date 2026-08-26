@@ -1,7 +1,7 @@
 "scenario","Block","BlockRho","Model","fp_rate","n_false_pos","n_null_predictors"
-"scenarioB","indep",0,"LASSO",0.115833333333333,139,1200
-"scenarioB","weak",0.3,"LASSO",0.1675,67,400
-"scenarioB","strong",0.6,"LASSO",0.0575,23,400
-"scenarioB","indep",0,"SSL",0.155833333333333,187,1200
-"scenarioB","weak",0.3,"SSL",0.17,68,400
-"scenarioB","strong",0.6,"SSL",0.105,42,400
+"scenarioB","indep",0,"LASSO",0.109536082474227,255,2328
+"scenarioB","weak",0.3,"LASSO",0.162371134020619,126,776
+"scenarioB","strong",0.6,"LASSO",0.0554123711340206,43,776
+"scenarioB","indep",0,"SSL",0.15807560137457,368,2328
+"scenarioB","weak",0.3,"SSL",0.172680412371134,134,776
+"scenarioB","strong",0.6,"SSL",0.126288659793814,98,776
