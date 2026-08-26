@@ -297,3 +297,14 @@ plot_metrics(betas_p220)
 plot_model_comparison(betas_p221)
 plot_metrics(betas_p221)
 ```
+
+# Comparing scenario A and B
+
+A: beta2 = - beta1
+
+B: beta2 = c(0, 0.3, 0, 0, -0.2)
+
+```{r}
+plot_model_comparison(betas_p25_scenarioA)
+plot_model_comparison(betas_p25_scenarioB)
+```
