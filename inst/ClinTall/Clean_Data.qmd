@@ -1,0 +1,325 @@
+---
+title: "Clean_Data"
+format: html
+editor: visual
+---
+
+# Load
+
+```{r}
+library(tidyverse)
+library(table1)
+library(kableExtra)
+library(pheatmap)
+
+load("~/Documents/bhCRR/inst/ClinTall/MULLI-T-ALL-GM-Teachey_outcome_data_simplified_CNV_SNV.Rdata")
+```
+
+```{r}
+dat <- annot
+dat_gexp <- gexp %>%
+  select(row.names(dat))
+```
+
+# Select columns
+
+```{r}
+dat_simple <- dat %>%
+  select(Age.at.Diagnosis.in.Years,
+         Sex,
+         Race,
+         Ethnicity,
+         Insurance,
+         Tumor.Specimen.Type,
+         CNS.Status,
+         Risk.Group,
+         ETP.STATUS,
+         Day.29.morphologic.Response, Day.29.MRD,
+         Treatment.Arm,
+         OS,
+         OS.status,
+         Cause.of.Death,
+         EFS,
+         EFS.status,
+         Event.Type,
+         DFS,
+         DFS.status)%>%
+  mutate(MRD = case_when(Day.29.MRD < 1 ~ "<1%",
+                                        Day.29.MRD <= 10 ~ "1-10%",
+                                        Day.29.MRD > 10 ~ ">10%"))%>%
+  mutate(Death.Type = case_when(Cause.of.Death %in% 
+                                  c("Due to this disease") ~ "Primary Disease",
+                                Cause.of.Death %in% 
+                                  c("ARDS following Hdat",
+                                    "chronic graft versus host disease.",
+                                    "Mucor in BMT",
+                                    "Multi-organ system failure BMT",
+                                    "Multisystem failure  post BMT.",
+                                    "Pseudomonas and Candida in BMT",
+                                    "pulmonary GVHD.",
+                                    "VOD") ~ "Transplant Complication",
+                                !is.na(Cause.of.Death) ~ "Other"))%>%
+  mutate(Induction.Status = case_when(Day.29.morphologic.Response == "M1" ~ "Success",
+                                      Day.29.morphologic.Response == "M2" ~ "Intermediate",
+                                      Day.29.morphologic.Response == "M3" ~ "Failure"))
+ 
+
+dat_outcomes <- dat_simple %>%select(Day.29.morphologic.Response, Day.29.MRD, Cause.of.Death, OS, OS.status, EFS, EFS.status, Event.Type, DFS, DFS.status)
+```
+
+## Label
+
+```{r}
+# Convert OS.status to a categorical factor so table1 displays counts/percentages
+dat_simple$OS.status <- as.factor(dat_simple$OS.status)
+
+# Optional: If you want to explicitly name the 0/1 levels, you can use this instead:
+# dat_simple$OS.status <- factor(dat_simple$OS.status, levels = c(0, 1), labels = c("Alive", "Dead"))
+
+label(dat_simple$Age.at.Diagnosis.in.Years)   <- "Age at Diagnosis (Years)"
+label(dat_simple$Sex)                         <- "Sex"
+label(dat_simple$Race)                        <- "Race"
+label(dat_simple$Ethnicity)                   <- "Ethnicity"
+label(dat_simple$Insurance)                   <- "Insurance Status"
+label(dat_simple$Tumor.Specimen.Type)         <- "Tumor Specimen Type"
+label(dat_simple$CNS.Status)                  <- "CNS Status"
+label(dat_simple$Risk.Group)                  <- "Risk Group"
+label(dat_simple$ETP.STATUS)                  <- "ETP Status"
+label(dat_simple$Treatment.Arm)               <- "Treatment Arm"
+
+# Variables tracking morphological response and MRD
+label(dat_simple$Day.29.morphologic.Response) <- "Day 29 Morphologic Response"
+label(dat_simple$Induction.Status)            <- "Induction Status (Categorical)"
+label(dat_simple$Day.29.MRD)                  <- "Day 29 MRD (%)"
+label(dat_simple$MRD)                         <- "Day 29 MRD (Categorical)"
+
+# Survival and Outcome Variables
+label(dat_simple$OS)                          <- "Time Until Death"
+label(dat_simple$OS.status)                   <- "Died"
+label(dat_simple$Cause.of.Death)              <- "Cause of Death (Raw)"
+label(dat_simple$Death.Type)                  <- "Cause of Death"
+label(dat_simple$EFS)                         <- "Event-Free Survival (Time)"
+label(dat_simple$EFS.status)                  <- "Event-Free Survival Status"
+label(dat_simple$Event.Type)                  <- "Event Type"
+label(dat_simple$DFS)                         <- "Disease-Free Survival (Time)"
+label(dat_simple$DFS.status)                  <- "Disease-Free Survival Status"
+```
+
+# Table 1
+
+```{r}
+table1(~ Age.at.Diagnosis.in.Years + Sex + Race + Ethnicity + Insurance + 
+         Tumor.Specimen.Type + CNS.Status + Risk.Group + ETP.STATUS + 
+         Treatment.Arm +
+         Induction.Status + Day.29.morphologic.Response + 
+         MRD  + 
+         OS.status + OS + Death.Type 
+        , 
+       data = dat_simple)
+
+```
+
+# Gene Expression
+
+```{r}
+# Calculate summary statistics per sample
+qc_summary <- data.frame(
+  Sample = colnames(dat_gexp),
+  Total_Expression = colSums(dat_gexp),
+  Detected_Genes = colSums(dat_gexp > 0),
+  Mean_Expression = colMeans(dat_gexp)
+)
+
+# Output a clean HTML/Markdown table using knitr
+kable(qc_summary, format = "markdown", digits = 2, 
+      caption = "Sample Quality Control Metrics")
+```
+
+## Boxplot
+
+```{r}
+# df_long <- as.data.frame(dat_gexp) %>%
+#   rownames_to_column("Gene") %>%
+#   pivot_longer(cols = -Gene, names_to = "Sample", values_to = "Log2_Expression")
+# 
+# # Generate the boxplot
+# ggplot(df_long, aes(x = Sample, y = Log2_Expression, fill = Sample)) +
+#   geom_boxplot(alpha = 0.7, outlier.size = 0.5, outlier.alpha = 0.3) +
+#   theme_minimal() +
+#   labs(
+#     title = "Gene Expression Distribution per Sample",
+#     x = "Sample",
+#     y = "Normalized Expression"
+#   ) +
+#   theme(legend.position = "none") # Hide legend since x-axis has the labels
+```
+
+## PCA
+
+```{r}
+# pca_res <- prcomp(t(dat_gexp), center = TRUE, scale. = TRUE)
+# 
+# # Extract PC1 and PC2 and format for ggplot
+# pca_df <- as.data.frame(pca_res$x) %>%
+#   rownames_to_column("Sample") %>%
+#   left_join(dat %>%
+#               rownames_to_column(var = "Sample")%>%
+#               select(Sample, Risk.Group, OS.status, Event.Type),
+#             by = "Sample")
+# 
+# # Calculate variance explained by each PC
+# variance_explained <- round(100 * pca_res$sdev^2 / sum(pca_res$sdev^2), 1)
+# 
+# # Generate the PCA plot
+# ggplot(pca_df, aes(x = PC1, y = PC2, color = Event.Type, label = NULL)) +
+#   geom_point(size = 4) +
+#   #geom_text(vjust = -1.5, show.legend = FALSE) +
+#   theme_minimal() +
+#   labs(
+#     title = "PCA of Sample Expression Profiles",
+#     x = paste0("PC1 (", variance_explained[1], "% variance)"),
+#     y = paste0("PC2 (", variance_explained[2], "% variance)")
+#   )
+# 
+# ggplot(pca_df%>%filter(Event.Type != "None"), aes(x = PC1, y = PC2, color = Event.Type, label = NULL)) +
+#   geom_point(size = 4) +
+#   #geom_text(vjust = -1.5, show.legend = FALSE) +
+#   theme_minimal() +
+#   labs(
+#     title = "PCA of Sample Expression Profiles",
+#     x = paste0("PC1 (", variance_explained[1], "% variance)"),
+#     y = paste0("PC2 (", variance_explained[2], "% variance)")
+#   )
+```
+
+## Heatmap
+
+```{r}
+
+# gene_vars <- apply(dat_gexp, 1, var)
+# 
+# # Sort genes by variance and grab the top 50
+# top_50_genes <- names(sort(gene_vars, decreasing = TRUE))[1:50]
+# subset_expr <- dat_gexp[top_50_genes, ]
+# 
+# # Create a heatmap
+# # scale = "row" converts values to Z-scores, highlighting relative changes per gene
+# pheatmap(
+#   subset_expr,
+#   scale = "row",
+#   show_rownames = TRUE,  # Set to TRUE if you want to read gene names
+#   main = "Top 50 Most Variable Genes",
+#   angle_col = 45          # Angle sample names for readability
+# )
+```
+
+# Organizing CompRisk
+
+```{r}
+dat_cr <- dat %>%
+  rownames_to_column("sample_id") %>%
+  filter(!is.na(EFS), !is.na(EFS.status))
+
+# Paper reports n = 1309; 26 additional exclusions are not identifiable from annot alone
+stopifnot(nrow(dat_cr) == 1335)
+
+cause_levels <- c("None", "Relapse", "Toxic Death", "Induction failure",
+                  "Second Malignant Neoplasm", "Death NOS")
+
+dat_cr <- dat_cr %>%
+  mutate(
+    event_type = factor(
+      if_else(Event.Type == "Induction death", "Death NOS", Event.Type),
+      levels = cause_levels
+    ),
+    tte = EFS
+  )
+
+cause_map <- c(
+  status_relapse           = "Relapse",
+  status_toxic_death       = "Toxic Death",
+  status_induction_failure = "Induction failure",
+  status_smn               = "Second Malignant Neoplasm",
+  status_death_nos         = "Death NOS"
+)
+
+for (col in names(cause_map)) {
+  cause <- cause_map[[col]]
+  dat_cr[[col]] <- as.integer(case_when(
+    dat_cr$event_type == cause  ~ 1L,
+    dat_cr$event_type == "None" ~ 0L,
+    TRUE                        ~ 2L
+  ))
+}
+
+dat_cr <- dat_cr %>%
+  select(sample_id, tte, event_type, all_of(names(cause_map)))
+```
+
+```{r}
+status_cols <- names(cause_map)
+
+stopifnot(all(sapply(status_cols, \(col) sum(dat_cr[[col]] == 0) == 1115)))
+
+expected_ones <- c(status_relapse = 123, status_toxic_death = 26,
+                   status_induction_failure = 38, status_smn = 22, status_death_nos = 11)
+stopifnot(all(mapply(\(col, n) sum(dat_cr[[col]] == 1) == n, status_cols, expected_ones)))
+
+n_ones <- rowSums(dat_cr[status_cols] == 1L)
+stopifnot(all(n_ones <= 1))
+stopifnot(all((n_ones == 0) == apply(dat_cr[status_cols], 1, \(r) all(r == 0))))
+stopifnot(all(dat_cr$tte > 0))
+stopifnot(!anyNA(dat_cr))
+
+tibble(
+  cause = names(expected_ones),
+  n     = as.integer(expected_ones),
+  pct   = round(100 * n / nrow(dat_cr), 1)
+) %>% kable(caption = "Competing-risk cause counts (n = 1335)")
+```
+
+# Organizing Design Matrix
+
+```{r}
+dat_design <- dat_simple %>%
+  select(Age = Age.at.Diagnosis.in.Years,
+         Sex,
+         Race,
+         Ethnicity,
+         Insurance, 
+         Tumor.Specimen.Type,
+         CNS.Status,
+         Risk.Group,
+         Treatment.Arm)%>%
+  rownames_to_column(var = "id")%>%
+  left_join(t(dat_gexp)%>%
+              as.data.frame()%>%
+              rownames_to_column(var = "id"),
+            by = "id")%>%
+  filter(id %in% dat_cr$sample_id)%>%
+  column_to_rownames(var = "id")
+  
+
+```
+
+```{r}
+dat_design <- dat_design %>%
+  filter(!is.na(Insurance) & !is.na(Treatment.Arm))
+
+dat_cr <- dat_cr %>%
+  filter(sample_id %in% rownames(dat_design))
+```
+
+# Export
+
+```{r}
+saveRDS(dat_design, 
+        file = "/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design.rds")
+saveRDS(dat_cr,
+        file = "/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_cr.rds")
+```
+
+```{r}
+dat_design <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design.rds")
+dat_cr <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_cr.rds")
+```

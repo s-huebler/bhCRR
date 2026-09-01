@@ -8,6 +8,6 @@ inst/doc
 scratch.r
 Sim/Local_Testing/**/*.Rdata
 chpc/logs/**
-inst/ClinTall/Clean_Data.qmd
 inst/ClinTall/*.rds
 inst/ClinTall/*.RData
+inst/ClinTall/timing/
