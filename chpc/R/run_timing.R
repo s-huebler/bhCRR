@@ -13,7 +13,13 @@
 #   INITIAL_SPARSITY     default 0.05
 #   MAXIT                default 50
 #   EPSILON              default 1e-04
-#   INIT_MODE            "cv" (init=NULL) or "zero" (init=rep(0,p)); default "cv"
+#   INIT_MODE            how fit_ssl_psdh is initialized; default "bic"
+#                          "bic"  fit a LASSO path with fastCrrp over
+#                                 init_lam_path and pass the coefficients from
+#                                 the lowest-BIC lambda as init
+#                          "cv"   init=NULL, so fit_ssl_psdh runs its own
+#                                 5-fold cv_fastCrrp_cpp search internally
+#                          "zero" init=rep(0,p), skipping any initial fit
 #   INNER_MAXIT_START    default 1000
 
 
@@ -39,11 +45,11 @@ theta_b         <- as.numeric(get_env("THETA_B",          "1"))
 initial_sparsity <- as.numeric(get_env("INITIAL_SPARSITY", "0.05"))
 maxit           <- as.integer(get_env("MAXIT",            "50"))
 epsilon         <- as.numeric(get_env("EPSILON",          "1e-04"))
-init_mode       <- get_env("INIT_MODE",                   "cv")
+init_mode       <- get_env("INIT_MODE",                   "bic")
 inner_maxit_start <- as.integer(get_env("INNER_MAXIT_START", "1000"))
 
-if (!init_mode %in% c("cv", "zero"))
-  stop("INIT_MODE must be 'cv' or 'zero', got: '", init_mode, "'")
+if (!init_mode %in% c("bic", "cv", "zero"))
+  stop("INIT_MODE must be 'bic', 'cv' or 'zero', got: '", init_mode, "'")
 
 dir.create(timing_out_dir, showWarnings = FALSE, recursive = TRUE)
 out_file <- file.path(timing_out_dir, paste0("timing_", timing_tag, ".rds"))
@@ -169,27 +175,120 @@ if (sum(y[, "status_relapse"] == 1L) == 0L)
 
 init_lam_path <- 10^seq(log10(0.1), log10(0.001), length.out = 10L)
 
-init_arg <- if (init_mode == "zero") rep(0, p) else NULL
+init_arg      <- NULL
+init_cv_wall  <- NULL     # set when init_mode == "cv"
+init_bic_wall <- NULL     # set when init_mode == "bic"
+init_bic_sel  <- NULL     # provenance for the BIC-selected initialization
 
-# When init_mode="cv", time a standalone call to cv_fastCrrp_cpp() with the
-# same arguments fit_ssl_psdh uses internally. This gives an estimate of the
-# initialization cost that is separate from the EM loop.
-# NOTE: this is a SEPARATE call; fit_ssl_psdh will run cv_fastCrrp_cpp again
-# internally. The standalone time approximates the init cost but does not
-# subtract it from t_fit_wall below.
-init_cv_wall <- NULL
-if (init_mode == "cv") {
+if (init_mode == "zero") {
+
+  init_arg <- rep(0, p)
+  message("\nInitialization: zero vector (no initial model is fit).")
+
+} else if (init_mode == "cv") {
+
+  # Time a standalone call to cv_fastCrrp_cpp() with the same arguments
+  # fit_ssl_psdh uses internally, to estimate initialization cost separately
+  # from the EM loop.
+  # NOTE: this is a SEPARATE call. With init = NULL, fit_ssl_psdh runs
+  # cv_fastCrrp_cpp AGAIN internally, so this time approximates the init cost
+  # but is NOT subtracted from t_fit_wall below.
   message("\nTiming standalone cv_fastCrrp_cpp() (init cost estimate)...")
   t_init_start <- Sys.time()
   init_est <- cv_fastCrrp_cpp(x, y[, 1L], y[, 2L], k = 5L,
-                               penalty = "LASSO",
-                               lambda_path = init_lam_path,
-                               tuning = "wolbers",
-                               eval_quantile = 0.5)
+                              penalty = "LASSO",
+                              lambda_path = init_lam_path,
+                              tuning = "wolbers",
+                              eval_quantile = 0.5)
   init_cv_wall <- as.numeric(Sys.time() - t_init_start, units = "secs")
   message(sprintf("  estimated init cost: %.1f s  (separate call -- fit will repeat this internally)",
                   init_cv_wall))
   rm(init_est)
+  invisible(gc())
+  init_arg <- NULL          # fit_ssl_psdh performs its own CV search
+
+} else if (init_mode == "bic") {
+
+  # Fit ONE LASSO path with fastCrrp over init_lam_path and take the
+  # coefficients at the lowest-BIC lambda as the starting values.
+  #
+  # Why this exists: the "cv" path splits into 5 folds, and every n200-* config
+  # here carries only 19 cause-1 events, leaving under 4 events per held-out
+  # fold. BIC selection needs no fold splitting, so it does not degrade with
+  # few events, and it fits the initial model exactly once instead of once per
+  # fold plus once more inside fit_ssl_psdh.
+  #
+  # x is already column-standardized by prep_timing_data.R, so these
+  # coefficients are on the scale fit_ssl_psdh operates on -- no
+  # back-transformation is needed.
+  #
+  # The matrix form of the formula (~ x) is deliberate: a formula with p named
+  # terms would be unusable at p = 24618.
+  message("\nFitting LASSO initialization path, selecting by BIC...")
+  t_init_start <- Sys.time()
+
+  init_fit <- fastcmprsk::fastCrrp(
+    fastcmprsk::Crisk(y[, 1L], y[, 2L], cencode = 0, failcode = 1) ~ x,
+    penalty = "LASSO",
+    lambda  = init_lam_path
+  )
+
+  beta_path <- as.matrix(init_fit$coef)
+  if (nrow(beta_path) != p && ncol(beta_path) == p) beta_path <- t(beta_path)
+  if (nrow(beta_path) != p)
+    stop("fastCrrp() returned a coefficient matrix of unexpected dimension: ",
+         paste(dim(beta_path), collapse = " x "), " (expected ", p, " rows).")
+
+  # BIC over the path; df = number of nonzero coefficients at each lambda.
+  df_path <- colSums(beta_path != 0)
+  loglik  <- as.numeric(init_fit$logLik)
+  if (length(loglik) != ncol(beta_path))
+    stop("fastCrrp() logLik has length ", length(loglik),
+         " but the coefficient path has ", ncol(beta_path), " columns.")
+  bic_path <- -2 * loglik + log(n) * df_path
+
+  # Consider only finite BIC values, and where fastCrrp reports per-lambda
+  # convergence, only converged solutions.
+  valid <- is.finite(bic_path)
+  conv  <- init_fit$converged
+  if (!is.null(conv) && length(conv) == length(bic_path))
+    valid <- valid & as.logical(conv)
+  if (!any(valid))
+    stop("No finite, converged LASSO solution on the initialization path; ",
+         "cannot select an initial estimate by BIC.")
+
+  bic_for_selection <- bic_path
+  bic_for_selection[!valid] <- Inf
+  best_idx <- which.min(bic_for_selection)
+
+  init_arg <- as.numeric(beta_path[, best_idx])
+  if (length(init_arg) != p || any(!is.finite(init_arg)))
+    stop("BIC-selected initial estimate is not a finite length-", p, " vector.")
+
+  # fastCrrp may reorder the supplied path, so record the lambda it actually used.
+  lam_used <- init_fit$lambda
+  if (is.null(lam_used)) lam_used <- init_fit$lambda.path
+
+  init_bic_wall <- as.numeric(Sys.time() - t_init_start, units = "secs")
+
+  init_bic_sel <- list(
+    index       = as.integer(best_idx),
+    lambda      = if (is.null(lam_used)) NA_real_ else as.numeric(lam_used[best_idx]),
+    bic         = as.numeric(bic_path[best_idx]),
+    df          = as.integer(df_path[best_idx]),
+    n_nonzero   = as.integer(sum(init_arg != 0)),
+    lambda_path = if (is.null(lam_used)) NA_real_ else as.numeric(lam_used),
+    bic_path    = as.numeric(bic_path),
+    df_path     = as.integer(df_path),
+    converged   = if (is.null(conv)) NA else as.logical(conv[best_idx])
+  )
+
+  message(sprintf(
+    "  BIC-selected: index=%d  lambda=%.5g  bic=%.2f  df=%d  nnz=%d  (%.1f s)",
+    best_idx, init_bic_sel$lambda, init_bic_sel$bic,
+    init_bic_sel$df, init_bic_sel$n_nonzero, init_bic_wall))
+
+  rm(init_fit, beta_path)
   invisible(gc())
 }
 
@@ -253,7 +352,8 @@ memory <- list(
 timings <- list(
   src_compile_wall_sec  = t_src_wall,
   data_load_wall_sec    = t_data_wall,
-  init_cv_wall_sec      = init_cv_wall,   # NULL if init_mode != "cv"
+  init_cv_wall_sec      = init_cv_wall,   # NULL unless init_mode == "cv"
+  init_bic_wall_sec     = init_bic_wall,  # NULL unless init_mode == "bic"
   fit_wall_sec          = t_fit_wall,
   fit_proc_user_sec     = as.numeric(pt_fit["user.self"]),
   fit_proc_sys_sec      = as.numeric(pt_fit["sys.self"]),
@@ -277,6 +377,12 @@ if (!is.null(init_cv_wall))
   message(sprintf("TIMING | tag=%-12s | init_cv_est=%.1fs  (separate call; not subtracted from fit time)",
                   timing_tag, init_cv_wall))
 
+if (!is.null(init_bic_wall))
+  message(sprintf(
+    "TIMING | tag=%-12s | init_bic=%.1fs lambda=%.5g df=%d nnz=%d  (fit BEFORE the model; not included in fit time)",
+    timing_tag, init_bic_wall, init_bic_sel$lambda,
+    init_bic_sel$df, init_bic_sel$n_nonzero))
+
 message(sprintf("TIMING | tag=%-12s | peak_mem_vcells=%.1f MB (%.2f GB)",
                 timing_tag, memory$vcells_max_used_mb, memory$vcells_max_used_gb))
 
@@ -293,6 +399,7 @@ result <- list(
   maxit              = maxit,
   epsilon            = epsilon,
   init_mode          = init_mode,
+  init_bic_selection = init_bic_sel,   # NULL unless init_mode == "bic"
   timings            = timings,
   memory             = memory,
   converged          = converged,
