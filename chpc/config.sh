@@ -39,7 +39,7 @@
 # ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
 # Set these to your CHPC allocation. Override at submit time with env vars, e.g.
 #   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./chpc/run_sim.sh nobs=140
-export CHPC_ACCOUNT="${CHPC_ACCOUNT:-qiaox}"          # sbatch -A / --account
+export CHPC_ACCOUNT="${CHPC_ACCOUNT:-biostat-division-np}"          # sbatch -A / --account
 # Default to a SHARED partition, not a whole-node one. These jobs (each array
 # task = a few cores + tens of GB) do not need a full node; a whole-node
 # partition makes the job wait for an entire free node, the main cause of long
@@ -52,7 +52,7 @@ export CHPC_ACCOUNT="${CHPC_ACCOUNT:-qiaox}"          # sbatch -A / --account
 #   back to kingspeak: CHPC_CLUSTER=""        CHPC_PARTITION=kingspeak-shared
 #   free short (<=8h): CHPC_CLUSTER=notchpeak CHPC_ACCOUNT=notchpeak-shared-short \
 #                      CHPC_PARTITION=notchpeak-shared-short
-export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak}"  # sbatch -p / --partition
+export CHPC_PARTITION="${CHPC_PARTITION:-biostat-division-np}"  # sbatch -p / --partition
 # Each CHPC cluster runs its OWN Slurm controller, so a partition is only valid
 # on its own cluster -- submitting a lonepeak partition from a kingspeak context
 # fails with "invalid partition specified". Empty = your login cluster's
@@ -60,7 +60,7 @@ export CHPC_PARTITION="${CHPC_PARTITION:-lonepeak}"  # sbatch -p / --partition
 # cluster. run_sim.sh turns this into `sbatch --clusters=$CHPC_CLUSTER`.
 # Note the `-` (not `:-`): an explicitly-set empty CHPC_CLUSTER="" is preserved
 # (routes to your login cluster), while leaving it unset defaults to lonepeak.
-export CHPC_CLUSTER="${CHPC_CLUSTER-lonepeak}"        # sbatch -M / --clusters ("" = login cluster)
+export CHPC_CLUSTER="${CHPC_CLUSTER-notchpeak}"        # sbatch -M / --clusters ("" = login cluster)
 
 # ---- SLURM resource requests (per job; tune freely) -------------------------
 : "${SB_TIME:=00:15:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)

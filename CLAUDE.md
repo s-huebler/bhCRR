@@ -1,5 +1,5 @@
 # Sophie Huebler — Dissertation Workspace
-## Biostatistics PhD | GVHD Microbiome + Bayesian Hierarchical Methods
+## Biostatistics PhD | Bayesian Hierarchical Methods | GVHD Microbiome + High-Dimensional Survival
 
 ---
 
@@ -18,6 +18,9 @@ downstream analysis. GitHub: https://github.com/s-huebler/ODSiData
 ### Project 2 — bhCRR (`../bhCRR`)
 Bayesian Hierarchical Competing Risks Regression — R package implementing a semi-
 supervised spike-and-slab lasso method for high-dimensional competing risks data.
+Framed as a general high-dimensional survival method; the application is to gene
+expression data, NOT microbiome. Predictor correlation structure is a central
+concern; compositionality is out of scope.
 GitHub: https://github.com/s-huebler/bhCRR
 
 ### Project 3 (planned)

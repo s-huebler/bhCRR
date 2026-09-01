@@ -308,3 +308,18 @@ B: beta2 = c(0, 0.3, 0, 0, -0.2)
 plot_model_comparison(betas_p25_scenarioA)
 plot_model_comparison(betas_p25_scenarioB)
 ```
+
+```{r}
+load("~/Documents/bhCRR/Sim/chpc_results/scenarioA/betas_p300_scenarioA.Rdata")
+betas_p300_scenarioA <- betas_p300
+rm(betas_p300)
+
+load("~/Documents/bhCRR/Sim/chpc_results/scenarioB/betas_p300_scenarioB.Rdata")
+betas_p300_scenarioB <- betas_p300
+rm(betas_p300)
+```
+
+```{r}
+plot_model_comparison(betas_p300_scenarioA)
+plot_model_comparison(betas_p300_scenarioB)
+```
