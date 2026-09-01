@@ -10,21 +10,18 @@
 # when submitting this script directly as an array job), it is derived from
 # SLURM_ARRAY_TASK_ID using the canonical index-to-tag mapping below:
 #
-#   0 -> n200-p300      4 -> n200-p10000
-#   1 -> n1309-p300     5 -> n200-pall
-#   2 -> n200-p1000     6 -> n1309-pall
-#   3 -> n200-p5000
+#   0 -> n1309-p300     3 -> n1309-p10000
+#   1 -> n1309-p1000    4 -> n1309-pall
+#   2 -> n1309-p5000
 # =============================================================================
 set -euo pipefail
 
 # ---- Resolve the config tag -------------------------------------------------
 _TIMING_TAGS=(
-    "n200-p300"
     "n1309-p300"
-    "n200-p1000"
-    "n200-p5000"
-    "n200-p10000"
-    "n200-pall"
+    "n1309-p1000"
+    "n1309-p5000"
+    "n1309-p10000"
     "n1309-pall"
 )
 

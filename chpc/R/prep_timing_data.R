@@ -1,7 +1,13 @@
 #################### prep_timing_data.R ####################
-# Materialize nested patient/gene subsets of the ClinTALL data for
-# timing / feasibility experiments. Produces seven .rds files plus a
-# manifest CSV in TIMING_DATA_DIR. No model fitting here.
+# Materialize nested gene subsets of the ClinTALL data for timing /
+# feasibility experiments. Writes one .rds per config plus a manifest CSV
+# into TIMING_DATA_DIR. No model fitting here.
+#
+# LADDER: n is held at the full cohort (1309) and only p is swept.
+# An earlier ladder also varied n at 200, but every n=200 config converged to
+# the null model regardless of p -- 19 cause-1 events carried no signal for the
+# BIC-selected LASSO initialization, so df was 0 at every lambda. Sweeping n
+# below the full cohort produced no usable timing information and was dropped.
 #
 # Environment variables (all have defaults):
 #   CLINTALL_DIR     directory containing dat_design.rds / dat_cr.rds
@@ -148,6 +154,32 @@ if (sum(dat_cr$status_relapse == 1L) == 0L)
   stop("No cause-1 (relapse) events found -- cannot proceed.")
 
 
+#################### Config spec ####################
+
+# p = NA means "all remaining genes"; it is resolved to P_MAX after the
+# variance filtering below, because P_MAX can still change at that point.
+config_spec <- list(
+  list(tag = "n1309-p300",   n = 1309L, p = 300L),
+  list(tag = "n1309-p1000",  n = 1309L, p = 1000L),
+  list(tag = "n1309-p5000",  n = 1309L, p = 5000L),
+  list(tag = "n1309-p10000", n = 1309L, p = 10000L),
+  list(tag = "n1309-pall",   n = 1309L, p = NA_integer_)
+)
+
+# Smoke-test config: tiny p at the FULL cohort, emitted only when TIMING_SMOKE=1.
+# It deliberately uses all patients so that enabling smoke mode cannot change the
+# patient-subset variance filter below, and therefore cannot alter the real
+# configs' P_MAX.
+if (Sys.getenv("TIMING_SMOKE", unset = "0") == "1") {
+  config_spec <- c(config_spec, list(list(tag = "smoke", n = 1309L, p = 50L)))
+  message("TIMING_SMOKE=1: smoke config (n=1309, p=50) added.")
+}
+
+config_ns <- vapply(config_spec, `[[`, integer(1), "n")
+stopifnot(all(config_ns >= 1L), all(config_ns <= N_patients))
+min_n <- min(config_ns)
+
+
 #################### Draw nested orderings ####################
 
 message("\nDrawing nested orderings (seed = ", seed, ")...")
@@ -155,10 +187,13 @@ set.seed(seed)
 
 # Stratified patient ordering.
 # Within each stratum of status_relapse (0/1/2), randomly permute the patients,
-# then assign each patient a rank in [0, 1) equal to their within-stratum position
-# divided by their stratum size. Sorting all 1309 patients by this rank interleaves
-# the three strata proportionally, so any prefix of the combined ordering preserves
-# the full-cohort event mix approximately.
+# then give each a rank in [0, 1) equal to its within-stratum position divided by
+# the stratum size. Sorting by that rank interleaves the strata proportionally, so
+# any prefix preserves the full-cohort event mix approximately.
+#
+# With the current ladder every config takes all N_patients, so this is just a
+# permutation and the stratification does nothing. It is retained so a smaller-n
+# config can be added later without redesigning this step.
 strata_labels <- dat_cr$status_relapse
 strata_rank   <- numeric(N_patients)
 for (s in c(0L, 1L, 2L)) {
@@ -168,60 +203,62 @@ for (s in c(0L, 1L, 2L)) {
 }
 patient_order <- order(strata_rank)        # integer indices into dat_cr rows
 
-prefix200_mix <- table(factor(strata_labels[patient_order[seq_len(200L)]],
-                               levels = c(0L, 1L, 2L)))
-message("200-patient prefix event mix (target approx 167 / 18 / 15):")
-message("  ", paste(names(prefix200_mix), as.integer(prefix200_mix),
-                    sep = "=", collapse = "  "))
+if (min_n < N_patients) {
+  prefix_mix <- table(factor(strata_labels[patient_order[seq_len(min_n)]],
+                             levels = c(0L, 1L, 2L)))
+  message(min_n, "-patient prefix event mix:")
+  message("  ", paste(names(prefix_mix), as.integer(prefix_mix),
+                      sep = "=", collapse = "  "))
+}
 
-# Gene ordering: single random permutation of all P_MAX columns.
-# Every smaller-p subset uses the first p entries of this permutation, so gene
-# sets are strictly nested across configs.
+# Gene ordering: single random permutation of all P_MAX columns. Every smaller-p
+# subset uses the first p entries, so gene sets are strictly nested across configs.
 gene_order <- sample(P_MAX)               # integer indices into columns of X_all
 
-# Second variance filter: genes that vary across 1309 patients can still be
-# constant across a specific 200-patient draw, which would cause
-# standardize_cols() to error at materialize time. Filter on the 200-patient
-# prefix now so the per-subset check never fires.
-min_n_subset <- 200L
-var_in_min   <- apply(X_all[patient_order[seq_len(min_n_subset)], ], 2L, var)
-bad_in_min   <- !is.finite(var_in_min) | var_in_min <= 0
-n_drop2      <- sum(bad_in_min)
-if (n_drop2 > 0) {
-  keep_mask  <- !bad_in_min
-  # Remap gene_order: remove entries pointing to dropped columns, then reindex.
-  old_to_new <- cumsum(keep_mask)         # old column index -> new column index
-  gene_order <- old_to_new[gene_order[keep_mask[gene_order]]]
-  X_all      <- X_all[, keep_mask, drop = FALSE]
-  P_MAX      <- ncol(X_all)
-  bad_names <- names(var_in_min)[bad_in_min]
-  message("Additional ", n_drop2, " gene(s) with zero variance in the ",
-          min_n_subset, "-patient subset dropped: ",
-          paste(bad_names[seq_len(min(5L, n_drop2))], collapse = ", "),
-          if (n_drop2 > 5L) paste0(" ... and ", n_drop2 - 5L, " more") else "")
-  message("  P_MAX updated to ", P_MAX, ".")
+# Second variance filter. A gene that varies across all N_patients can still be
+# constant within a smaller patient subset, which would make standardize_cols()
+# error at materialize time. This only matters when some config uses fewer than
+# all patients; with the current ladder it is skipped and P_MAX is unchanged.
+if (min_n < N_patients) {
+  var_in_min <- apply(X_all[patient_order[seq_len(min_n)], ], 2L, var)
+  bad_in_min <- !is.finite(var_in_min) | var_in_min <= 0
+  n_drop2    <- sum(bad_in_min)
+  if (n_drop2 > 0) {
+    keep_mask  <- !bad_in_min
+    # Remap gene_order: drop entries pointing at removed columns, then reindex.
+    old_to_new <- cumsum(keep_mask)         # old column index -> new column index
+    gene_order <- old_to_new[gene_order[keep_mask[gene_order]]]
+    X_all      <- X_all[, keep_mask, drop = FALSE]
+    P_MAX      <- ncol(X_all)
+    bad_names  <- names(var_in_min)[bad_in_min]
+    message("Additional ", n_drop2, " gene(s) with zero variance in the ",
+            min_n, "-patient subset dropped: ",
+            paste(bad_names[seq_len(min(5L, n_drop2))], collapse = ", "),
+            if (n_drop2 > 5L) paste0(" ... and ", n_drop2 - 5L, " more") else "")
+    message("  P_MAX updated to ", P_MAX, ".")
+  }
+} else {
+  message("All configs use the full cohort -- patient-subset variance filter skipped.")
 }
 
 
-#################### Configs ####################
+#################### Resolve configs ####################
 
-configs <- list(
-  list(tag = "n200-p300",   n = 200L,  p = 300L),
-  list(tag = "n1309-p300",  n = 1309L, p = 300L),
-  list(tag = "n200-p1000",  n = 200L,  p = 1000L),
-  list(tag = "n200-p5000",  n = 200L,  p = 5000L),
-  list(tag = "n200-p10000", n = 200L,  p = 10000L),
-  list(tag = "n200-pall",   n = 200L,  p = P_MAX),
-  list(tag = "n1309-pall",  n = 1309L, p = P_MAX)
-)
+configs <- lapply(config_spec, function(cfg) {
+  if (is.na(cfg$p)) cfg$p <- P_MAX
+  cfg
+})
 
-# Smoke-test config: n=100, p=50. Emitted only when TIMING_SMOKE=1.
-# Never part of the real timing ladder -- nested by construction (100 < 200,
-# 50 < 300) but excluded from the nesting assertions below.
-if (Sys.getenv("TIMING_SMOKE", unset = "0") == "1") {
-  configs <- c(configs, list(list(tag = "smoke", n = 100L, p = 50L)))
-  message("TIMING_SMOKE=1: smoke config (n=100, p=50) added.")
-}
+bad_p <- vapply(configs, function(cfg) cfg$p > P_MAX, logical(1))
+if (any(bad_p))
+  stop("Config(s) request more predictors than exist (P_MAX = ", P_MAX, "): ",
+       paste(vapply(configs[bad_p], `[[`, character(1), "tag"), collapse = ", "))
+
+message("\nLadder: ",
+        paste(vapply(configs,
+                     function(cfg) sprintf("%s (n=%d, p=%d)", cfg$tag, cfg$n, cfg$p),
+                     character(1)),
+              collapse = "; "))
 
 
 #################### Standardize helper ####################
@@ -306,40 +343,42 @@ for (i in seq_along(configs)) {
 
 message("\nChecking nesting...")
 
-# n200 patient set is a strict subset of the n1309 patient set
-ids_n200  <- configs_materialized[["n200-p300"]]$meta$patient_ids
-ids_n1309 <- configs_materialized[["n1309-p300"]]$meta$patient_ids
-stopifnot(
-  length(ids_n200)  == 200L,
-  length(ids_n1309) == 1309L,
-  all(ids_n200 %in% ids_n1309)
-)
+# Derived from `configs` rather than hardcoded tags, so changing the ladder does
+# not silently bypass these checks. The smoke config is excluded.
+all_tags  <- vapply(configs, `[[`, character(1), "tag")
+real_cfgs <- configs[all_tags != "smoke"]
 
-# Gene sets are strictly nested: p300 < p1000 < p5000 < p10000 < pall
-genes_300   <- configs_materialized[["n200-p300"]]$meta$gene_names
-genes_1000  <- configs_materialized[["n200-p1000"]]$meta$gene_names
-genes_5000  <- configs_materialized[["n200-p5000"]]$meta$gene_names
-genes_10000 <- configs_materialized[["n200-p10000"]]$meta$gene_names
-genes_pall  <- configs_materialized[["n200-pall"]]$meta$gene_names
-stopifnot(
-  length(genes_300)   == 300L,
-  length(genes_1000)  == 1000L,
-  length(genes_5000)  == 5000L,
-  length(genes_10000) == 10000L,
-  length(genes_pall)  == P_MAX,
-  all(genes_300   %in% genes_1000),
-  all(genes_1000  %in% genes_5000),
-  all(genes_5000  %in% genes_10000),
-  all(genes_10000 %in% genes_pall)
-)
-
-# x and y have matching rownames / order in every config
-for (cfg in configs) {
-  obj <- configs_materialized[[cfg$tag]]
-  stopifnot(identical(rownames(obj$x), rownames(obj$y)))
+# Patient sets nested by increasing n
+ord_n <- order(vapply(real_cfgs, `[[`, integer(1), "n"))
+for (k in seq_len(length(ord_n) - 1L)) {
+  a <- real_cfgs[[ord_n[k]]]$tag
+  b <- real_cfgs[[ord_n[k + 1L]]]$tag
+  if (!all(configs_materialized[[a]]$meta$patient_ids %in%
+           configs_materialized[[b]]$meta$patient_ids))
+    stop("Patient sets are not nested: ", a, " is not a subset of ", b, ".")
 }
 
-message("  All nesting assertions passed.")
+# Gene sets nested by increasing p
+ord_p <- order(vapply(real_cfgs, `[[`, integer(1), "p"))
+for (k in seq_len(length(ord_p) - 1L)) {
+  a <- real_cfgs[[ord_p[k]]]$tag
+  b <- real_cfgs[[ord_p[k + 1L]]]$tag
+  if (!all(configs_materialized[[a]]$meta$gene_names %in%
+           configs_materialized[[b]]$meta$gene_names))
+    stop("Gene sets are not nested: ", a, " is not a subset of ", b, ".")
+}
+
+# Every config has the dimensions it claims, and x/y rows align
+for (cfg in configs) {
+  obj <- configs_materialized[[cfg$tag]]
+  stopifnot(
+    nrow(obj$x) == cfg$n,
+    ncol(obj$x) == cfg$p,
+    identical(rownames(obj$x), rownames(obj$y))
+  )
+}
+
+message("  All nesting assertions passed (", length(real_cfgs), " configs checked).")
 
 
 #################### Manifest ####################

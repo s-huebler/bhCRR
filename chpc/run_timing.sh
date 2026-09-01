@@ -51,13 +51,16 @@ source "$HERE/timing_config.sh"
 
 # ---- 3. Per-tag resource defaults (override with time_<tag>=... mem_<tag>=...)
 # Tags use underscores in variable names because hyphens are not valid.
-: "${TIME_N200_P300:=00:30:00}"    ; : "${MEM_N200_P300:=8G}"
-: "${TIME_N1309_P300:=01:00:00}"   ; : "${MEM_N1309_P300:=8G}"
-: "${TIME_N200_P1000:=01:00:00}"   ; : "${MEM_N200_P1000:=16G}"
-: "${TIME_N200_P5000:=04:00:00}"   ; : "${MEM_N200_P5000:=32G}"
-: "${TIME_N200_P10000:=08:00:00}"  ; : "${MEM_N200_P10000:=64G}"
-: "${TIME_N200_PALL:=12:00:00}"    ; : "${MEM_N200_PALL:=96G}"
-: "${TIME_N1309_PALL:=24:00:00}"   ; : "${MEM_N1309_PALL:=128G}"
+# Starting points only. The n=200 ladder produced no usable timings (every
+# config hit the null model), so these are extrapolated from n200-p5000
+# (46s / 750MB at MAXIT=500) scaled by n and p, with generous headroom. A
+# non-null model iterates far more than the null one did, so treat the
+# walltimes as guesses to trim after the first real run, not as budgets.
+: "${TIME_N1309_P300:=02:00:00}"   ; : "${MEM_N1309_P300:=16G}"
+: "${TIME_N1309_P1000:=04:00:00}"  ; : "${MEM_N1309_P1000:=24G}"
+: "${TIME_N1309_P5000:=08:00:00}"  ; : "${MEM_N1309_P5000:=48G}"
+: "${TIME_N1309_P10000:=16:00:00}" ; : "${MEM_N1309_P10000:=64G}"
+: "${TIME_N1309_PALL:=36:00:00}"   ; : "${MEM_N1309_PALL:=128G}"
 
 # ---- 4. Sanity checks -------------------------------------------------------
 die() { echo "run_timing.sh: $*" >&2; exit 1; }
@@ -79,13 +82,11 @@ mkdir -p "$REPO_ROOT/chpc/logs" "$TIMING_OUT_DIR"
 # ---- 5. Build the tag list --------------------------------------------------
 # Canonical ordering -- indices match timing.slurm's _TIMING_TAGS array.
 declare -a ALL_TAGS=(
-  "n200-p300"     # 0
-  "n1309-p300"    # 1
-  "n200-p1000"    # 2
-  "n200-p5000"    # 3
-  "n200-p10000"   # 4
-  "n200-pall"     # 5
-  "n1309-pall"    # 6
+  "n1309-p300"    # 0
+  "n1309-p1000"   # 1
+  "n1309-p5000"   # 2
+  "n1309-p10000"  # 3
+  "n1309-pall"    # 4
 )
 
 # Filter to the requested subset (tags= arg), or use all.
