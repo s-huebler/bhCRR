@@ -231,8 +231,8 @@ fit_ssl_psdh <- function(x, y,
                           cencode_num = 0,
                           failcode_num = 1,
                           lambda = current_lambda,
+                          getBreslowJumps = FALSE,
                           max.iter = inner_maxit)
-                          #lambda = current_lambda)
 
       # If fastCrrp did not converge, escalate the inner iteration budget by
       # 200 and refit, up to a ceiling of 2000. inner_maxit is defined
@@ -246,6 +246,7 @@ fit_ssl_psdh <- function(x, y,
                             cencode_num = 0,
                             failcode_num = 1,
                             lambda = current_lambda,
+                            getBreslowJumps = FALSE,
                             max.iter = inner_maxit)
       }
 
@@ -293,6 +294,18 @@ fit_ssl_psdh <- function(x, y,
         maxit))
     }
 
+    # One final refit at the converged state with Breslow jumps enabled.
+    # This is the only call that computes breslowJump / uftime; all EM
+    # M-steps above ran with getBreslowJumps = FALSE to avoid the n x p
+    # allocation on every iteration.
+    final_mod <- update_betas(penalties,
+                              y[,1], y[,2], x,
+                              cencode_num = 0,
+                              failcode_num = 1,
+                              lambda = current_lambda,
+                              getBreslowJumps = TRUE,
+                              max.iter = inner_maxit)
+
     coefficients_df <- data.frame("Variable" = colnames(x),
                                   "Estimate" = as.numeric(mod$coef))
 
@@ -305,7 +318,7 @@ fit_ssl_psdh <- function(x, y,
     ret$conv <- outer_convergence
     ret$iterations <- iterations
     ret$pips <- current_inclusion_probs
-    ret$final_model_object <- mod
+    ret$final_model_object <- final_mod
     ret$betas_path <- betas_path
     ret$pips_path <- pips_path
     ret$init        <- res$init

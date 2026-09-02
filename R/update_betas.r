@@ -21,6 +21,12 @@
 #'   the event of interest. Default \code{1}.
 #' @param lambda Numeric. Global LASSO tuning parameter.  Default
 #'   \code{1 / nrow(feature_matrix)}.
+#' @param getBreslowJumps Logical. Whether to compute Breslow baseline hazard
+#'   jumps and unique failure times in the returned object. Default \code{TRUE}
+#'   to preserve the behaviour of standalone callers. Set \code{FALSE} for
+#'   intermediate EM M-steps where the Breslow output is unused, then make
+#'   one final call with \code{TRUE} after the loop. Silently ignored if the
+#'   installed \pkg{fastcmprsk} release does not expose this argument.
 #' @param ... Additional arguments passed to \code{fastcmprsk::fastCrrp},
 #'   most usefully \code{max.iter} (maximum number of inner solver
 #'   iterations).
@@ -51,19 +57,20 @@ update_betas <- function(
   cencode_num = 0,
   failcode_num = 1,
   lambda = 1/nrow(feature_matrix),
+  getBreslowJumps = TRUE,
   ...
 ) {
-  fastcmprsk::fastCrrp(
-    Crisk(
-      timing_vector,
-      status_vector,
-      cencode = cencode_num,
-      failcode = failcode_num
-    ) ~ feature_matrix,
+  args <- list(
+    Crisk(timing_vector, status_vector,
+          cencode = cencode_num, failcode = failcode_num) ~ feature_matrix,
     penalty.factor = penalty_weights,
-    penalty = "LASSO",
-    lambda = lambda,
-    standardize = FALSE,
+    penalty        = "LASSO",
+    lambda         = lambda,
+    standardize    = FALSE,
     ...
   )
+  if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrrp))) {
+    args$getBreslowJumps <- getBreslowJumps
+  }
+  do.call(fastcmprsk::fastCrrp, args)
 }

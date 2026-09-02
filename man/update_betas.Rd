@@ -12,6 +12,7 @@ update_betas(
   cencode_num = 0,
   failcode_num = 1,
   lambda = 1/nrow(feature_matrix),
+  getBreslowJumps = TRUE,
   ...
 )
 }
@@ -38,6 +39,13 @@ the event of interest. Default \code{1}.}
 
 \item{lambda}{Numeric. Global LASSO tuning parameter.  Default
 \code{1 / nrow(feature_matrix)}.}
+
+\item{getBreslowJumps}{Logical. Whether to compute Breslow baseline hazard
+jumps and unique failure times in the returned object. Default \code{TRUE}
+to preserve the behaviour of standalone callers. Set \code{FALSE} for
+intermediate EM M-steps where the Breslow output is unused, then make
+one final call with \code{TRUE} after the loop. Silently ignored if the
+installed \pkg{fastcmprsk} release does not expose this argument.}
 
 \item{...}{Additional arguments passed to \code{fastcmprsk::fastCrrp},
 most usefully \code{max.iter} (maximum number of inner solver
