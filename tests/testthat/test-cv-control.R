@@ -123,3 +123,80 @@ test_that("seed and workers are coerced to integer", {
   expect_identical(ctrl$seed,    42L)
   expect_identical(ctrl$workers, 4L)
 })
+
+# ---------------------------------------------------------------------------
+# eval_time field
+# ---------------------------------------------------------------------------
+
+test_that("eval_time accepts a positive scalar and is stored", {
+  ctrl <- bhcrr_cv_control(eval_time = 12.5)
+  expect_equal(ctrl$eval_time, 12.5)
+})
+
+test_that("eval_time = NULL (default) is stored as NULL", {
+  ctrl <- bhcrr_cv_control()
+  expect_null(ctrl$eval_time)
+})
+
+test_that("eval_time = 0 errors", {
+  expect_error(bhcrr_cv_control(eval_time = 0), regexp = "eval_time")
+})
+
+test_that("eval_time negative errors", {
+  expect_error(bhcrr_cv_control(eval_time = -1), regexp = "eval_time")
+})
+
+test_that("eval_time = NA errors", {
+  expect_error(bhcrr_cv_control(eval_time = NA_real_), regexp = "eval_time")
+})
+
+test_that("eval_time = Inf errors", {
+  expect_error(bhcrr_cv_control(eval_time = Inf), regexp = "eval_time")
+})
+
+test_that("eval_time as a length-2 vector errors", {
+  expect_error(bhcrr_cv_control(eval_time = c(1, 2)), regexp = "eval_time")
+})
+
+test_that("eval_time as character errors", {
+  expect_error(bhcrr_cv_control(eval_time = "12"), regexp = "eval_time")
+})
+
+# ---------------------------------------------------------------------------
+# keep_coefs field
+# ---------------------------------------------------------------------------
+
+test_that("keep_coefs defaults to FALSE", {
+  ctrl <- bhcrr_cv_control()
+  expect_false(ctrl$keep_coefs)
+})
+
+test_that("keep_coefs = TRUE is stored", {
+  ctrl <- bhcrr_cv_control(keep_coefs = TRUE)
+  expect_true(ctrl$keep_coefs)
+})
+
+test_that("keep_coefs = 1L (non-logical) errors", {
+  expect_error(bhcrr_cv_control(keep_coefs = 1L), regexp = "keep_coefs")
+})
+
+test_that("keep_coefs = NA errors", {
+  expect_error(bhcrr_cv_control(keep_coefs = NA), regexp = "keep_coefs")
+})
+
+# ---------------------------------------------------------------------------
+# print shows horizon correctly
+# ---------------------------------------------------------------------------
+
+test_that("print shows eval_time when supplied", {
+  ctrl <- bhcrr_cv_control(eval_time = 365)
+  out  <- capture.output(print(ctrl))
+  expect_true(any(grepl("365", out)))
+  expect_true(any(grepl("fixed|eval_time", out)))
+})
+
+test_that("print shows 'derived' when eval_time is NULL", {
+  ctrl <- bhcrr_cv_control()
+  out  <- capture.output(print(ctrl))
+  expect_true(any(grepl("derived", out)))
+})

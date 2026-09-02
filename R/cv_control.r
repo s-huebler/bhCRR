@@ -26,9 +26,18 @@
 #'   \code{pool >= 0.1} with a stratified \code{strata} value and your cause-1
 #'   rate is below 10\%, folds will be silently unstratified — a warning is
 #'   issued to flag this.
-#' @param eval_quantile Numeric in \eqn{(0, 1)}.  Quantile of training-fold
-#'   cause-1 event times used as the evaluation horizon for
-#'   \code{\link{wolbers_c}}.  Default \code{0.5}.
+#' @param eval_quantile Numeric in \eqn{(0, 1)}.  Fallback evaluation horizon:
+#'   when \code{eval_time} is \code{NULL}, \eqn{\tau} is derived as this
+#'   quantile of the cause-1 event times in the \emph{full} data passed to the
+#'   CV function.  This is a marginal, model-free quantity — it touches no
+#'   fitted model — but it does consume all of \eqn{y}, so supplying
+#'   \code{eval_time} explicitly is preferred for any result going into the
+#'   manuscript.  Default \code{0.5}.
+#' @param eval_time Numeric scalar or \code{NULL}.  A fixed, a-priori evaluation
+#'   horizon \eqn{\tau} (in the same time units as \code{y[, 1]}) used for both
+#'   the per-fold and the pooled Wolbers C-index.  When supplied, \code{eval_time}
+#'   takes precedence over \code{eval_quantile}.  Validate: must be a single
+#'   finite positive number or \code{NULL}.  Default \code{NULL}.
 #' @param init_method Character string naming a built-in initialization
 #'   (\code{"LASSO_cv"}, \code{"LASSO_bic"}, \code{"zero"}), a function with
 #'   signature \code{function(x, y, ...)}, or a string naming such a function
@@ -53,6 +62,10 @@
 #'   Ignored when \code{parallel = FALSE}.  Default \code{NULL} (auto).
 #' @param seed Integer or \code{NULL}.  RNG seed set before fold generation.
 #'   Default \code{NULL} (no seed).
+#' @param keep_coefs Logical.  Whether \code{bhcrr_cv()} returns fitted
+#'   coefficients for every (pair, fold) combination.  Default \code{FALSE}.
+#'   At \eqn{p = 24618} a 24-pair grid at \code{nfolds = 10}, \code{ncv = 2}
+#'   is roughly 95 MB of doubles, so the default suppresses that output.
 #'
 #' @returns A list of class \code{"bhcrr_cv_control"} containing all validated
 #'   settings.  The field \code{$init_label} stores the resolved method label
@@ -87,7 +100,9 @@ bhcrr_cv_control <- function(
     fit_args      = list(),
     parallel      = FALSE,
     workers       = NULL,
-    seed          = NULL
+    seed          = NULL,
+    eval_time     = NULL,
+    keep_coefs    = FALSE
 ) {
   # ---- strata ----
   strata <- match.arg(strata)
@@ -183,6 +198,17 @@ bhcrr_cv_control <- function(
       stop("'seed' must be an integer or NULL.")
   }
 
+  # ---- eval_time ----
+  if (!is.null(eval_time)) {
+    if (!is.numeric(eval_time) || length(eval_time) != 1L ||
+        !is.finite(eval_time) || eval_time <= 0)
+      stop("'eval_time' must be a single finite positive number or NULL.")
+  }
+
+  # ---- keep_coefs ----
+  if (!is.logical(keep_coefs) || length(keep_coefs) != 1L || is.na(keep_coefs))
+    stop("'keep_coefs' must be TRUE or FALSE.")
+
   structure(
     list(
       nfolds        = nfolds,
@@ -198,7 +224,9 @@ bhcrr_cv_control <- function(
       fit_args      = fit_args,
       parallel      = parallel,
       workers       = workers,
-      seed          = seed
+      seed          = seed,
+      eval_time     = eval_time,
+      keep_coefs    = keep_coefs
     ),
     class = "bhcrr_cv_control"
   )
@@ -237,9 +265,15 @@ print.bhcrr_cv_control <- function(x, ...) {
   if (!is.null(x$seed))
     exec_parts <- sprintf("%s, seed = %d", exec_parts, x$seed)
 
+  horizon_desc <- if (!is.null(x$eval_time)) {
+    sprintf("eval_time = %g (fixed)", x$eval_time)
+  } else {
+    sprintf("quantile %g (derived)", x$eval_quantile)
+  }
+
   cat("<bhcrr_cv_control>\n")
   cat("  resampling : ", fold_desc, "\n", sep = "")
-  cat("  metric     : eval_quantile = ", x$eval_quantile, "\n", sep = "")
+  cat("  horizon    : ", horizon_desc, "\n", sep = "")
   cat("  init       : ", init_desc,
       if (length(x$init_args)) sprintf(" + %d extra arg(s)", length(x$init_args)) else "",
       "\n", sep = "")
