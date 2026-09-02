@@ -14,8 +14,10 @@ fit_ssl_psdh(
   maxit = 50,
   epsilon = 1e-04,
   init = NULL,
-  init_lam_path = 10^seq(log10(0.1), log10(0.001), length = 10),
-  inner_maxit_start = 1000
+  init_lam_path = NULL,
+  inner_maxit_start = 1000,
+  init_method = NULL,
+  init_args = list()
 )
 }
 \arguments{
@@ -51,9 +53,11 @@ noise coefficients. Set \code{theta_b = 1} to recover the flat
 relative change in log-likelihood falls below this value (after at
 least 5 iterations). Default \code{1e-04}.}
 
-\item{init}{Length-p numeric vector. Provide initial estimates. Otherwise leave as null to get initial estimates from non-adaptive LASSO.}
+\item{init}{Length-\eqn{p} numeric vector of initial coefficient values.
+Exactly one of \code{init} or \code{init_method} must be supplied.}
 
-\item{init_lam_path}{Numeric sequence vector. Path to define LASSO shrinkage parameter for the initializing model. Required if init is NULL.}
+\item{init_lam_path}{Defunct. Passing any value other than \code{NULL}
+raises an error. Pass \code{init_args = list(lambda_path = ...)} instead.}
 
 \item{inner_maxit_start}{Integer. Starting value for the inner
 \code{fastCrrp} iteration budget (\code{max.iter}) used in the M-step.
@@ -61,9 +65,20 @@ If the inner solver fails to converge, this is escalated by 200 per
 refit up to a ceiling of 2000; if it still has not converged the EM
 stops and \code{conv} is returned as \code{FALSE}. The escalated value
 is carried across EM iterations. Default \code{1000}.}
+
+\item{init_method}{Character string naming a built-in initialization method
+(\code{"LASSO_cv"}, \code{"LASSO_bic"}, \code{"zero"}), or a function
+with signature \code{function(x, y, ...)}, or a string naming such a
+function in the calling environment. Exactly one of \code{init} or
+\code{init_method} must be supplied.}
+
+\item{init_args}{Named list of extra arguments forwarded to the
+\code{init_method} function via \code{do.call}. Ignored when \code{init}
+is supplied. Use this to override method defaults, e.g.
+\code{init_args = list(lambda_path = my_path, k = 10)}.}
 }
 \value{
-A \code{fastCrrp} model object augmented with additional fields:
+A list with the following fields:
 \describe{
 \item{\code{$x}}{The feature matrix supplied as \code{x}.}
 \item{\code{$y}}{The outcome matrix supplied as \code{y}.}
@@ -74,6 +89,20 @@ penalty weights from the last EM iteration.}
 \item{\code{$lambda}}{Numeric. The LASSO tuning parameter used at
 convergence.}
 \item{\code{$ss}}{The \code{ss} argument as supplied.}
+\item{\code{$conv}}{Logical. \code{TRUE} if the EM converged within
+\code{maxit} iterations.}
+\item{\code{$iterations}}{Integer. Number of completed EM iterations.}
+\item{\code{$pips}}{Numeric vector of final posterior inclusion
+probabilities.}
+\item{\code{$init}}{Numeric vector. The initial coefficient vector
+actually used to start the EM.}
+\item{\code{$init_method}}{Character. Label of the initialization used:
+\code{"supplied"} when \code{init} was passed directly, the built-in
+name (\code{"LASSO_cv"}, \code{"LASSO_bic"}, \code{"zero"}), or
+\code{"custom"} for a user-supplied function.}
+\item{\code{$init_meta}}{List. Provenance returned by the
+initialization function (e.g. selected lambda, CV scores, elapsed
+time). \code{NULL} when \code{init} was supplied directly.}
 }
 }
 \description{
@@ -83,10 +112,29 @@ probabilities (E-step) and refitting a penalised subdistribution hazard
 model (M-step).  The penalty uses a Laplace spike-and-slab prior
 parameterised by scale pair \code{ss = c(s0, s1)}.
 }
+\note{
+\code{cv_ssl_psdh}, \code{tune_ssl_psdh} and \code{bhcrr_autotune}
+wrap this function but do not yet supply an initialization argument.
+They are therefore non-functional pending a separate CV-stack rewrite
+and will error with the initialization contract message if called.
+This is expected behaviour, not a bug in \code{fit_ssl_psdh}.
+}
 \examples{
 \dontrun{
-fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05)
+# Built-in CV-LASSO initialization
+fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
+                    init_method = "LASSO_cv")
 fit$coefficients
+
+# Supply a precomputed starting vector
+init_vec <- rep(0, ncol(x))
+fit2 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
+                     init = init_vec)
+
+# User-defined initialization function
+custom_init <- function(x, y, ...) rep(0, ncol(x))
+fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
+                     init_method = custom_init)
 }
 }
 \seealso{
