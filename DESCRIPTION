@@ -13,6 +13,7 @@ BugReports: https://github.com/s-huebler/bhCRR/issues
 Imports:
     fastcmprsk,
     Rcpp,
+    rsample,
     simsurv,
     survival
 LinkingTo:

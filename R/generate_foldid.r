@@ -27,7 +27,8 @@
 #'     \item{\code{ncv}}{Integer. Effective number of repetitions used.}
 #'   }
 #'
-#' @seealso \code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}}
+#' @seealso \code{\link{bhcrr_make_folds}} (stratified successor to this
+#'   function), \code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}}
 #'
 #' @export
 #'

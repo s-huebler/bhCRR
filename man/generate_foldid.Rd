@@ -46,5 +46,6 @@ dim(fols$foldid)  # 100 x 3
 }
 }
 \seealso{
-\code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}}
+\code{\link{bhcrr_make_folds}} (stratified successor to this
+function), \code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}}
 }
