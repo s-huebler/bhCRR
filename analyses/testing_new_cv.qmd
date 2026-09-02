@@ -1,0 +1,213 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+library(survival)
+Rcpp::compileAttributes("~/Documents/bhCRR")
+devtools::load_all("~/Documents/bhCRR", recompile = TRUE)
+```
+
+```{r}
+
+
+ # Block-correlated design matrix generator (Binder & Schumacher 2008 sec 3.1;
+ # Binder et al. 2009 sec 3.2.1). Kept in its own file so batch_run_complex.R
+ # uses the identical generator instead of a drifting copy.
+ source("/Users/sophiehuebler/Documents/bhCRR/Sim/code/generate_block_X.R")
+
+
+
+#################### Data Generation ################
+
+# To change per scenario
+nobs = 200
+npredictors = 25
+
+# Effects of the designed active predictors. beta1_active, beta2_active and
+# active_block are aligned elementwise: entry k is one predictor, with its
+# cause-1 effect, its cause-2 effect, and the block it is planted in. An entry
+# with one beta set to 0 is still a designed active, which is how Binder et al.
+# (2009) place covariates acting on a single cause.
+beta1_active = c(0.40, - 0.50, 0.60, 0.75, - 0.80)
+beta2_active = c(0, 0.3, 0, 0, -0.2)
+active_block = c("strong", "strong", "weak", "weak", "indep")
+
+# Predictor correlation blocks. block_props are relative shares of npredictors
+# (apportioned by largest remainder so they sum exactly); block_rho is the
+# within-block correlation, which is exchangeable inside a block and exactly
+# zero between blocks. Names must match across all three vectors.
+block_props = c(indep = 0.50, weak = 0.25, strong = 0.25)
+block_rho   = c(indep = 0.00, weak = 0.30, strong = 0.60)
+
+# Latent driving the within-block correlation. "gaussian" hits block_rho exactly
+# in every sample. "bernoulli" is the papers' own construction, giving bimodal
+# microarray-like marginals, and then latent_q sets the shift probability per
+# block. To replicate Binder et al. (2009) directly, use latent = "bernoulli"
+# with block_rho = c(indep = 0, weak = 0.05, strong = 0.5) and
+# latent_q = c(indep = 0.5, weak = 0.7, strong = 0.5).
+latent_type = "gaussian"
+latent_q    = c(indep = 0.5, weak = 0.4, strong = 0.5)
+
+# Random censoring. Censoring times are drawn as C_i ~ Exponential(cens_rate),
+# independently of the predictors and of the event process. A larger rate means
+# censoring happens earlier, so a larger rate gives a higher censored fraction.
+# The mean censoring time is 1 / cens_rate, so pick the rate relative to the
+# scale of the event times (roughly, rate ~ 1 / (typical follow-up time)).
+# Set cens_rate = 0 to turn random censoring off entirely.
+cens_rate = 0.05
+
+# Administrative censoring bounds handed to simulateTwoCauseFineGrayModel().
+# Keeping u_min = u_max = 100 leaves the generator's own uniform censoring
+# inactive (no event time reaches 100), so cens_rate is the only censoring
+# mechanism. Lower these if administrative censoring is wanted as well.
+u_min = 100
+u_max = 100
+
+
+# Calculated (fixed)
+# generate_block_X() builds the block-correlated design matrix, places each
+# designed active in the block named for it, and scatters the betas to the
+# matching columns. With layout = "active_first" the actives occupy columns
+# 1..length(beta1_active) in the order written above, so beta1[k] is the effect
+# of beta1_active[k]. design$meta carries the per-predictor block labels.
+design <- generate_block_X(nobs          = nobs,
+                           npredictors   = npredictors,
+                           beta1_active  = beta1_active,
+                           beta2_active  = beta2_active,
+                           active_block  = active_block,
+                           block_props   = block_props,
+                           block_rho     = block_rho,
+                           latent        = latent_type,
+                           latent_q      = latent_q,
+                           unit_variance = TRUE,
+                           layout        = "active_first")
+
+beta1 <- design$beta1
+beta2 <- design$beta2
+X_design <- design$X
+
+# Realized block structure for this replicate. Worth eyeballing when a new
+# block specification is used for the first time.
+# print(design$block_size)
+# print(block_corr_summary(X_design, design$block_id, design$block_rho))
+
+# Simulated
+sim <- simulateTwoCauseFineGrayModel(nobs = nobs,
+                                     beta1 = beta1,
+                                     beta2 = beta2,
+                                     X = X_design,
+                                     u.min = u_min,
+                                     u.max = u_max,
+                                     p = 0.5,
+                                     returnX = TRUE)
+
+# The event times are only interpretable if the generator used the design matrix
+# we handed it rather than one of its own. This catches a silent substitution.
+# It cannot catch internal rescaling of X prior to generating the event times,
+# which is worth confirming once against the fastcmprsk source.
+if (!isTRUE(all.equal(unname(as.matrix(sim$X)), unname(X_design),
+                      tolerance = 1e-12))) {
+  stop("simulateTwoCauseFineGrayModel() did not return the supplied design ",
+       "matrix unchanged; the event times were not generated from X_design.")
+}
+
+# Apply the exponential random censoring on top of the generated event times.
+# Subject i is censored when C_i lands before the event time already simulated
+# for them, in which case the observed time becomes C_i and Status becomes 0.
+# Overwriting sim$ftime / sim$fstatus here (rather than only sim_data) keeps
+# every downstream consumer of `sim`, including the oracle Fine-Gray fit, on the
+# same censored data.
+if (!is.finite(cens_rate) || cens_rate < 0) {
+  stop("cens_rate must be a finite, non-negative Exponential rate.")
+}
+
+if (cens_rate > 0) {
+  cens_time <- stats::rexp(nobs, rate = cens_rate)
+  is_censored <- cens_time < sim$ftime
+  sim$ftime[is_censored] <- cens_time[is_censored]
+  sim$fstatus[is_censored] <- 0
+}
+
+# Realized outcome mix for this replicate. Worth logging per scenario: the
+# censored fraction is a consequence of cens_rate and the event-time scale, not
+# something set directly.
+cens_prop <- mean(sim$fstatus == 0)
+event_mix <- c(censored = cens_prop,
+               cause1 = mean(sim$fstatus == 1),
+               cause2 = mean(sim$fstatus == 2))
+
+sim_data <- cbind(data.frame(ID = 1:nobs,
+                             TTE = sim$ftime,
+                             Status = as.integer(sim$fstatus)),
+                  X_design)
+predictor_names <- design$meta$name
+names(sim_data) <- c("ID", "TTE", "Status", predictor_names)
+
+x <- as.matrix(sim_data %>%select(starts_with("X")))
+y <- as.matrix(sim_data %>%
+                 mutate(Status = as.numeric(Status))%>%
+                 select(TTE, Status))
+
+storage.mode(x) <- "double"
+
+if (!all(sim_data$Status %in% c(0L, 1L, 2L))) {
+  stop("Status must use 0 = censored, 1 = event of interest, 2 = competing event.")
+}
+if (sum(sim_data$Status == 1L) == 0L) {
+  stop("The simulated data contain no cause-1 events; change the seed or scenario.")
+}
+if (cens_rate > 0 && cens_prop > 0.9) {
+  warning("Over 90% of observations are censored at cens_rate = ", cens_rate,
+          "; the scenario may be uninformative.")
+}
+
+# Standardize ONCE and feed this same matrix to every method. This avoids
+# method-to-method differences from hidden preprocessing, and it puts the
+# adaptive weights on the same coefficient scale as the penalized fits.
+x_center <- colMeans(x)
+x_scale <- apply(x, 2L, stats::sd)
+
+bad_scale <- !is.finite(x_scale) | x_scale <= sqrt(.Machine$double.eps)
+if (any(bad_scale)) {
+  stop(
+    "Predictors with zero or invalid standard deviation: ",
+    paste(predictor_names[bad_scale], collapse = ", ")
+  )
+}
+
+x_std <- sweep(x, 2L, x_center, FUN = "-")
+x_std <- sweep(x_std, 2L, x_scale, FUN = "/")
+colnames(x_std) <- predictor_names
+
+fit_data <- data.frame(
+  TTE = sim_data$TTE,
+  Status = sim_data$Status,
+  x_std,
+  check.names = FALSE
+)
+
+fg_formula <- stats::as.formula(
+  paste0(
+    "Crisk(TTE, Status, cencode = 0, failcode = 1) ~ ",
+    paste(predictor_names, collapse = " + ")
+  )
+)
+
+
+#################### FG Model ################
+active_idx <- which(beta1 != 0)
+active_x <- x[, active_idx, drop = FALSE]
+
+fg_true <- fastcmprsk::fastCrr(fastcmprsk::Crisk(sim$ftime,
+                                                 as.integer(sim$fstatus)) ~ active_x,
+                               variance = FALSE)
+
+
+
+
+```

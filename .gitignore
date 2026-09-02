@@ -11,3 +11,5 @@ chpc/logs/**
 inst/ClinTall/*.rds
 inst/ClinTall/*.RData
 inst/ClinTall/timing/
+analyses/**/*.RData
+analyses/**/*.rds

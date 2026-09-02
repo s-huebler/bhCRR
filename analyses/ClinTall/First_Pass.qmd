@@ -1,0 +1,146 @@
+---
+title: "First Pass Looking at ClinTall Data"
+format: html
+editor: visual
+---
+
+# Load
+
+```{r}
+library(tidyverse)
+library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
+library(survival)
+Rcpp::compileAttributes("~/Documents/bhCRR")
+devtools::load_all("~/Documents/bhCRR", recompile = TRUE)
+```
+
+```{r}
+dat_design <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design.RDS")
+dat_cr <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_cr.RDS")
+```
+
+## Set up data
+
+```{r}
+x <- as.matrix(dat_design[,10:ncol(dat_design)])
+y <- as.matrix(dat_cr[,c(2,4)])
+```
+
+# Initialize Estimates
+
+```{r}
+init_fit_001 <- fastcmprsk::fastCrrp(
+    fastcmprsk::Crisk(y[, 1L], y[, 2L], cencode = 0, failcode = 1) ~ x,
+    penalty = "LASSO",
+    lambda  = 0.001,
+    getBreslowJumps = FALSE
+)
+```
+
+```{r}
+init_fit <- fastcmprsk::fastCrrp(
+    fastcmprsk::Crisk(y[, 1L], y[, 2L], cencode = 0, failcode = 1) ~ x,
+    penalty = "LASSO",
+    lambda  = 10^seq(log10(0.1),
+                     log10(0.001),
+                     length = 10),
+    getBreslowJumps = FALSE
+)
+```
+
+```{r}
+
+# 1. Calculate degrees of freedom (number of non-zero coefficients)
+df <- colSums(init_fit$coef != 0)
+
+# 2. Calculate BIC for all models in the path
+loglik <- init_fit$logLik
+n <- nrow(x) # Or use sum(y[, 2L] == 1) for number of events
+bic <- -2 * loglik + df * log(n)
+
+# 3. Identify the indices of models that have at least one non-zero coefficient
+non_null_indices <- which(df > 0)
+
+# Check to ensure at least one non-null model exists in the path
+if (length(non_null_indices) == 0) {
+  stop("All models are null. You need to lower your lambda values.")
+}
+
+# 4. Find the index of the minimum BIC strictly among the non-null models
+best_non_null_idx <- non_null_indices[which.min(bic[non_null_indices])]
+
+# 5. Extract the coefficients from that specific model
+best_coefs <- init_fit$coef[, best_non_null_idx]
+best_lambda <- init_fit$lambda.path[best_non_null_idx]
+
+```
+
+```{r}
+initializing_ests_001 <- init_fit_001$coef
+initializing_ests <- best_coefs
+```
+
+# Untuned model
+
+```{r}
+# initializing_theta_001 <- sum(abs(initializing_ests_001)>0)/ncol(x)
+# initializing_theta_001
+
+initializing_theta <- sum(abs(initializing_ests)>0)/ncol(x)
+initializing_theta
+```
+
+```{r}
+
+bhcrr_check_grid(1309, .01, 
+                 10^seq(log10(0.01), log10(0.001),length = 10), 
+                 c(0.4, 0.5, 0.6, 1, 1.2),
+                             beta_min = 0.1, beta_floor = 0.01)
+
+bhcrr_check_grid(1309, initializing_theta, 
+                 10^seq(log10(0.01), log10(0.001),length = 10), 
+                 c(0.4, 0.5, 0.6, 1),
+                             beta_min = 0.1, beta_floor = 0.01)
+```
+
+```{r}
+start_time <- Sys.time()
+init_mod_001 <- fit_ssl_psdh (x, y,
+                         ss=c(0.002782559, 0.5),
+                         initial_sparsity = .01,
+                         theta_a = 1,
+                         theta_b = 1,
+                         maxit = 50,
+                         epsilon=1e-04,
+                         init = initializing_ests_001,
+                         init_lam_path = NULL,
+                         inner_maxit_start = 1000)
+
+save(init_mod_001, file = "/Users/sophiehuebler/Documents/bhCRR/analyses/ClinTall/init_mod_001.RData")
+end_time <- Sys.time()
+print(end_time - start_time)
+```
+
+```{r}
+start_time <- Sys.time()
+init_mod <- fit_ssl_psdh (x, y,
+                         ss=c(0.002782559, 0.5),
+                         initial_sparsity = initializing_theta,
+                         theta_a = 1,
+                         theta_b = 1,
+                         maxit = 50,
+                         epsilon=1e-04,
+                         init = initializing_ests,
+                         init_lam_path = NULL,
+                         inner_maxit_start = 1000)
+
+save(init_mod, file = "/Users/sophiehuebler/Documents/bhCRR/analyses/ClinTall/init_mod.RData")
+end_time <- Sys.time()
+print(end_time - start_time)
+```
+
+# Tuning
+
+```{r}
+
+```
