@@ -13,3 +13,6 @@ inst/ClinTall/*.RData
 inst/ClinTall/timing/
 analyses/**/*.RData
 analyses/**/*.rds
+src/*.o
+src/*.so
+.claude/settings.local.json
