@@ -15,4 +15,4 @@ analyses/**/*.RData
 analyses/**/*.rds
 src/*.o
 src/*.so
-.claude/settings.local.json
+.claude/

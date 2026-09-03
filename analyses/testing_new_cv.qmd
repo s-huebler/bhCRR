@@ -4,6 +4,8 @@ format: html
 editor: visual
 ---
 
+# Set up
+
 ```{r}
 library(tidyverse)
 library(fastcmprsk, lib.loc = "/Library/Frameworks/R.framework/Versions/4.5-arm64/Resources/library")
@@ -211,3 +213,794 @@ fg_true <- fastcmprsk::fastCrr(fastcmprsk::Crisk(sim$ftime,
 
 
 ```
+
+# Testing
+
+## 1. Untuned fit with the BIC initialization
+
+`fit_ssl_psdh()` now requires an explicit initialization: either `init` (a length-p numeric vector) or `init_method`. `"LASSO_bic"` fits a single `fastCrrp` LASSO path and takes the coefficients at the lowest-BIC lambda among the non-null, converged solutions -- one path fit, versus the six that `"LASSO_cv"` needs (one full-data fit plus one per CV fold).
+
+```{r}
+untuned <- fit_ssl_psdh(
+  x_std, y,
+  ss          = c(0.04, 0.6),
+  init_method = "LASSO_bic",
+  # init_args overrides the method's own defaults; drop it to use
+  # .default_init_lam_path(), which is this same sequence.
+  init_args   = list(lambda_path = 10^seq(log10(0.1), log10(0.001),
+                                          length.out = 10))
+)
+
+# Provenance for the initialization now travels on the fit object.
+untuned$init_method                       # "LASSO_bic"
+untuned$init_meta[c("lambda", "bic", "df")]
+sum(untuned$init != 0)                    # nonzero coefficients in the init
+
+# The fit itself
+untuned$conv                              # outer EM convergence
+untuned$iterations
+sum(untuned$coefficients$Estimate != 0)   # nonzero coefficients after EM
+head(untuned$coefficients[order(-abs(untuned$coefficients$Estimate)), ], 10)
+
+# Equivalent alternatives:
+#   init_method = "LASSO_cv"                     # the old built-in behaviour
+#   init_method = "zero"                         # rep(0, p), no initial fit
+#   init        = rep(0, ncol(x_std))            # supply a vector directly
+#   init_method = function(x, y, ...) rep(0, ncol(x))   # your own function
+# Supplying both init and init_method is an error, by design.
+```
+
+## 2. Fixed-grid cross-validation
+
+Two new pieces are in place: `bhcrr_cv_control()` bundles every CV setting into one validated object, and `bhcrr_make_folds()` builds stratified folds through `rsample`. Neither is wired into `tune_ssl_psdh()` yet -- that is the CV rewrite -- so below the control's fields are handed across by name, which is a fair preview of what the rewritten signature will absorb.
+
+Two things to know before running this:
+
+-   **`warm_start` must be `FALSE` for now.** With warm starts on, the first `(s0, s1)` pair passes `init = NULL` and the rest pass a fitted vector, which collides with `init_method` and errors on every pair after the first. The error is swallowed by `try()` inside `cv_ssl_psdh()`, so it shows up as `NA` scores rather than a stop. Turning warm starts off makes every fold cold-start from `init_method`, which is correct, just slower.
+-   **`pool = 0.01`, not rsample's default `0.1`.** Any stratum below `pool` is pooled away and randomly reassigned, so at a cause-1 rate near 10% the default would silently give unstratified folds.
+
+```{r}
+ctrl <- bhcrr_cv_control(
+  nfolds        = 5,            # production runs use 10
+  ncv           = 2,            # production runs use 2
+  strata        = "cause1",     # balance cause-1 events across folds
+  pool          = 0.01,
+  eval_quantile = 0.5,
+  init_method   = "LASSO_bic",
+  warm_start    = FALSE,        # required until the CV rewrite; see above
+  # fit_args is stored but CANNOT be forwarded to tune_ssl_psdh() today:
+  # cv_ssl_psdh() hardcodes maxit = 50 and epsilon = 1e-04 in its own call to
+  # fit_ssl_psdh(), so passing either through ... errors with "formal argument
+  # matched by multiple actual arguments". Same collision class as `init`.
+  fit_args      = list(maxit = 50, epsilon = 1e-04)
+)
+ctrl
+
+# Stratified folds. fold_event_counts is the per-fold cause-1 count: with
+# strata = "cause1" these should differ by at most 1.
+folds <- bhcrr_make_folds(y, ctrl)
+folds$fold_event_counts
+
+# Fixed grid: s0 in [0.01, 0.10], s1 in [0.40, 0.70]. Pairs with s1 <= s0 are
+# dropped internally; here every combination is valid, so 5 x 4 = 20 pairs.
+s0_seq <- seq(0.01, 0.10, length.out = 5)
+s1_seq <- seq(0.40, 0.70, length.out = 4)
+
+# tune_ssl_psdh() uses `untuned` only as a data container ($x and $y) -- one of
+# the things the rewrite will drop.
+t0 <- Sys.time()
+tuning <- tune_ssl_psdh(
+  untuned,
+  s0_seq      = s0_seq,
+  s1_seq      = s1_seq,
+  nfolds      = ctrl$nfolds,
+  ncv         = ctrl$ncv,
+  foldid      = folds$foldid,
+  warm_start    = ctrl$warm_start,
+  eval_quantile = ctrl$eval_quantile,  # matches a cv_ssl_psdh formal
+  init_method   = ctrl$init_method,    # reaches fit_ssl_psdh through ...
+  init_args     = ctrl$init_args
+)
+Sys.time() - t0
+
+# Check for the silent failure mode FIRST: NA scores mean the fits errored
+# inside try() rather than that the pairs were bad.
+sum(is.na(tuning$score_mean))
+sum(tuning$n_failed_folds, na.rm = TRUE)
+
+tuning[order(-tuning$score_mean), ][1:5, ]
+best <- tuning[which.max(tuning$score_mean), ]
+best
+
+# The grid diagnostics still work, since they only read the tuning frame plus
+# theta from the untuned fit.
+theta <- mean(untuned$coefficients$Estimate != 0)
+bhcrr_tune_validate(tuning, n = nrow(x_std), theta = theta,
+                    s0_seq = s0_seq, s1_seq = s1_seq)
+```
+
+## 3. Refit at the tuned scales
+
+```{r}
+final_mod <- fit_ssl_psdh(
+  x_std, y,
+  ss          = c(best$s0, best$s1),
+  init_method = "LASSO_bic",
+  maxit       = 100
+)
+
+final_mod$conv
+sum(final_mod$coefficients$Estimate != 0)
+
+# Breslow jumps are now computed once, in a single refit after the EM loop,
+# so predict_from_ssl_psdh() still has what it needs.
+eval_time <- as.numeric(quantile(y[y[, 2] == 1, 1], 0.5))
+lp <- predict_from_ssl_psdh(final_mod, newx = x_std, eval_time)
+wolbers_c(y, lp, eval_time1)
+```
+
+# Testing Serial
+
+The Prompt C checkpoint: run `bhcrr_cv()` end to end on this simulated data with a real grid, sequentially, before any parallelism exists. A wrong assembler is far easier to spot here than after `mclapply` is in the picture.
+
+### C.1 — Set up and run
+
+Two deliberate choices:
+
+-   **Folds are built once and passed to every call.** If `folds = NULL`, `bhcrr_cv()` generates them internally, and unless `control$seed` is set they differ between calls — which would make the `fold_inits` round trip in C.3 fail for a reason that has nothing to do with the caching.
+-   **`eval_time` is supplied explicitly**, so tau is a fixed a-priori horizon rather than something estimated from `y`. `$eval_time$source` should read `"supplied"`.
+
+```{r}
+# Fixed horizon. Computed here from the observed cause-1 times purely to land on a
+# sensible number for this simulation; once chosen it is a constant, not an estimate.
+tau <- as.numeric(quantile(y[y[, 2] == 1, 1], 0.5))
+
+ctrl_serial <- bhcrr_cv_control(
+  nfolds      = 5,
+  ncv         = 2,
+  strata      = "cause1",
+  pool        = 0.01,
+  eval_time   = tau,
+  init_method = "LASSO_bic",
+  warm_start  = TRUE,
+  parallel    = FALSE,
+  keep_coefs  = FALSE
+)
+ctrl_serial
+
+# Build folds ONCE and reuse. fold_event_counts should differ by at most 1 per fold.
+folds_serial <- bhcrr_make_folds(y, ctrl_serial)
+folds_serial$fold_event_counts
+
+s0_seq <- seq(0.01, 0.10, length.out = 5)
+s1_seq <- seq(0.40, 0.70, length.out = 4)
+
+t0 <- Sys.time()
+cv <- bhcrr_cv(x_std, y,
+               s0_seq = s0_seq,
+               s1_seq = s1_seq,
+               control = ctrl_serial,
+               folds   = folds_serial)
+elapsed_serial <- Sys.time() - t0
+elapsed_serial
+
+cv                      # print.bhcrr_cv
+class(cv)
+cv$eval_time            # $value == tau, $source == "supplied"
+cv$timing
+```
+
+### C.2 — Assembler consistency
+
+This is the actual checkpoint. Each block re-derives a column of `$tuning` from the raw `$pooled` / `$fold_scores` arrays and asserts they agree. If the assembler is wrong, one of these fails loudly rather than returning a plausible-looking frame.
+
+```{r}
+n_pairs <- nrow(cv$grid)
+n_folds <- ctrl_serial$nfolds
+n_reps  <- ctrl_serial$ncv
+
+# --- structure -------------------------------------------------------------
+stopifnot(
+  nrow(cv$tuning) == n_pairs,
+  identical(dim(cv$pooled),      c(n_pairs, n_reps)),
+  identical(dim(cv$fold_scores), c(n_pairs, n_folds, n_reps))
+)
+
+# $tuning must carry exactly the columns bhcrr_tune_validate() expects
+stopifnot(all(c("s0", "s1", "score_mean", "score_sd",
+                "score_fold_sd", "n_failed_folds") %in% names(cv$tuning)))
+
+# --- pair ordering ---------------------------------------------------------
+# $tuning rows must be in .cv_grid traversal order, which is the warm-start
+# chain order. If these disagree, scores are attached to the wrong pairs.
+stopifnot(
+  isTRUE(all.equal(cv$tuning$s0, cv$grid$s0)),
+  isTRUE(all.equal(cv$tuning$s1, cv$grid$s1))
+)
+
+# --- score_mean is the mean of the pooled scores over reps ------------------
+expected_mean <- rowMeans(cv$pooled, na.rm = TRUE)
+stopifnot(isTRUE(all.equal(cv$tuning$score_mean, expected_mean,
+                           tolerance = 1e-12)))
+
+# --- score_sd is the sd of the pooled scores over reps ----------------------
+# NA when ncv == 1; with ncv = 2 it is the sd of two numbers.
+expected_sd <- if (n_reps == 1L) rep(NA_real_, n_pairs) else
+  apply(cv$pooled, 1, stats::sd, na.rm = TRUE)
+stopifnot(isTRUE(all.equal(cv$tuning$score_sd, expected_sd, tolerance = 1e-12)))
+
+# --- score_fold_sd is the mean over reps of the within-rep fold sd ----------
+expected_fold_sd <- vapply(seq_len(n_pairs), function(j) {
+  per_rep <- vapply(seq_len(n_reps),
+                    function(k) stats::sd(cv$fold_scores[j, , k], na.rm = TRUE),
+                    numeric(1))
+  mean(per_rep, na.rm = TRUE)
+}, numeric(1))
+stopifnot(isTRUE(all.equal(cv$tuning$score_fold_sd, expected_fold_sd,
+                           tolerance = 1e-12)))
+
+# --- failures ---------------------------------------------------------------
+# n_failed_folds must account for every row in $errors, and vice versa.
+stopifnot(sum(cv$tuning$n_failed_folds) == nrow(cv$errors))
+nrow(cv$errors)
+if (nrow(cv$errors) > 0) head(cv$errors)
+
+# --- inits ------------------------------------------------------------------
+# One init per (rep, fold), each length p.
+stopifnot(
+  length(cv$fold_inits) == n_reps,
+  all(lengths(cv$fold_inits) == n_folds),
+  all(vapply(unlist(cv$fold_inits, recursive = FALSE), length, integer(1)) ==
+        ncol(x_std))
+)
+
+# --- sanity on the values ---------------------------------------------------
+# A C-index lives in [0, 1]; anything outside means the scatter of held-out
+# linear predictors into lp_all went wrong.
+finite_scores <- cv$tuning$score_mean[is.finite(cv$tuning$score_mean)]
+stopifnot(length(finite_scores) > 0,
+          all(finite_scores >= 0), all(finite_scores <= 1))
+range(finite_scores)
+
+cat("assembler checks passed\n")
+```
+
+If any `all.equal` check fails, look first at whether the assembler and these re-derivations disagree on `na.rm` rather than assuming a real bug — the old `cv_ssl_psdh` used `na.rm = TRUE` throughout, and that convention is what is assumed above.
+
+### C.3 — `fold_inits` round trip
+
+The second run reuses the cached inits and the same folds, so it must reproduce `$tuning` exactly while skipping every initialization fit. The time difference is the init cost the cache removes.
+
+```{r}
+t0 <- Sys.time()
+cv2 <- bhcrr_cv(x_std, y,
+                s0_seq     = s0_seq,
+                s1_seq     = s1_seq,
+                control    = ctrl_serial,
+                folds      = folds_serial,
+                fold_inits = cv$fold_inits)
+elapsed_cached <- Sys.time() - t0
+
+stopifnot(isTRUE(all.equal(cv$tuning, cv2$tuning, tolerance = 1e-12)))
+
+c(first = as.numeric(elapsed_serial, units = "secs"),
+  cached = as.numeric(elapsed_cached, units = "secs"))
+```
+
+### C.4 — Derived horizon, for contrast
+
+Leaving `eval_time = NULL` falls back to the `eval_quantile` of the cause-1 times in the full data. `$eval_time$source` should now read `"quantile"`. Scores will differ slightly from C.1 whenever the derived tau differs from the supplied one.
+
+```{r}
+ctrl_derived <- bhcrr_cv_control(
+  nfolds        = 5,
+  ncv           = 2,
+  strata        = "cause1",
+  pool          = 0.01,
+  eval_time     = NULL,
+  eval_quantile = 0.5,
+  init_method   = "LASSO_bic",
+  warm_start    = TRUE,
+  parallel      = FALSE
+)
+
+cv_derived <- bhcrr_cv(x_std, y, s0_seq, s1_seq,
+                       control    = ctrl_derived,
+                       folds      = folds_serial,
+                       fold_inits = cv$fold_inits)
+
+cv_derived$eval_time          # $source == "quantile"
+c(supplied = cv$eval_time$value, derived = cv_derived$eval_time$value)
+```
+
+### C.5 — Diagnostics and the final refit
+
+`$tuning` must drop straight into the existing grid diagnostics, unchanged.
+
+```{r}
+cv$best
+
+theta <- mean(untuned$coefficients$Estimate != 0)
+bhcrr_tune_validate(cv$tuning,
+                    n      = nrow(x_std),
+                    theta  = theta,
+                    s0_seq = s0_seq,
+                    s1_seq = s1_seq)
+
+# Refit at the winner and score it at the same fixed horizon.
+final_serial <- fit_ssl_psdh(
+  x_std, y,
+  ss          = c(cv$best$s0, cv$best$s1),
+  init_method = "LASSO_bic",
+  maxit       = 100
+)
+
+final_serial$conv
+sum(final_serial$coefficients$Estimate != 0)
+
+lp_final <- predict_from_ssl_psdh(final_serial, newx = x_std, tau)
+wolbers_c(y, lp_final, tau)
+```
+
+Note this last number is an **in-sample** C-index — the model was fit on all of `x_std`. It is not comparable to `cv$best$score_mean`, which is out-of-sample. It is here only to confirm the refit produces a usable model with working Breslow jumps.
+
+### C.6 — Convergence diagnostics
+
+Non-convergence is a `warning()` in `fit_ssl_psdh()`, not an error: the fit still returns a usable object, so `.cv_fold_path()`'s `tryCatch(error = )` never sees it and `$errors` stays empty. That is correct behaviour, but it means non-converged fits are scored and averaged into `$tuning` with nothing marking them.
+
+Note the denominator: this run does `nfolds * ncv * npairs` fits, not one per pair.
+
+```{r}
+n_fits_total <- ctrl_serial$nfolds * ctrl_serial$ncv * nrow(cv$grid)
+n_fits_total
+```
+
+#### Count the warnings exactly
+
+`withCallingHandlers` captures each warning as it is signalled, so nothing is lost to R's end-of-call batching or the 50-warning display cap.
+
+```{r}
+warn_log <- character(0)
+
+cv_dbg <- withCallingHandlers(
+  bhcrr_cv(x_std, y,
+           s0_seq     = s0_seq,
+           s1_seq     = s1_seq,
+           control    = ctrl_serial,
+           folds      = folds_serial,
+           fold_inits = cv$fold_inits),   # reuse cached inits: this is about the EM
+  warning = function(w) {
+    warn_log <<- c(warn_log, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  }
+)
+
+length(warn_log)                          # total warnings signalled
+length(warn_log) / n_fits_total           # as a fraction of all fits
+table(warn_log)                           # distinct messages, with counts
+```
+
+#### Is it the outer EM or the inner solver?
+
+The same warning text fires for two different failures. `fit_ssl_psdh()` breaks out of the EM loop *before* incrementing `iterations`, so:
+
+-   `iterations == maxit` → the outer EM ran its full budget without meeting the deviance-plus-stability test. Loosen `epsilon` or raise `maxit`.
+-   `iterations < maxit` **and** `conv == FALSE` → the inner `fastCrrp` solver hit its escalation ceiling (`inner_maxit` climbs to 20000) and the EM stopped early. This is the more serious of the two: the M-step estimate at that point is untrustworthy.
+
+Walk one fold's chain by hand, recording what `bhcrr_cv` currently discards. This replicates `.cv_fold_path()` exactly — same init, same traversal order, same warm-start chain — but keeps `$conv` and `$iterations` for every pair.
+
+```{r}
+maxit_used <- if (!is.null(ctrl_serial$fit_args$maxit)) ctrl_serial$fit_args$maxit else 50L
+
+tr   <- which(folds_serial$foldid[, 1] != 1L)   # rep 1, fold 1 training rows
+x_tr <- x_std[tr, , drop = FALSE]
+y_tr <- y[tr, , drop = FALSE]
+
+# Same init the worker would compute for this fold
+b <- bhCRR:::.LASSO_bic(x_tr, y_tr)$init
+
+diag_rows <- vector("list", nrow(cv$grid))
+for (j in seq_len(nrow(cv$grid))) {
+  f <- suppressWarnings(
+    fit_ssl_psdh(x_tr, y_tr,
+                 ss    = c(cv$grid$s0[j], cv$grid$s1[j]),
+                 init  = b,
+                 maxit = maxit_used)
+  )
+  diag_rows[[j]] <- data.frame(
+    pair       = cv$grid$pair[j],
+    s0         = cv$grid$s0[j],
+    s1         = cv$grid$s1[j],
+    conv       = f$conv,
+    iterations = f$iterations,
+    nonzero    = sum(f$coefficients$Estimate != 0)
+  )
+  b <- as.numeric(f$final_model_object$coef)   # warm-start chain
+}
+conv_diag <- do.call(rbind, diag_rows)
+conv_diag
+
+# Classify the failures
+failed <- conv_diag[!conv_diag$conv, ]
+cat("not converged:", nrow(failed), "of", nrow(conv_diag), "pairs on this fold\n")
+if (nrow(failed) > 0) {
+  cat("  outer EM exhausted (iterations == maxit):",
+      sum(failed$iterations == maxit_used), "\n")
+  cat("  inner solver broke early (iterations < maxit):",
+      sum(failed$iterations < maxit_used), "\n")
+  print(failed)
+}
+```
+
+#### Where in the grid does it fail?
+
+If non-convergence clusters at one end of the grid — most likely the small-`s0` end, where the spike is sharpest and the penalty surface hardest — that is informative rather than alarming, and argues for trimming the grid rather than raising `maxit`.
+
+```{r}
+with(conv_diag, table(s0 = s0, converged = conv))
+with(conv_diag, table(s1 = s1, converged = conv))
+```
+
+#### If it is the outer EM
+
+Confirm by giving it more room on one of the failing pairs. If `maxit = 200` converges, it was a budget problem; if it still exhausts, the deviance criterion is not settling and `epsilon` is the thing to look at.
+
+```{r}
+if (nrow(failed) > 0) {
+  worst <- failed[1, ]
+  f200 <- suppressWarnings(
+    fit_ssl_psdh(x_tr, y_tr, ss = c(worst$s0, worst$s1),
+                 init_method = "LASSO_bic", maxit = 200L)
+  )
+  c(s0 = worst$s0, s1 = worst$s1,
+    conv_at_50 = worst$conv, iters_at_50 = worst$iterations,
+    conv_at_200 = f200$conv, iters_at_200 = f200$iterations)
+}
+```
+
+#### Reconcile across all chains
+
+The by-hand walk above covers ONE of the `nfolds * ncv` chains — 20 of the 200 fits. Zero failures there is consistent with 22 failures overall; it just means this chain was not one of the affected ones.
+
+Sweep every chain and check the total comes to exactly `length(warn_log)`. If it does, the warnings are fully explained and there is nothing further to chase. If it does not, something is signalling warnings that is not the EM, and the message table below will say what.
+
+Each chain starts from the exact init the run used (`cv$fold_inits[[k]][[i]]`), so this reproduces the fits rather than approximating them. Cost is the same 200 fits as C.1.
+
+```{r}
+sweep_rows <- vector("list", 0)
+
+for (k in seq_len(ctrl_serial$ncv)) {
+  for (i in seq_len(ctrl_serial$nfolds)) {
+
+    tr   <- which(folds_serial$foldid[, k] != i)
+    x_tr <- x_std[tr, , drop = FALSE]
+    y_tr <- y[tr, , drop = FALSE]
+
+    b <- cv$fold_inits[[k]][[i]]        # the exact init this chain used
+
+    for (j in seq_len(nrow(cv$grid))) {
+      f <- suppressWarnings(
+        fit_ssl_psdh(x_tr, y_tr,
+                     ss    = c(cv$grid$s0[j], cv$grid$s1[j]),
+                     init  = b,
+                     maxit = maxit_used)
+      )
+      sweep_rows[[length(sweep_rows) + 1L]] <- data.frame(
+        rep = k, fold = i, pair = cv$grid$pair[j],
+        s0 = cv$grid$s0[j], s1 = cv$grid$s1[j],
+        conv = f$conv, iterations = f$iterations
+      )
+      b <- as.numeric(f$final_model_object$coef)
+    }
+  }
+}
+conv_sweep <- do.call(rbind, sweep_rows)
+
+# --- the reconciliation ----------------------------------------------------
+n_not_conv <- sum(!conv_sweep$conv)
+c(fits = nrow(conv_sweep),
+  not_converged = n_not_conv,
+  warnings_captured = length(warn_log))
+
+if (n_not_conv == length(warn_log)) {
+  cat("reconciled: every warning is one non-converged EM fit\n")
+} else {
+  cat("NOT reconciled — inspect the distinct warning messages:\n")
+  print(table(warn_log))
+}
+```
+
+```{r}
+# --- which chains? ---------------------------------------------------------
+# Clustering by (rep, fold) means specific training subsets are hard, not that
+# the grid is bad.
+with(conv_sweep, table(rep = rep, fold = fold, converged = conv))
+
+# --- where in the grid? ----------------------------------------------------
+with(conv_sweep, table(s0 = s0, converged = conv))
+with(conv_sweep, table(s1 = s1, converged = conv))
+
+# --- outer EM or inner solver? ---------------------------------------------
+failed_sweep <- conv_sweep[!conv_sweep$conv, ]
+if (nrow(failed_sweep) > 0) {
+  cat("outer EM exhausted (iterations == maxit):",
+      sum(failed_sweep$iterations == maxit_used), "\n")
+  cat("inner solver broke early (iterations < maxit):",
+      sum(failed_sweep$iterations <  maxit_used), "\n")
+  failed_sweep[order(failed_sweep$rep, failed_sweep$fold, failed_sweep$pair), ]
+}
+
+# --- does it move the scores? ----------------------------------------------
+# Count non-converged fits per pair and set it beside that pair's CV score. If
+# the affected pairs are the ones losing anyway, this changes nothing; if they
+# are near the top of the grid, the winner is being chosen partly on
+# untrustworthy fits.
+per_pair <- aggregate(cbind(n_not_conv = !conv) ~ pair, data = conv_sweep, FUN = sum)
+score_vs_conv <- merge(
+  cbind(cv$tuning, pair = cv$grid$pair),
+  per_pair, by = "pair"
+)
+score_vs_conv[order(-score_vs_conv$score_mean),
+              c("pair", "s0", "s1", "score_mean", "n_not_conv")]
+```
+
+#### Does non-convergence change the winner?
+
+Confirmed by reading `R/cv_fold_path.r` and `R/cv.r`: a non-converged fit takes the success branch (`cv_fold_path.r:85`), its linear predictor is stored exactly like a converged one (`:97`), and it flows into both the per-fold and pooled C-index (`cv.r:198`, `:215`) and then into `score_mean` (`:223`). Nothing in `cv.r` references `conv`. It also seeds the next pair's warm start (`:105`), so its influence is not confined to the pairs that warned.
+
+That is not automatically wrong — if the estimator is "EM with at most `maxit` iterations", then a non-converged fit *is* what the procedure produces, and dropping those fits would bias the score upward for exactly the pairs where convergence is hard. The question is whether it changes the ranking.
+
+Mask the non-converged fits and recompute. This uses the mean of per-fold scores rather than the pooled score (the pooled version would need the held-out linear predictors, which `bhcrr_cv()` does not return), so treat it as a ranking sensitivity check, not an exact recomputation of `score_mean`.
+
+```{r}
+# conv indicator aligned to cv$fold_scores: npairs x nfolds x ncv
+conv_arr <- array(NA, dim = dim(cv$fold_scores))
+for (r in seq_len(nrow(conv_sweep))) {
+  conv_arr[conv_sweep$pair[r], conv_sweep$fold[r], conv_sweep$rep[r]] <-
+    conv_sweep$conv[r]
+}
+stopifnot(!anyNA(conv_arr))          # every cell accounted for
+
+fs_all  <- cv$fold_scores
+fs_conv <- fs_all
+fs_conv[!conv_arr] <- NA_real_       # drop non-converged fits
+
+cmp <- data.frame(
+  pair        = cv$grid$pair,
+  s0          = cv$grid$s0,
+  s1          = cv$grid$s1,
+  score_mean  = cv$tuning$score_mean,                    # as reported
+  mean_all    = apply(fs_all,  1, mean, na.rm = TRUE),   # all fits
+  mean_conv   = apply(fs_conv, 1, mean, na.rm = TRUE),   # converged only
+  n_fits      = apply(!is.na(fs_all),  1, sum),
+  n_converged = apply(!is.na(fs_conv), 1, sum)
+)
+cmp$n_not_conv <- cmp$n_fits - cmp$n_converged
+cmp$delta      <- cmp$mean_conv - cmp$mean_all
+
+cmp[order(-cmp$score_mean), ]
+```
+
+```{r}
+# --- does the argmax move? -------------------------------------------------
+win_reported <- cmp$pair[which.max(cmp$score_mean)]
+win_all      <- cmp$pair[which.max(cmp$mean_all)]
+win_conv     <- cmp$pair[which.max(cmp$mean_conv)]
+
+c(reported = win_reported, fold_mean_all = win_all, fold_mean_converged = win_conv)
+
+if (win_conv == win_reported) {
+  cat("winner is unchanged when non-converged fits are dropped\n")
+} else {
+  cat("WINNER MOVES: pair", win_reported, "->", win_conv, "\n")
+  cmp[cmp$pair %in% c(win_reported, win_conv), ]
+}
+
+# --- how exposed is the reported winner? -----------------------------------
+cmp[cmp$pair == win_reported, c("pair","s0","s1","score_mean",
+                                "n_fits","n_not_conv","mean_all","mean_conv","delta")]
+
+# --- is the margin bigger than the convergence effect? ---------------------
+# If the gap between the top two pairs is smaller than |delta| at the winner,
+# the ranking is not robust to how non-convergence is handled.
+top2   <- sort(cmp$score_mean, decreasing = TRUE)[1:2]
+margin <- top2[1] - top2[2]
+c(margin_top2 = margin,
+  delta_at_winner = cmp$delta[cmp$pair == win_reported],
+  robust = abs(cmp$delta[cmp$pair == win_reported]) < margin)
+```
+
+```{r}
+# --- budget mismatch between CV and the final refit ------------------------
+# The CV fits ran at the fit_ssl_psdh default maxit; C.5 refits the winner at
+# maxit = 100. If the winner's CV fits were hitting the cap, the model that was
+# TUNED is not the model that gets FIT.
+c(maxit_in_cv    = maxit_used,
+  maxit_in_refit = 100L,
+  winner_non_converged_fits = cmp$n_not_conv[cmp$pair == win_reported])
+```
+
+# Parallel with Warm Start
+
+# Testing Parallel
+
+Warm starts won the benchmark, so this is the configuration to use: `parallel = TRUE` with `warm_start = TRUE`, which dispatches one task per `(rep, fold)` chain. Width is `nfolds * ncv` — the chain is sequential along the grid by construction, so the pair dimension cannot be split while warm starts are on.
+
+> **Running this in Positron.** Forking is unreliable inside RStudio and Positron and can hang the session; `bhcrr_cv()` emits a message about it rather than silently falling back. If the chunk stalls, interrupt it and either set `parallel = FALSE`, or run the file with `quarto render` / `Rscript`, where `interactive()` is `FALSE` and forking is well behaved.
+
+### P.1 — Run the tuning grid in parallel
+
+Two practices this demonstrates deliberately:
+
+-   **`maxit` is set explicitly in `fit_args`, and the final refit in P.5 uses the same value.** Relying on the `fit_ssl_psdh()` default for CV and then refitting at a different budget means the model that was tuned is not the model that gets fit.
+-   **`eval_time` is supplied**, so tau is a fixed a-priori horizon rather than something estimated from `y`.
+
+```{r}
+s0_seq <- seq(0.01, 0.08, length.out = 7)
+s1_seq <- seq(0.40, 0.70, length.out = 4)   # 7 x 4 = 28 pairs, all valid
+
+maxit_cv <- 50L    # used for the CV fits AND the final refit in P.5
+
+ctrl_par <- bhcrr_cv_control(
+  nfolds      = 10,
+  ncv         = 2,
+  strata      = "cause1",
+  pool        = 0.01,
+  eval_time   = tau,
+  init_method = "LASSO_bic",
+  warm_start  = TRUE,        # -> dispatch = "fold", width nfolds * ncv = 20
+  fit_args    = list(maxit = maxit_cv, epsilon = 1e-04),
+  parallel    = TRUE,
+  workers     = max(1L, parallel::detectCores() - 1L)
+)
+ctrl_par
+
+folds_par <- bhcrr_make_folds(y, ctrl_par)
+folds_par$fold_event_counts
+
+t0 <- Sys.time()
+cv_par <- bhcrr_cv(x_std, y,
+                   s0_seq  = s0_seq,
+                   s1_seq  = s1_seq,
+                   control = ctrl_par,
+                   folds   = folds_par)
+elapsed_par <- Sys.time() - t0
+
+cv_par
+cv_par$timing            # $dispatch should be "fold"; $workers as requested
+nrow(cv_par$grid)        # 28 pairs
+prod(dim(cv_par$fold_scores))   # total fits = 28 * 10 * 2
+```
+
+### P.2 — Parallel must equal serial
+
+The chains are independent and every input is fixed — folds are passed in, inits are cached and reused, traversal order is deterministic — so the parallel run must reproduce the serial one exactly. Anything else means non-determinism leaked into a worker.
+
+```{r}
+ctrl_ser <- ctrl_par
+ctrl_ser$parallel <- FALSE
+
+t0 <- Sys.time()
+cv_ser <- bhcrr_cv(x_std, y,
+                   s0_seq     = s0_seq,
+                   s1_seq     = s1_seq,
+                   control    = ctrl_ser,
+                   folds      = folds_par,           # identical folds
+                   fold_inits = cv_par$fold_inits)   # identical starting points
+elapsed_ser <- Sys.time() - t0
+
+stopifnot(
+  isTRUE(all.equal(cv_par$tuning,      cv_ser$tuning,      tolerance = 1e-12)),
+  isTRUE(all.equal(cv_par$pooled,      cv_ser$pooled,      tolerance = 1e-12)),
+  isTRUE(all.equal(cv_par$fold_scores, cv_ser$fold_scores, tolerance = 1e-12)),
+  identical(cv_par$iterations,  cv_ser$iterations),
+  identical(cv_par$convergence, cv_ser$convergence)
+)
+cat("parallel reproduces serial exactly\n")
+
+c(parallel_secs = as.numeric(elapsed_par, units = "secs"),
+  serial_secs   = as.numeric(elapsed_ser, units = "secs"),
+  speedup       = as.numeric(elapsed_ser, units = "secs") /
+                  as.numeric(elapsed_par, units = "secs"),
+  workers       = cv_par$timing$workers)
+```
+
+Speedup is bounded by `nfolds * ncv` = 20 chains regardless of core count, and the serial comparison above reuses the cached inits while the parallel run computed them, so it slightly understates the true speedup.
+
+### P.3 — Failures and convergence
+
+```{r}
+nrow(cv_par$errors)                          # hard failures; expect 0
+sum(cv_par$tuning$n_not_converged)           # non-converged fits
+sum(cv_par$tuning$n_not_converged) / prod(dim(cv_par$fold_scores))
+
+# Where does non-convergence sit in the grid? Trimming s0 at 0.08 should have
+# removed most of the region that was failing before.
+conv_by_pair <- cbind(cv_par$grid[, c("pair", "s0", "s1")],
+                      n_not_conv = cv_par$tuning$n_not_converged)
+subset(conv_by_pair, n_not_conv > 0)
+
+# Does the winner depend on non-converged fits?
+cv_par$tuning[which.max(cv_par$tuning$score_mean), ]
+```
+
+### P.4 — Tuning result
+
+```{r}
+cv_par$best
+
+head(cv_par$tuning[order(-cv_par$tuning$score_mean), ], 8)
+
+# Score surface across the grid
+with(cbind(cv_par$grid, score = cv_par$tuning$score_mean),
+     tapply(score, list(s0 = s0, s1 = s1), identity))
+
+theta <- mean(untuned$coefficients$Estimate != 0)
+bhcrr_tune_validate(cv_par$tuning,
+                    n      = nrow(x_std),
+                    theta  = theta,
+                    s0_seq = s0_seq,
+                    s1_seq = s1_seq)
+```
+
+An `interior_max` flag here means the optimum sits on a grid edge and the grid should be widened in that direction before the result is trusted.
+
+### P.5 — Final model at the tuned scales
+
+Refit on the full data at `cv_par$best`, using the **same** `maxit` the CV fits used.
+
+```{r}
+final_par <- fit_ssl_psdh(
+  x_std, y,
+  ss          = c(cv_par$best$s0, cv_par$best$s1),
+  init_method = "LASSO_bic",
+  maxit       = maxit_cv,        # same budget as the CV fits
+  epsilon     = 1e-04
+)
+
+final_par$conv
+final_par$iterations
+final_par$init_method
+final_par$init_meta[c("lambda", "bic", "df")]
+
+est <- final_par$coefficients
+sum(est$Estimate != 0)
+head(est[order(-abs(est$Estimate)), ], 20)
+```
+
+#### Selection against the known truth
+
+The simulation planted its active predictors, so the final model can be scored on selection as well as on discrimination. `beta1` holds the true cause-1 effects.
+
+```{r}
+truth_active <- which(beta1 != 0)
+sel_active   <- which(est$Estimate != 0)
+
+tp <- length(intersect(sel_active, truth_active))
+fp <- length(setdiff(sel_active, truth_active))
+fn <- length(setdiff(truth_active, sel_active))
+
+c(true_active = length(truth_active),
+  selected    = length(sel_active),
+  TP = tp, FP = fp, FN = fn,
+  sensitivity = tp / length(truth_active),
+  FDR         = if (length(sel_active) > 0) fp / length(sel_active) else NA_real_)
+
+# Estimated vs true effect for every genuinely active predictor
+data.frame(
+  variable = est$Variable[truth_active],
+  truth    = beta1[truth_active],
+  estimate = est$Estimate[truth_active],
+  block    = design$meta$block[truth_active]
+)
+```
+
+#### Discrimination
+
+```{r}
+lp_par <- predict_from_ssl_psdh(final_par, newx = x_std, tau)
+wolbers_c(y, lp_par, tau)          # IN-SAMPLE
+cv_par$best$score_mean             # out-of-sample, from the CV
+```
+
+The first number is in-sample — the model was fit on all of `x_std` — so it is optimistic and not comparable to `cv_par$best$score_mean`. The gap between them is the rough size of the optimism, and the CV number is the one to report.
