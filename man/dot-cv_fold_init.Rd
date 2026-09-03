@@ -2,7 +2,7 @@
 % Please edit documentation in R/cv_fold_path.r
 \name{.cv_fold_init}
 \alias{.cv_fold_init}
-\title{Compute the initialisation vector for one (repetition, fold)}
+\title{Compute the initialization vector for one (repetition, fold)}
 \usage{
 .cv_fold_init(x, y, train_idx, control)
 }

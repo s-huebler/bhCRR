@@ -1,4 +1,4 @@
-#' Compute the initialisation vector for one (repetition, fold)
+#' Compute the initialization vector for one (repetition, fold)
 #'
 #' Extracts the training subset, resolves the init method from \code{control},
 #' and returns the validated initial coefficient vector.  Factored out of
