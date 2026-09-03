@@ -1,3 +1,30 @@
+#' Compute the initialisation vector for one (repetition, fold)
+#'
+#' Extracts the training subset, resolves the init method from \code{control},
+#' and returns the validated initial coefficient vector.  Factored out of
+#' \code{.cv_fold_path()} so it can be dispatched independently (e.g. in
+#' Phase 1 of the wide parallel path where warm-start state cannot cross
+#' worker boundaries).
+#'
+#' @param x Full design matrix, \eqn{n \times p}.
+#' @param y Full outcome matrix, \eqn{n \times 2} (time, status).
+#' @param train_idx Integer vector.  Row indices of the training fold.
+#' @param control A \code{\link{bhcrr_cv_control}} object.
+#'
+#' @return Numeric vector of length \eqn{p}: the validated initial coefficients.
+#'
+#' @keywords internal
+.cv_fold_init <- function(x, y, train_idx, control) {
+  x_train    <- x[train_idx, , drop = FALSE]
+  y_train    <- y[train_idx, , drop = FALSE]
+  caller_env <- parent.frame()
+  resolved   <- .resolve_init_method(control$init_method, envir = caller_env)
+  raw        <- do.call(resolved$fn,
+                        c(list(x = x_train, y = y_train), control$init_args))
+  .validate_init(raw, ncol(x), resolved$label)$init
+}
+
+
 #' Per-fold grid worker for bhcrr_cv()
 #'
 #' Runs one (repetition, fold) across the entire hyperparameter grid in
@@ -63,11 +90,7 @@
   if (!is.null(init)) {
     b_init <- .validate_init(init, p, "cached")$init
   } else {
-    caller_env <- parent.frame()
-    resolved   <- .resolve_init_method(control$init_method, envir = caller_env)
-    raw        <- do.call(resolved$fn,
-                          c(list(x = x_train, y = y_train), control$init_args))
-    b_init     <- .validate_init(raw, p, resolved$label)$init
+    b_init <- .cv_fold_init(x, y, train_idx, control)
   }
 
   # ---- output containers ----

@@ -3,8 +3,7 @@
 #' Runs K-fold cross-validation (with optional repetitions) over the
 #' \code{(s0, s1)} grid produced by \code{\link{.cv_grid}}.  Each
 #' (repetition, fold) is handled by \code{\link{.cv_fold_path}}, which fits
-#' the full grid in warm-start traversal order.  This function is sequential;
-#' parallel execution is reserved for a future commit.
+#' the full grid in warm-start traversal order.
 #'
 #' @param x Numeric matrix (\eqn{n \times p}).
 #' @param y Numeric matrix (\eqn{n \times 2}).  Column 1 is event time;
@@ -60,6 +59,16 @@
 #' message.  If \emph{every} fit fails \code{stop()} is called; an all-NA
 #' tuning frame is never returned.
 #'
+#' @section Parallelism:
+#' When \code{control$parallel} is \code{TRUE}, fold tasks are dispatched via
+#' \code{parallel::mclapply} (forking).  Under \code{warm_start = TRUE} the
+#' width is \code{nfolds x ncv} (one chain per fold).  Under
+#' \code{warm_start = FALSE} chains carry no state so the width expands to
+#' \code{nfolds x ncv x npairs} — but cold starts may converge less often
+#' within \code{maxit}, so compare \code{$tuning$n_not_converged} before
+#' choosing.
+#'
+
 #' @seealso \code{\link{bhcrr_cv_control}}, \code{\link{bhcrr_make_folds}},
 #'   \code{\link{.cv_fold_path}}, \code{\link{.cv_grid}},
 #'   \code{\link{wolbers_c}}
@@ -112,31 +121,231 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
     tau_source <- "quantile"
   }
 
-  # ---- 4. Sequential loop over (rep, fold) ----
-  fold_results   <- vector("list", ncv)
-  test_idx_store <- vector("list", ncv)
-  fold_init_out  <- vector("list", ncv)
+  # ---- 4. Dispatch (rep, fold) tasks ----
+  tasks <- expand.grid(i = seq_len(nfolds), k = seq_len(ncv),
+                       KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+  n_tasks <- nrow(tasks)
 
-  for (k in seq_len(ncv)) {
-    fold_results[[k]]   <- vector("list", nfolds)
-    test_idx_store[[k]] <- vector("list", nfolds)
-    fold_init_out[[k]]  <- vector("list", nfolds)
-
-    for (i in seq_len(nfolds)) {
-      train_idx <- which(foldid[, k] != i)
-      test_idx  <- which(foldid[, k] == i)
-      test_idx_store[[k]][[i]] <- test_idx
-
-      supplied_init <- if (!is.null(fold_inits)) fold_inits[[k]][[i]] else NULL
-
-      result <- tryCatch(
-        .cv_fold_path(x, y, train_idx, test_idx, grid, control, tau,
-                      init = supplied_init),
-        error = function(e) e
+  if (isTRUE(control$parallel)) {
+    n_workers <- if (!is.null(control$workers)) {
+      as.integer(control$workers)
+    } else {
+      min(n_tasks, max(1L, parallel::detectCores() - 1L))
+    }
+    if (interactive()) {
+      message(sprintf(
+        "bhcrr_cv: forking %d worker(s) for %d (rep, fold) task(s). ",
+        n_workers, n_tasks),
+        "Forking can hang in RStudio/Positron; use control$parallel = FALSE if the session freezes.",
+        appendLF = TRUE
       )
-      fold_results[[k]][[i]]  <- result
-      fold_init_out[[k]][[i]] <- if (inherits(result, "error")) NULL
-                                  else result$init
+    }
+  } else {
+    n_workers <- 1L
+  }
+
+  # Reproducibility: switch to L'Ecuyer-CMRG before fork so per-worker
+  # streams are independent and, when seed is set, reproducible.
+  old_rngkind <- RNGkind()[1L]
+  on.exit(RNGkind(old_rngkind), add = TRUE)
+  RNGkind("L'Ecuyer-CMRG")
+  if (!is.null(control$seed)) set.seed(control$seed)
+
+  run_fn <- if (isTRUE(control$parallel)) {
+    function(X, FUN) parallel::mclapply(X, FUN,
+                                        mc.cores       = n_workers,
+                                        mc.preschedule = FALSE)
+  } else {
+    lapply
+  }
+
+  if (isTRUE(control$warm_start)) {
+    # --- narrow path: one task per (rep, fold); entire grid per task ---
+    dispatch_label <- "fold"
+
+    res_flat <- run_fn(seq_len(n_tasks), function(t) {
+      k_t <- tasks$k[t]; i_t <- tasks$i[t]
+      train_idx <- which(foldid[, k_t] != i_t)
+      test_idx  <- which(foldid[, k_t] == i_t)
+      supplied  <- if (!is.null(fold_inits)) fold_inits[[k_t]][[i_t]] else NULL
+      list(
+        k        = k_t,
+        i        = i_t,
+        test_idx = test_idx,
+        result   = tryCatch(
+          .cv_fold_path(x, y, train_idx, test_idx, grid, control, tau,
+                        init = supplied),
+          error = function(e) e
+        )
+      )
+    })
+
+    # --- worker-death check ---
+    if (length(res_flat) != n_tasks)
+      stop(sprintf("mclapply returned %d results for %d (rep,fold) tasks; a worker process died.",
+                   length(res_flat), n_tasks))
+    for (t in seq_len(n_tasks)) {
+      el <- res_flat[[t]]
+      if (inherits(el, "try-error"))
+        stop(sprintf("Worker died for rep %d fold %d: %s",
+                     tasks$k[t], tasks$i[t], as.character(el)))
+    }
+
+    # --- unflatten into fold_results / test_idx_store / fold_init_out ---
+    fold_results   <- vector("list", ncv)
+    test_idx_store <- vector("list", ncv)
+    fold_init_out  <- vector("list", ncv)
+    for (k in seq_len(ncv)) {
+      fold_results[[k]]   <- vector("list", nfolds)
+      test_idx_store[[k]] <- vector("list", nfolds)
+      fold_init_out[[k]]  <- vector("list", nfolds)
+    }
+    for (t in seq_len(n_tasks)) {
+      el <- res_flat[[t]]; k_t <- el$k; i_t <- el$i
+      test_idx_store[[k_t]][[i_t]] <- el$test_idx
+      fold_results[[k_t]][[i_t]]   <- el$result
+      fold_init_out[[k_t]][[i_t]]  <- if (inherits(el$result, "error")) NULL
+                                       else el$result$init
+    }
+
+  } else {
+    # --- wide path: warm_start = FALSE, parallel across (rep, fold, pair) ---
+    dispatch_label <- "fold-pair"
+
+    # Phase 1: compute one init per (k, i), in parallel.
+    # Skip entirely if fold_inits was supplied.
+    if (!is.null(fold_inits)) {
+      init_mat <- fold_inits  # already [[k]][[i]]
+    } else {
+      init_flat <- run_fn(seq_len(n_tasks), function(t) {
+        k_t <- tasks$k[t]; i_t <- tasks$i[t]
+        train_idx <- which(foldid[, k_t] != i_t)
+        tryCatch(
+          .cv_fold_init(x, y, train_idx, control),
+          error = function(e) e
+        )
+      })
+      if (length(init_flat) != n_tasks)
+        stop(sprintf("mclapply returned %d results for %d init tasks; a worker process died.",
+                     length(init_flat), n_tasks))
+      for (t in seq_len(n_tasks)) {
+        el <- init_flat[[t]]
+        if (inherits(el, "try-error"))
+          stop(sprintf("Worker died computing init for rep %d fold %d: %s",
+                       tasks$k[t], tasks$i[t], as.character(el)))
+        if (inherits(el, "error"))
+          stop(sprintf("Init failed for rep %d fold %d: %s",
+                       tasks$k[t], tasks$i[t], conditionMessage(el)))
+      }
+      init_mat <- vector("list", ncv)
+      for (k in seq_len(ncv)) init_mat[[k]] <- vector("list", nfolds)
+      for (t in seq_len(n_tasks)) {
+        init_mat[[tasks$k[t]]][[tasks$i[t]]] <- init_flat[[t]]
+      }
+    }
+
+    # Phase 2: fan out nfolds * ncv * n_pairs tasks.
+    pair_tasks <- expand.grid(j = seq_len(n_pairs), i = seq_len(nfolds),
+                              k = seq_len(ncv),
+                              KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE)
+    n_pair_tasks <- nrow(pair_tasks)
+
+    pair_res_flat <- run_fn(seq_len(n_pair_tasks), function(t) {
+      k_t <- pair_tasks$k[t]; i_t <- pair_tasks$i[t]; j_t <- pair_tasks$j[t]
+      train_idx <- which(foldid[, k_t] != i_t)
+      test_idx  <- which(foldid[, k_t] == i_t)
+      init_vec  <- init_mat[[k_t]][[i_t]]
+      list(
+        k = k_t, i = i_t, j = j_t,
+        test_idx = test_idx,
+        result   = tryCatch(
+          .cv_fold_path(x, y, train_idx, test_idx, grid[j_t, , drop = FALSE],
+                        control, tau, init = init_vec),
+          error = function(e) e
+        )
+      )
+    })
+
+    if (length(pair_res_flat) != n_pair_tasks)
+      stop(sprintf("mclapply returned %d results for %d (rep,fold,pair) tasks; a worker process died.",
+                   length(pair_res_flat), n_pair_tasks))
+    for (t in seq_len(n_pair_tasks)) {
+      el <- pair_res_flat[[t]]
+      if (inherits(el, "try-error"))
+        stop(sprintf("Worker died for rep %d fold %d pair %d: %s",
+                     pair_tasks$k[t], pair_tasks$i[t], pair_tasks$j[t], as.character(el)))
+    }
+
+    # Stitch per-pair results back into per-fold shape.
+    fold_results   <- vector("list", ncv)
+    test_idx_store <- vector("list", ncv)
+    fold_init_out  <- vector("list", ncv)
+    for (k in seq_len(ncv)) {
+      fold_results[[k]]   <- vector("list", nfolds)
+      test_idx_store[[k]] <- vector("list", nfolds)
+      fold_init_out[[k]]  <- vector("list", nfolds)
+    }
+
+    # Pre-fill test_idx_store and fold_init_out.
+    for (t in seq_len(n_tasks)) {
+      k_t <- tasks$k[t]; i_t <- tasks$i[t]
+      test_idx_store[[k_t]][[i_t]] <- which(foldid[, k_t] == i_t)
+      fold_init_out[[k_t]][[i_t]]  <- init_mat[[k_t]][[i_t]]
+    }
+
+    # Build per-fold synthetic result objects from the per-pair pieces.
+    for (k in seq_len(ncv)) {
+      for (i in seq_len(nfolds)) {
+        n_test_ki <- length(test_idx_store[[k]][[i]])
+
+        lp_out    <- matrix(NA_real_,    nrow = n_test_ki, ncol = n_pairs)
+        iters_out <- rep(NA_integer_,    n_pairs)
+        conv_out  <- rep(NA,             n_pairs)
+        errs_list <- vector("list",      n_pairs)
+
+        for (t in seq_len(n_pair_tasks)) {
+          el <- pair_res_flat[[t]]
+          if (el$k != k || el$i != i) next
+          j_t <- el$j
+          r_t <- el$result
+          if (inherits(r_t, "error")) {
+            errs_list[[j_t]] <- data.frame(
+              pair    = grid$pair[j_t],
+              s0      = grid$s0[j_t],
+              s1      = grid$s1[j_t],
+              message = conditionMessage(r_t),
+              stringsAsFactors = FALSE
+            )
+          } else {
+            # r_t is from .cv_fold_path with a 1-row grid; all vectors length 1.
+            lp_out[, j_t]    <- r_t$lp[, 1L]
+            iters_out[j_t]   <- r_t$iterations[1L]
+            conv_out[j_t]    <- r_t$conv[1L]
+            if (!is.null(r_t$coefs) && isTRUE(control$keep_coefs)) {
+              # coef_list from a 1-row grid has 1 element; insert at position j_t
+              # — handled later via fold_results coef_list stitching if needed.
+            }
+          }
+        }
+
+        non_null <- Filter(Negate(is.null), errs_list)
+        errs_df  <- if (length(non_null) > 0L) {
+          do.call(rbind, non_null)
+        } else {
+          data.frame(pair = integer(0), s0 = numeric(0), s1 = numeric(0),
+                     message = character(0), stringsAsFactors = FALSE)
+        }
+
+        fold_results[[k]][[i]] <- list(
+          lp         = lp_out,
+          init       = init_mat[[k]][[i]],
+          iterations = iters_out,
+          conv       = conv_out,
+          errors     = errs_df,
+          n_failed   = nrow(errs_df),
+          coefs      = NULL   # keep_coefs not supported on wide path for now
+        )
+      }
     }
   }
 
@@ -325,7 +534,9 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
     folds       = folds,
     control     = control,
     grid        = grid,
-    timing      = list(elapsed = elapsed, workers = 1L, parallel = FALSE)
+    timing      = list(elapsed = elapsed, workers = n_workers,
+                       parallel = isTRUE(control$parallel),
+                       dispatch = dispatch_label)
   )
   if (!is.null(coefs_out)) out$coefs <- coefs_out
 

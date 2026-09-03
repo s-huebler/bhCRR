@@ -39,7 +39,16 @@ pairs where the fit failed.}
 \item{\code{init}}{Numeric vector of length \eqn{p}.  The initial
 coefficient vector actually used.}
 \item{\code{iterations}}{Integer vector, one entry per grid pair.
-\code{NA} where the fit failed.}
+\code{NA} where the fit errored.  When \code{conv[j]} is
+\code{FALSE} and \code{iterations[j] == maxit} (from
+\code{control\$fit_args}), the outer EM exhausted its iteration
+budget; when \code{conv[j]} is \code{FALSE} and
+\code{iterations[j] < maxit}, the inner \pkg{fastcmprsk} solver
+hit its escalation ceiling and broke early — the only way to
+distinguish the two non-convergence modes.}
+\item{\code{conv}}{Logical vector, one entry per grid pair.
+\code{TRUE} if the EM converged within \code{maxit} iterations,
+\code{FALSE} if it did not, \code{NA} where the fit errored.}
 \item{\code{errors}}{Data frame with columns \code{pair}, \code{s0},
 \code{s1}, \code{message}; zero rows when all fits succeeded.}
 \item{\code{n_failed}}{Integer.  Number of failed fits.}

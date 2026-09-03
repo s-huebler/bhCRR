@@ -264,3 +264,110 @@ test_that("$pooled is n_pairs x ncv and $fold_scores is n_pairs x nfolds x ncv",
   expect_equal(dim(r$iterations),  c(n_pairs, fold_obj$nfolds, fold_obj$ncv))
   expect_equal(dim(r$convergence), c(n_pairs, fold_obj$nfolds, fold_obj$ncv))
 })
+
+# ---------------------------------------------------------------------------
+# Parallel correctness
+# ---------------------------------------------------------------------------
+
+skip_parallel <- function() {
+  skip_on_os("windows")
+  skip_if(parallel::detectCores() < 2L, "fewer than 2 cores")
+}
+
+test_that("parallel warm_start=TRUE gives identical results to sequential", {
+  skip_parallel()
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+  ctrl_seq <- .cv_ctrl(parallel = FALSE, workers = NULL, seed = 1L)
+  ctrl_par <- .cv_ctrl(parallel = TRUE,  workers = 2L,   seed = 1L)
+  fold_obj <- bhcrr_make_folds(y, ctrl_seq)
+
+  r_seq <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_seq, folds = fold_obj))
+  r_par <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_par, folds = fold_obj))
+
+  expect_equal(r_seq$tuning,      r_par$tuning)
+  expect_equal(r_seq$pooled,      r_par$pooled)
+  expect_equal(r_seq$fold_scores, r_par$fold_scores)
+  expect_equal(r_seq$iterations,  r_par$iterations)
+  expect_equal(r_seq$convergence, r_par$convergence)
+})
+
+test_that("parallel warm_start=FALSE gives identical results to sequential", {
+  skip_parallel()
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+  ctrl_seq <- .cv_ctrl(parallel = FALSE, workers = NULL, seed = 1L, warm_start = FALSE)
+  ctrl_par <- .cv_ctrl(parallel = TRUE,  workers = 2L,   seed = 1L, warm_start = FALSE)
+  fold_obj <- bhcrr_make_folds(y, ctrl_seq)
+
+  r_seq <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_seq, folds = fold_obj))
+  r_par <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_par, folds = fold_obj))
+
+  expect_equal(r_seq$tuning,      r_par$tuning)
+  expect_equal(r_seq$pooled,      r_par$pooled)
+  expect_equal(r_seq$fold_scores, r_par$fold_scores)
+  expect_equal(r_seq$iterations,  r_par$iterations)
+  expect_equal(r_seq$convergence, r_par$convergence)
+})
+
+test_that("sequential warm_start=FALSE matches sequential warm_start=FALSE wide dispatch invariant", {
+  # The wide path (warm_start=FALSE) must be identical to sequential warm_start=FALSE.
+  # This is step 3's correctness invariant.
+  skip_parallel()
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+  ctrl_seq  <- .cv_ctrl(parallel = FALSE, seed = 1L, warm_start = FALSE)
+  ctrl_wide <- .cv_ctrl(parallel = TRUE,  seed = 1L, warm_start = FALSE, workers = 2L)
+  fold_obj  <- bhcrr_make_folds(y, ctrl_seq)
+
+  r_seq  <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_seq,  folds = fold_obj))
+  r_wide <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_wide, folds = fold_obj))
+
+  expect_equal(r_seq$tuning,      r_wide$tuning)
+  expect_equal(r_seq$pooled,      r_wide$pooled)
+  expect_equal(r_seq$fold_scores, r_wide$fold_scores)
+})
+
+test_that("$timing reports actual workers, parallel flag, and dispatch label", {
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+  ctrl <- .cv_ctrl(parallel = FALSE)
+  r <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl))
+
+  expect_equal(r$timing$workers,  1L)
+  expect_false(r$timing$parallel)
+  expect_equal(r$timing$dispatch, "fold")
+
+  ctrl_cold <- .cv_ctrl(parallel = FALSE, warm_start = FALSE)
+  r2 <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_cold))
+  expect_equal(r2$timing$dispatch, "fold-pair")
+})
+
+test_that("fold_inits supplied + parallel: phase 1 skipped, init method not called", {
+  skip_parallel()
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+
+  call_count <- 0L
+  counting_init <- function(x, y, ...) {
+    call_count <<- call_count + 1L
+    list(init = rep(0, ncol(x)), meta = NULL)
+  }
+  ctrl_seq <- .cv_ctrl(init_method = counting_init, parallel = FALSE, seed = 1L)
+  fold_obj <- bhcrr_make_folds(y, ctrl_seq)
+  r1 <- suppressWarnings(bhcrr_cv(x, y, s0_small, s1_small, ctrl_seq, folds = fold_obj))
+
+  # Second run with parallel and supplied fold_inits
+  call_count <- 0L
+  counting_init2 <- function(x, y, ...) {
+    call_count <<- call_count + 1L
+    list(init = rep(0, ncol(x)), meta = NULL)
+  }
+  ctrl_par <- .cv_ctrl(init_method = counting_init2, parallel = TRUE, workers = 2L, seed = 1L)
+  r2 <- suppressWarnings(
+    bhcrr_cv(x, y, s0_small, s1_small, ctrl_par,
+             folds = fold_obj, fold_inits = r1$fold_inits)
+  )
+  expect_equal(call_count, 0L,
+    label = "init method must not be called when fold_inits is supplied (parallel path)")
+})

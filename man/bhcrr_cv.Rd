@@ -74,8 +74,7 @@ list \code{[[k]][[i]]} of coef lists from each fold's
 Runs K-fold cross-validation (with optional repetitions) over the
 \code{(s0, s1)} grid produced by \code{\link{.cv_grid}}.  Each
 (repetition, fold) is handled by \code{\link{.cv_fold_path}}, which fits
-the full grid in warm-start traversal order.  This function is sequential;
-parallel execution is reserved for a future commit.
+the full grid in warm-start traversal order.
 }
 \section{Failure policy}{
 
@@ -83,6 +82,17 @@ If any fits fail a single \code{warning()} is emitted at the end
 summarising the total count, distinct pairs affected, and the first error
 message.  If \emph{every} fit fails \code{stop()} is called; an all-NA
 tuning frame is never returned.
+}
+
+\section{Parallelism}{
+
+When \code{control$parallel} is \code{TRUE}, fold tasks are dispatched via
+\code{parallel::mclapply} (forking).  Under \code{warm_start = TRUE} the
+width is \code{nfolds x ncv} (one chain per fold).  Under
+\code{warm_start = FALSE} chains carry no state so the width expands to
+\code{nfolds x ncv x npairs} — but cold starts may converge less often
+within \code{maxit}, so compare \code{$tuning$n_not_converged} before
+choosing.
 }
 
 \seealso{

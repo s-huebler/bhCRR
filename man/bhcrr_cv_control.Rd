@@ -79,8 +79,15 @@ do not accept \code{...}.  Supplying \code{"init"}, \code{"init_method"},
 \code{"init_args"}, \code{"x"} or \code{"y"} here is an error; use the
 dedicated fields instead.}
 
-\item{parallel}{Logical.  Reserved for future parallel fold evaluation.
-Default \code{FALSE}.}
+\item{parallel}{Logical.  When \code{TRUE}, fold tasks are dispatched via
+\code{parallel::mclapply} (forking).  Width is \code{nfolds * ncv} under
+\code{warm_start = TRUE} (one task per fold chain) and
+\code{nfolds * ncv * npairs} under \code{warm_start = FALSE} (one task
+per pair, no chain state to preserve).  Set \code{control$workers} to cap
+the core count; on CHPC, set this from the SLURM allocation as
+\code{detectCores()} reports the whole node.  Forking is unreliable inside
+RStudio and Positron — a message is emitted when \code{parallel = TRUE}
+and \code{interactive()} is \code{TRUE}.  Default \code{FALSE}.}
 
 \item{workers}{Integer or \code{NULL}.  Number of parallel workers.
 Ignored when \code{parallel = FALSE}.  Default \code{NULL} (auto).}
