@@ -39,7 +39,7 @@ test_that("returns bhcrr_cv; tuning has correct shape and column names; print wo
   expect_s3_class(r, "bhcrr_cv")
 
   expected_cols <- c("s0", "s1", "score_mean", "score_sd",
-                     "score_fold_sd", "n_failed_folds")
+                     "score_fold_sd", "n_failed_folds", "n_not_converged")
   expect_named(r$tuning, expected_cols)
   expect_equal(nrow(r$tuning), nrow(.cv_grid(s0_small, s1_small)))
 
@@ -200,7 +200,54 @@ test_that("init failure in every fold triggers stop() quoting the first message"
 })
 
 # ---------------------------------------------------------------------------
-# 7. Dimensions of $pooled and $fold_scores
+# 8. Non-convergence tracking: conv=FALSE captured; errors stays empty
+# ---------------------------------------------------------------------------
+#
+# fit_ssl_psdh's convergence check fires only when iter > 5.  With maxit=5
+# that condition is never satisfied, so every fit returns conv=FALSE
+# regardless of data, init, or hyperparameters.  The fits still succeed
+# (no error), so $errors must stay empty.
+#
+# bhcrr_cv() must emit exactly one summary non-convergence warning — distinct
+# from the per-fit "fit_ssl_psdh did not converge" warnings from the fitter.
+
+test_that("maxit=5 bypasses convergence check; all conv=FALSE; $errors empty; one summary warning", {
+  fix <- .load_cv_fixture()
+  x <- fix$x; y <- fix$y
+
+  # maxit=5: convergence check (iter > 5) never fires -> conv=FALSE for all fits.
+  ctrl <- .cv_ctrl(fit_args = list(maxit = 5L, epsilon = 1e-4, theta_b = 20L))
+
+  # Count only bhcrr_cv's summary warning (pattern "fit(s) did not converge");
+  # muffle all warnings to keep test output clean.
+  summary_nc_count <- 0L
+  r <- withCallingHandlers(
+    bhcrr_cv(x, y, s0_small, s1_small, ctrl),
+    warning = function(w) {
+      if (grepl("fit\\(s\\) did not converge", conditionMessage(w)))
+        summary_nc_count <<- summary_nc_count + 1L
+      invokeRestart("muffleWarning")
+    }
+  )
+
+  expect_equal(summary_nc_count, 1L,
+    label = "bhcrr_cv must emit exactly one non-convergence summary warning")
+
+  # All convergence flags must be FALSE.
+  expect_true(all(!r$convergence),
+    label = "every (pair, fold, rep) entry in $convergence must be FALSE")
+
+  # n_not_converged must equal nfolds * ncv for every pair.
+  n_cells <- r$folds$nfolds * r$folds$ncv
+  expect_true(all(r$tuning$n_not_converged == n_cells),
+    label = "n_not_converged must equal nfolds * ncv for every pair")
+
+  # Fits completed (no errors) — non-convergence is not failure.
+  expect_equal(nrow(r$errors), 0L)
+})
+
+# ---------------------------------------------------------------------------
+# 10. Dimensions of $pooled, $fold_scores, $iterations, $convergence
 # ---------------------------------------------------------------------------
 
 test_that("$pooled is n_pairs x ncv and $fold_scores is n_pairs x nfolds x ncv", {
@@ -214,4 +261,6 @@ test_that("$pooled is n_pairs x ncv and $fold_scores is n_pairs x nfolds x ncv",
 
   expect_equal(dim(r$pooled),      c(n_pairs, fold_obj$ncv))
   expect_equal(dim(r$fold_scores), c(n_pairs, fold_obj$nfolds, fold_obj$ncv))
+  expect_equal(dim(r$iterations),  c(n_pairs, fold_obj$nfolds, fold_obj$ncv))
+  expect_equal(dim(r$convergence), c(n_pairs, fold_obj$nfolds, fold_obj$ncv))
 })

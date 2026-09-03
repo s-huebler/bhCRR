@@ -141,8 +141,10 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
   }
 
   # ---- 5. Assemble scores and errors ----
-  pooled_mat     <- matrix(NA_real_, nrow = n_pairs, ncol = ncv)
-  fold_score_arr <- array(NA_real_,  dim  = c(n_pairs, nfolds, ncv))
+  pooled_mat     <- matrix(NA_real_,   nrow = n_pairs, ncol = ncv)
+  fold_score_arr <- array(NA_real_,    dim  = c(n_pairs, nfolds, ncv))
+  iters_arr      <- array(NA_integer_, dim  = c(n_pairs, nfolds, ncv))
+  conv_arr       <- array(NA,          dim  = c(n_pairs, nfolds, ncv))
   n_failed_vec   <- integer(n_pairs)
   all_errors     <- list()
 
@@ -172,8 +174,10 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
         n_failed_vec <- n_failed_vec + 1L
 
       } else {
-        # Scatter lp into the rep-level matrix for pooled scoring.
+        # Scatter lp, iterations, and convergence into rep-level stores.
         lp_rep[test_idx, ] <- result$lp
+        iters_arr[, i, k]  <- result$iterations
+        conv_arr[, i, k]   <- result$conv
 
         # Pair-level errors from within the fold worker.
         if (nrow(result$errors) > 0L) {
@@ -231,13 +235,19 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
   score_fold_sd <- rowMeans(fold_sds, na.rm = TRUE)
   score_fold_sd[!is.finite(score_fold_sd)] <- NA_real_
 
+  # n_not_converged[j]: count of (rep, fold) combinations where the fit
+  # returned successfully but conv == FALSE.  Failed fits (NA conv) are excluded.
+  n_not_converged_vec <- apply(conv_arr, 1L,
+                               function(v) sum(v == FALSE, na.rm = TRUE))
+
   tuning <- data.frame(
-    s0             = grid$s0,
-    s1             = grid$s1,
-    score_mean     = score_mean,
-    score_sd       = score_sd,
-    score_fold_sd  = score_fold_sd,
-    n_failed_folds = n_failed_vec,
+    s0              = grid$s0,
+    s1              = grid$s1,
+    score_mean      = score_mean,
+    score_sd        = score_sd,
+    score_fold_sd   = score_fold_sd,
+    n_failed_folds  = n_failed_vec,
+    n_not_converged = n_not_converged_vec,
     stringsAsFactors = FALSE,
     row.names = NULL
   )
@@ -259,7 +269,7 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
     )
   }
 
-  # ---- 7. Failure reporting ----
+  # ---- 7. Failure and non-convergence reporting ----
   total_failed <- sum(n_failed_vec)
   if (total_failed > 0L) {
     first_msg <- errors_df$message[1L]
@@ -283,6 +293,22 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
     )
   }
 
+  # Non-convergence is a separate, less-severe condition: the fit returned a
+  # usable result but the EM did not satisfy the convergence criterion.
+  total_nc <- sum(n_not_converged_vec)
+  if (total_nc > 0L) {
+    n_pairs_nc  <- sum(n_not_converged_vec > 0L)
+    total_fits  <- sum(!is.na(conv_arr))
+    warning(
+      sprintf(
+        paste0("%d of %d fit(s) did not converge across %d pair(s). ",
+               "Consider increasing maxit or relaxing epsilon."),
+        total_nc, total_fits, n_pairs_nc
+      ),
+      call. = FALSE
+    )
+  }
+
   # ---- 6. Return ----
   elapsed <- proc.time() - t_start
 
@@ -291,6 +317,8 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
     best        = best,
     pooled      = pooled_mat,
     fold_scores = fold_score_arr,
+    iterations  = iters_arr,
+    convergence = conv_arr,
     fold_inits  = fold_init_out,
     eval_time   = list(value = tau, source = tau_source),
     errors      = errors_df,
@@ -339,7 +367,9 @@ print.bhcrr_cv <- function(x, ...) {
     cat("  best     : (none \u2014 all fits failed)\n")
   }
 
-  cat(sprintf("  failures : %d fit(s)\n", sum(x$tuning$n_failed_folds)))
+  cat(sprintf("  fits     : %d failed, %d not converged\n",
+              sum(x$tuning$n_failed_folds),
+              sum(x$tuning$n_not_converged)))
 
   elapsed_s <- x$timing$elapsed["elapsed"]
   cat(sprintf("  elapsed  : %.2f s\n", elapsed_s))
