@@ -14,7 +14,6 @@ Imports:
     fastcmprsk,
     Rcpp,
     rsample,
-    simsurv,
     survival
 LinkingTo:
     Rcpp,

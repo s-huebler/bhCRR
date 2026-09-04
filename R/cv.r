@@ -436,11 +436,11 @@ bhcrr_cv <- function(x, y, s0_seq, s1_seq, control = bhcrr_cv_control(),
   score_mean <- rowMeans(pooled_mat, na.rm = TRUE)
   score_mean[!is.finite(score_mean)] <- NA_real_
 
-  score_sd <- apply(pooled_mat, 1L, function(v) sd(v, na.rm = TRUE))
+  score_sd <- apply(pooled_mat, 1L, function(v) stats::sd(v, na.rm = TRUE))
   score_sd[!is.finite(score_sd)] <- NA_real_
 
   # fold_sds[j, k] = within-rep sd of per-fold scores for pair j, rep k
-  fold_sds      <- apply(fold_score_arr, c(1L, 3L), function(v) sd(v, na.rm = TRUE))
+  fold_sds      <- apply(fold_score_arr, c(1L, 3L), function(v) stats::sd(v, na.rm = TRUE))
   score_fold_sd <- rowMeans(fold_sds, na.rm = TRUE)
   score_fold_sd[!is.finite(score_fold_sd)] <- NA_real_
 

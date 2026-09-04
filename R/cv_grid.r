@@ -4,7 +4,7 @@
 #' of \code{s0_seq} and \code{s1_seq}, drops pairs where \code{s1 <= s0}, and
 #' orders the survivors in warm-start traversal order: unique \code{s1} values
 #' in the order they appear in \code{s1_seq}, and within each group \code{s0}
-#' ascending.  This matches the traversal in \code{\link{tune_ssl_psdh}}.
+#' ascending.  This matches the traversal in \code{tune_ssl_psdh}.
 #'
 #' @param s0_seq Numeric vector of candidate spike scale values.
 #' @param s1_seq Numeric vector of candidate slab scale values.

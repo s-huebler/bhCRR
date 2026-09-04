@@ -21,6 +21,12 @@ given feature is active (\eqn{\pi = \Pr(\gamma_j = 1)}).}
 estimates \eqn{\hat{\beta}} from the previous M-step.}
 
 \item{exact}{If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.}
+
+\item{a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior on
+the global mixture probability \eqn{\theta}. Default \code{1}.}
+
+\item{b}{Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior on
+\eqn{\theta}. Default \code{1}.}
 }
 \value{
 Numeric vector of length \eqn{p}. Posterior inclusion

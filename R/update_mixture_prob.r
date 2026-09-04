@@ -7,6 +7,10 @@
 #' @param p Numeric vector of length \eqn{p}. Posterior inclusion
 #'   probabilities \eqn{E[\gamma_j \mid \beta_j]} for all features, as
 #'   returned by \code{\link{expected_inclusion_probs}}.
+#' @param a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior.
+#'   Default \code{1}.
+#' @param b Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior.
+#'   Default \code{1}.
 #'
 #' @returns Numeric scalar in \eqn{[0, 1]}.  Updated global mixture
 #'   probability \eqn{\hat{\pi} = \frac{1}{p} \sum_j E[\gamma_j]}.

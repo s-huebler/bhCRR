@@ -79,8 +79,7 @@
 #'   (as returned by \code{.resolve_init_method()}) alongside the original
 #'   \code{$init_method}.
 #'
-#' @seealso \code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}},
-#'   \code{\link{bhcrr_autotune}}, \code{\link{fit_ssl_psdh}}
+#' @seealso \code{\link{fit_ssl_psdh}}
 #'
 #' @export
 #'

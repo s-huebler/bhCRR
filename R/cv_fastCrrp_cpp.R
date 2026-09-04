@@ -1,13 +1,13 @@
 #' Cross-validated Tuning for fastCrrp (RcppArmadillo backend)
 #'
-#' A drop-in alternative to [cv_fastCrrp()] that delegates the cross-validation
+#' A drop-in alternative to \code{cv_fastCrrp()} that delegates the cross-validation
 #' metric computation to compiled RcppArmadillo kernels. Model fitting is still
 #' performed by [fastcmprsk::fastCrrp()] (an external, already-compiled
 #' routine); the speedup comes from moving the per-lambda prediction and the
 #' O(n^2) concordance computations into C++ (see \code{src/cv_fastcrrp.cpp}).
 #'
 #' The fold assignment, fitting calls, and returned object are identical in
-#' structure to [cv_fastCrrp()], so results should match up to the C-index
+#' structure to \code{cv_fastCrrp()}, so results should match up to the C-index
 #' implementation details documented below.
 #'
 #' @param x Numeric predictor matrix (n x p).
@@ -29,9 +29,9 @@
 #'
 #' @returns A list with elements \code{lambda}, \code{cv_c_index},
 #'   \code{lambda_min}, \code{full_model}, and \code{cv_raw_matrix}, matching
-#'   [cv_fastCrrp()].
+#'   \code{cv_fastCrrp()}.
 #'
-#' @seealso [cv_fastCrrp()], [wolbers_c()]
+#' @seealso [wolbers_c()]
 #'
 #' @importFrom fastcmprsk fastCrrp Crisk
 #' @importFrom stats quantile

@@ -130,6 +130,5 @@ ctrl2 <- bhcrr_cv_control(
 }
 }
 \seealso{
-\code{\link{cv_ssl_psdh}}, \code{\link{tune_ssl_psdh}},
-\code{\link{bhcrr_autotune}}, \code{\link{fit_ssl_psdh}}
+\code{\link{fit_ssl_psdh}}
 }

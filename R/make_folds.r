@@ -2,7 +2,7 @@
 #'
 #' Creates an \eqn{n \times \code{ncv}} integer matrix of fold assignments,
 #' optionally stratifying on the cause-1 indicator or full status code via
-#' \pkg{rsample}.  Supersedes \code{\link{generate_foldid}}.
+#' \pkg{rsample}.  Supersedes \code{generate_foldid}.
 #'
 #' @param y Two-column numeric matrix of dimensions \eqn{n \times 2}.
 #'   Column 1 is observed time; column 2 is status (0 censored, 1 cause 1,
@@ -24,9 +24,7 @@
 #'       each repetition.  Use this to spot degenerate splits before fitting.}
 #'   }
 #'
-#' @seealso \code{\link{generate_foldid}} (older unstratified generator,
-#'   retained for back-compatibility), \code{\link{bhcrr_cv_control}},
-#'   \code{\link{cv_ssl_psdh}}
+#' @seealso \code{\link{bhcrr_cv_control}}
 #'
 #' @importFrom rsample vfold_cv assessment
 #'

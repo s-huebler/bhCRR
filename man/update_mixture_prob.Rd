@@ -10,6 +10,12 @@ update_mixture_prob(p, a = 1, b = 1)
 \item{p}{Numeric vector of length \eqn{p}. Posterior inclusion
 probabilities \eqn{E[\gamma_j \mid \beta_j]} for all features, as
 returned by \code{\link{expected_inclusion_probs}}.}
+
+\item{a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior.
+Default \code{1}.}
+
+\item{b}{Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior.
+Default \code{1}.}
 }
 \value{
 Numeric scalar in \eqn{[0, 1]}.  Updated global mixture

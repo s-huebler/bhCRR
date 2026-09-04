@@ -26,7 +26,7 @@
 #'
 #' @importFrom survival survfit Surv
 #'
-#' @seealso \code{\link{predict_from_ssl_psdh}}, \code{\link{cv_ssl_psdh}}
+#' @seealso \code{\link{predict_from_ssl_psdh}}
 #'
 #' @export
 #'

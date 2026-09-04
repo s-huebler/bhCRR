@@ -8,6 +8,7 @@
 #'
 #' @return \code{a} if \code{!is.null(a)}, else \code{b}.
 #'
+#' @name grapes-or-or-grapes
 #' @examples
 #' NULL %||% 42      # 42
 #' "x"  %||% 42     # "x"
@@ -54,30 +55,87 @@ sim_merge_lists <- function(default, user) {
 }
 
 
-#' Permute the columns of each row independently
-#'
-#' For each row of \code{df}, independently shuffles the column values.
-#' Used to break between-column correlations while preserving the marginal
-#' distribution of each row.
-#'
-#' @param df A numeric data frame (or object coercible to a numeric matrix).
-#' @param seed Optional integer seed passed to \code{\link{set.seed}} for
-#'   reproducibility.  \code{NULL} (default) leaves the RNG state unchanged.
-#'
-#' @return A data frame with the same dimensions and column/row names as
-#'   \code{df}, with each row's values independently permuted across columns.
-#'
-#' @examples
-#' set.seed(1)
-#' df <- as.data.frame(matrix(1:12, nrow = 3))
-#' permute_rows(df, seed = 42)
-#'
-#' @export
-permute_rows <- function(df, seed = NULL) {
-  if (!is.null(seed)) set.seed(seed)
-  m <- as.matrix(df)
-  permuted_mat <- t(apply(m, 1, function(row) row[sample.int(length(row))]))
-  colnames(permuted_mat) <- colnames(m)
-  rownames(permuted_mat) <- rownames(m)
-  as.data.frame(permuted_mat)
+#Laplace (double exponential) distribution functions in base R
+
+# Density: f(x) = 1/(2*b) * exp(-|x - mu| / b)
+dlaplace <- function(x, mu = 0, b = 1, log = FALSE) {
+  if (any(b <= 0)) stop("scale 'b' must be > 0")
+  z <- abs(x - mu) / b
+  logd <- -log(2 * b) - z
+  if (log) logd else exp(logd)
+}
+
+# CDF: for x < mu: 0.5 * exp((x - mu) / b)
+#      for x >= mu: 1 - 0.5 * exp(-(x - mu) / b)
+plaplace <- function(q, mu = 0, b = 1, lower.tail = TRUE, log.p = FALSE) {
+  if (any(b <= 0)) stop("scale 'b' must be > 0")
+  # ensure vector recycling like base R
+  q <- as.numeric(q)
+  mu <- as.numeric(mu)
+  b <- as.numeric(b)
+  # recycle
+  n <- max(length(q), length(mu), length(b))
+  q <- rep(q, length.out = n)
+  mu <- rep(mu, length.out = n)
+  b <- rep(b, length.out = n)
+
+  p <- numeric(n)
+  left <- q < mu
+  # left side
+  p[left] <- 0.5 * exp((q[left] - mu[left]) / b[left])
+  # right side (including equality)
+  p[!left] <- 1 - 0.5 * exp(-(q[!left] - mu[!left]) / b[!left])
+
+  if (!lower.tail) p <- 1 - p
+  if (log.p) log(p) else p
+}
+
+# Quantile function (inverse CDF)
+qlaplace <- function(p, mu = 0, b = 1, lower.tail = TRUE, log.p = FALSE) {
+  if (any(b <= 0)) stop("scale 'b' must be > 0")
+  p <- as.numeric(p)
+  mu <- as.numeric(mu)
+  b <- as.numeric(b)
+  n <- max(length(p), length(mu), length(b))
+  p <- rep(p, length.out = n)
+  mu <- rep(mu, length.out = n)
+  b <- rep(b, length.out = n)
+
+  if (log.p) p <- exp(p)
+  if (!lower.tail) p <- 1 - p
+
+  # validate p
+  if (any(p < 0 | p > 1, na.rm = TRUE)) stop("p must be in [0,1]")
+
+  q <- numeric(n)
+  # handle extremes
+  q[p == 0] <- -Inf
+  q[p == 1] <- Inf
+
+  mid <- (p > 0) & (p < 1)
+  if (any(mid)) {
+    pm <- p[mid]
+    mub <- mu[mid]
+    bb <- b[mid]
+    left <- pm < 0.5
+    # for p < 0.5: mu + b * log(2p)
+    q[mid][left] <- mub[left] + bb[left] * log(2 * pm[left])
+    # for p >= 0.5: mu - b * log(2*(1-p))
+    q[mid][!left] <- mub[!left] - bb[!left] * log(2 * (1 - pm[!left]))
+  }
+
+  q
+}
+
+# Random generation via inverse transform
+rlaplace <- function(n, mu = 0, b = 1) {
+  if (length(n) != 1 || n < 0) stop("'n' must be a non-negative integer scalar")
+  if (any(b <= 0)) stop("scale 'b' must be > 0")
+  n <- as.integer(n)
+  u <- stats::runif(n)
+  qlaplace(u, mu = mu, b = b)
+}
+
+leave_one_out_mean <- function(x) {
+  (sum(x) - x) / (length(x) - 1)
 }

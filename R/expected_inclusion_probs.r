@@ -16,6 +16,10 @@
 #' @param betas Numeric vector of length \eqn{p}. Current coefficient
 #'   estimates \eqn{\hat{\beta}} from the previous M-step.
 #' @param exact If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.
+#' @param a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior on
+#'   the global mixture probability \eqn{\theta}. Default \code{1}.
+#' @param b Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior on
+#'   \eqn{\theta}. Default \code{1}.
 #'
 #' @returns Numeric vector of length \eqn{p}. Posterior inclusion
 #'   probability \eqn{E[\gamma_j \mid \beta_j]} for each feature; values

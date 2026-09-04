@@ -47,20 +47,21 @@ test_that("returns bhcrr_cv; tuning has correct shape and column names; print wo
   expect_output(print(r), "bhcrr_cv")
 })
 
-test_that("bhcrr_tune_validate() accepts tuning without modification", {
-  fix <- .load_cv_fixture()
-  x <- fix$x; y <- fix$y
-  ctrl <- .cv_ctrl()
-
-  r <- bhcrr_cv(x, y, s0_small, s1_small, ctrl)
-
-  val <- bhcrr_tune_validate(
-    r$tuning, n = nrow(x), theta = 20,
-    s0_seq = s0_small, s1_seq = s1_small
-  )
-  expect_true(is.list(val))
-  expect_true("checks" %in% names(val))
-})
+# bhcrr_tune_validate() archived — test commented out
+# test_that("bhcrr_tune_validate() accepts tuning without modification", {
+#   fix <- .load_cv_fixture()
+#   x <- fix$x; y <- fix$y
+#   ctrl <- .cv_ctrl()
+#
+#   r <- bhcrr_cv(x, y, s0_small, s1_small, ctrl)
+#
+#   val <- bhcrr_tune_validate(
+#     r$tuning, n = nrow(x), theta = 20,
+#     s0_seq = s0_small, s1_seq = s1_small
+#   )
+#   expect_true(is.list(val))
+#   expect_true("checks" %in% names(val))
+# })
 
 # ---------------------------------------------------------------------------
 # 2. One-pair grid

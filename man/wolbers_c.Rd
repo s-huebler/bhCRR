@@ -42,5 +42,5 @@ wolbers_c(y_true = y, risk_score = lp, evaluation_time = 30)
 }
 }
 \seealso{
-\code{\link{predict_from_ssl_psdh}}, \code{\link{cv_ssl_psdh}}
+\code{\link{predict_from_ssl_psdh}}
 }

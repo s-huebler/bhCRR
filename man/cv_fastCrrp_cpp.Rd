@@ -45,10 +45,10 @@ default. Ignored when \code{tuning = "wolbers"}.}
 \value{
 A list with elements \code{lambda}, \code{cv_c_index},
 \code{lambda_min}, \code{full_model}, and \code{cv_raw_matrix}, matching
-\code{\link[=cv_fastCrrp]{cv_fastCrrp()}}.
+\code{cv_fastCrrp()}.
 }
 \description{
-A drop-in alternative to \code{\link[=cv_fastCrrp]{cv_fastCrrp()}} that delegates the cross-validation
+A drop-in alternative to \code{cv_fastCrrp()} that delegates the cross-validation
 metric computation to compiled RcppArmadillo kernels. Model fitting is still
 performed by \code{\link[fastcmprsk:fastCrrp]{fastcmprsk::fastCrrp()}} (an external, already-compiled
 routine); the speedup comes from moving the per-lambda prediction and the
@@ -56,7 +56,7 @@ O(n^2) concordance computations into C++ (see \code{src/cv_fastcrrp.cpp}).
 }
 \details{
 The fold assignment, fitting calls, and returned object are identical in
-structure to \code{\link[=cv_fastCrrp]{cv_fastCrrp()}}, so results should match up to the C-index
+structure to \code{cv_fastCrrp()}, so results should match up to the C-index
 implementation details documented below.
 }
 \examples{
@@ -66,5 +66,5 @@ cv_fastCrrp_cpp(x, time, status, k = 5, penalty = "LASSO",
 }
 }
 \seealso{
-\code{\link[=cv_fastCrrp]{cv_fastCrrp()}}, \code{\link[=wolbers_c]{wolbers_c()}}
+\code{\link[=wolbers_c]{wolbers_c()}}
 }
