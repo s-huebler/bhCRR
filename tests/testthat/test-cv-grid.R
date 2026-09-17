@@ -1,4 +1,4 @@
-# Tests for R/cv_grid.r — .cv_grid()
+# Tests for R/cv_helpers.r — .cv_grid()
 # Internal function; visible here because tests run inside the package namespace.
 
 test_that("a 5x4 grid with all valid pairs returns 20 rows", {

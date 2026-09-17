@@ -1,4 +1,4 @@
-# Tests for R/cv_fold_path.r — .cv_fold_path()
+# Tests for R/cv_helpers.r — .cv_fold_path()
 # Internal; visible because tests run inside the package namespace.
 
 # ---------------------------------------------------------------------------

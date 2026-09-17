@@ -1,4 +1,4 @@
-# Tests for R/make_folds.r — bhcrr_make_folds()
+# Tests for R/cv_helpers.r — bhcrr_make_folds()
 #
 # Rare-event configuration: n=200, 7.5% cause-1 rate (seed=7).
 # At pool=0.01 rsample keeps the stratum; at pool=0.1 (>=7.5%) it pools the

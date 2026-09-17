@@ -1,4 +1,4 @@
-# Tests for R/cv_control.r
+# Tests for R/cv_helpers.r — bhcrr_cv_control() and print.bhcrr_cv_control()
 
 test_that("bhcrr_cv_control() defaults construct without error", {
   ctrl <- bhcrr_cv_control()
