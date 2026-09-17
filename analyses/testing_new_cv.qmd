@@ -333,9 +333,9 @@ final_mod$conv
 sum(final_mod$coefficients$Estimate != 0)
 
 # Breslow jumps are now computed once, in a single refit after the EM loop,
-# so predict_from_ssl_psdh() still has what it needs.
+# so predict() still has what it needs.
 eval_time <- as.numeric(quantile(y[y[, 2] == 1, 1], 0.5))
-lp <- predict_from_ssl_psdh(final_mod, newx = x_std, eval_time)
+lp <- predict(final_mod, newx = x_std, prediction_time = eval_time)
 wolbers_c(y, lp, eval_time1)
 ```
 
@@ -538,7 +538,7 @@ final_serial <- fit_ssl_psdh(
 final_serial$conv
 sum(final_serial$coefficients$Estimate != 0)
 
-lp_final <- predict_from_ssl_psdh(final_serial, newx = x_std, tau)
+lp_final <- predict(final_serial, newx = x_std, prediction_time = tau)
 wolbers_c(y, lp_final, tau)
 ```
 
@@ -998,7 +998,7 @@ data.frame(
 #### Discrimination
 
 ```{r}
-lp_par <- predict_from_ssl_psdh(final_par, newx = x_std, tau)
+lp_par <- predict(final_par, newx = x_std, prediction_time = tau)
 wolbers_c(y, lp_par, tau)          # IN-SAMPLE
 cv_par$best$score_mean             # out-of-sample, from the CV
 ```

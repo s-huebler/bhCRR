@@ -52,7 +52,7 @@
 #'     \item{\code{lp}}{Numeric matrix, \code{length(test_idx)} rows by
 #'       \code{nrow(grid)} columns.  Entry \code{[i, j]} is the predicted
 #'       absolute risk for test observation \code{i} at pair \code{j},
-#'       computed by \code{\link{predict_from_ssl_psdh}}.  \code{NA} for
+#'       computed by \code{\link{predict.ssl_psdh}}.  \code{NA} for
 #'       pairs where the fit failed.}
 #'     \item{\code{init}}{Numeric vector of length \eqn{p}.  The initial
 #'       coefficient vector actually used.}
@@ -128,9 +128,9 @@
     } else {
       iters[j]   <- as.integer(fit_result$iterations)
       conv[j]    <- isTRUE(fit_result$conv)
-      lp_mat[, j] <- predict_from_ssl_psdh(fit_result,
-                                            newx            = x_test,
-                                            prediction_time = eval_time)
+      lp_mat[, j] <- predict(fit_result,
+                             newx            = x_test,
+                             prediction_time = eval_time)
       if (!is.null(coef_list))
         coef_list[[j]] <- as.numeric(fit_result$final_model_object$coef)
 

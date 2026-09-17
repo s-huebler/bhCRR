@@ -33,7 +33,7 @@ source(file.path(repo_root, "R/cv_fastCrrp_cpp.r"))
 source(file.path(repo_root, "R/fit_ssl_psdh.r"))
 
 source(file.path(repo_root, "R/generate_foldid.r"))
-source(file.path(repo_root, "R/predict_from_ssl_psdh.r"))
+source(file.path(repo_root, "R/predict.r"))
 source(file.path(repo_root, "R/wolbers_c.r"))
 source(file.path(repo_root, "R/cv_ssl_psdh.r"))
 source(file.path(repo_root, "R/tune_ssl_psdh.r"))

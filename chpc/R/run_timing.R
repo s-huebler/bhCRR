@@ -90,7 +90,7 @@ cpp("src/RcppExports.cpp")
 src("R/cv_fastCrrp_cpp.R")
 src("R/fit_ssl_psdh.r")
 src("R/generate_foldid.r")
-src("R/predict_from_ssl_psdh.r")
+src("R/predict.r")
 src("R/wolbers_c.r")
 src("R/threshold.R")
 

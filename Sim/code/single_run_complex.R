@@ -18,7 +18,7 @@ library(survival)
  source("/Users/sophiehuebler/Documents/bhCRR/R/fit_ssl_psdh.r")
 
  source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
- source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
+ source("/Users/sophiehuebler/Documents/bhCRR/R/predict.r")
  source("/Users/sophiehuebler/Documents/bhCRR/R/wolbers_c.r")
  source("/Users/sophiehuebler/Documents/bhCRR/R/cv_ssl_psdh.r")
  source("/Users/sophiehuebler/Documents/bhCRR/R/tune_ssl_psdh.r")

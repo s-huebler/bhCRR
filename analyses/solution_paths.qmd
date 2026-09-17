@@ -20,7 +20,7 @@ library(survival)
 # source("/Users/sophiehuebler/Documents/bhCRR/R/helpers.r")
 # source("/Users/sophiehuebler/Documents/bhCRR/R/tune_ssl_psdh.r")
 # source("/Users/sophiehuebler/Documents/bhCRR/R/measure_ssl_psdh.r")
-# source("/Users/sophiehuebler/Documents/bhCRR/R/predict_from_ssl_psdh.r")
+# source("/Users/sophiehuebler/Documents/bhCRR/R/predict.r")
 # source("/Users/sophiehuebler/Documents/bhCRR/R/generate_foldid.r")
 # source("/Users/sophiehuebler/Documents/bhCRR/R/dedupe_warnings.r")
 # source("/Users/sophiehuebler/Documents/bhCRR/src/cv_fastcrrp.cpp")
@@ -438,9 +438,9 @@ solution_path_func <- function(scale0, scale1, scenario,
  if(cindex){
    # Default evaluation horizon: latest observed time in the scenario.
    et <- if(is.null(eval_time)) max(scenario$data$y[, 1]) else eval_time
-   risk <- predict_from_ssl_psdh(temp,
-                                 newx = scenario$data$x,
-                                 prediction_time = et)
+   risk <- predict(temp,
+                   newx = scenario$data$x,
+                   prediction_time = et)
    ci <- measure_ssl_psdh(y_true = scenario$data$y,
                           risk_score = risk,
                           evaluation_time = et)

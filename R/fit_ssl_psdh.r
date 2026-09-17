@@ -83,7 +83,7 @@
 #'   and will error with the initialization contract message if called.
 #'   This is expected behaviour, not a bug in \code{fit_ssl_psdh}.
 #'
-#' @seealso \code{\link{predict_from_ssl_psdh}}, \code{\link{update_betas}},
+#' @seealso \code{\link{predict.ssl_psdh}}, \code{\link{update_betas}},
 #'   \code{\link{expected_inclusion_probs}},
 #'   \code{\link{expected_penalty_weights}}
 #'
@@ -324,6 +324,7 @@ fit_ssl_psdh <- function(x, y,
     ret$init_method <- init_label
     ret$init_meta   <- res$meta
 
+    class(ret) <- "ssl_psdh"
     return(ret)
 
   })

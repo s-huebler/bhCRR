@@ -1632,7 +1632,7 @@ source("../R/update_mixture_prob.r")
 source("../R/helpers.r")
 source("../R/tune_ssl_psdh.r")
 source("../R/measure_ssl_psdh.r")
-source("../R/predict_from_ssl_psdh.r")
+source("../R/predict.r")
 source("../R/generate_foldid.r")
 ```
 
@@ -2297,7 +2297,7 @@ risk_matrix_func <- function(a_mod, time_points = seq(1, 500, 25)){
   risk_array <- matrix(NA, nrow = nrow(a_mod$y), ncol = length(time_points))
   colnames(risk_array)<- paste0("time ", time_points)
   for(times in time_points){
-    risk_array[, paste0("time ", times)]<- 1-predict_from_ssl_psdh(a_mod, a_mod$x, times)
+    risk_array[, paste0("time ", times)]<- 1-predict(a_mod, newx = a_mod$x, prediction_time = times)
   }
   
   risk_array

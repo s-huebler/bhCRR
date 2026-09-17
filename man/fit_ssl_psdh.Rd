@@ -138,7 +138,7 @@ fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
 }
 }
 \seealso{
-\code{\link{predict_from_ssl_psdh}}, \code{\link{update_betas}},
+\code{\link{predict.ssl_psdh}}, \code{\link{update_betas}},
 \code{\link{expected_inclusion_probs}},
 \code{\link{expected_penalty_weights}}
 }

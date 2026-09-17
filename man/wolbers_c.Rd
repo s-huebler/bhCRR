@@ -14,7 +14,7 @@ event).}
 
 \item{risk_score}{Numeric vector of length \eqn{n}.  Predicted absolute
 risk (cumulative incidence) at \code{evaluation_time} for each subject,
-as returned by \code{\link{predict_from_ssl_psdh}}.  \code{NA} values
+as returned by \code{\link{predict.ssl_psdh}}.  \code{NA} values
 are skipped when evaluating concordance for a pair.}
 
 \item{evaluation_time}{Numeric scalar.  Time horizon at which the C-index
@@ -37,10 +37,10 @@ event before subject \eqn{i}.
 }
 \examples{
 \dontrun{
-lp  <- predict_from_ssl_psdh(fit, newx = x, prediction_time = 30)
+lp  <- predict(fit, newx = x, prediction_time = 30)
 wolbers_c(y_true = y, risk_score = lp, evaluation_time = 30)
 }
 }
 \seealso{
-\code{\link{predict_from_ssl_psdh}}
+\code{\link{predict.ssl_psdh}}
 }

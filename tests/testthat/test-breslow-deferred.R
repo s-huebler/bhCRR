@@ -68,7 +68,7 @@ test_that("fit_ssl_psdh final_model_object has a non-degenerate breslowJump and 
 # 3. predict_from_ssl_psdh() runs and returns finite risk scores
 # ---------------------------------------------------------------------------
 
-test_that("predict_from_ssl_psdh returns finite risk scores on fixture data", {
+test_that("predict.ssl_psdh returns finite risk scores on fixture data", {
   fix <- .load_breslow_fixture()
   fit <- fit_ssl_psdh(fix$x, fix$y,
     ss = c(0.04, 0.5), initial_sparsity = 0.05,
@@ -77,7 +77,7 @@ test_that("predict_from_ssl_psdh returns finite risk scores on fixture data", {
     init_method = "LASSO_cv")
 
   pred_time <- median(fix$y[, 1])
-  risk <- predict_from_ssl_psdh(fit, newx = fix$x, prediction_time = pred_time)
+  risk <- predict(fit, newx = fix$x, prediction_time = pred_time)
 
   expect_equal(length(risk), nrow(fix$x))
   expect_true(all(is.finite(risk)))
