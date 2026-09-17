@@ -59,6 +59,41 @@ Application of bhCRR to the harmonized ODSiData cohort.
 - Project 2 commits: "feat/fix/docs/test: brief description"
 - Always run devtools::check(vignettes=FALSE) before pushing bhCRR
 
+## R/ Conventions (Project 2)
+Hand-written files in `R/` use the lowercase `.r` extension. The sole exception is
+`R/RcppExports.R`, which `Rcpp::compileAttributes()` regenerates as `.R`.
+`R/Archive/` holds retired sources; it is listed in `.Rbuildignore` and is invisible
+to both `R CMD build` and roxygen2 (roxygen scans `R/` non-recursively).
+
+### R/ file map
+Fit stack
+  fit_ssl_psdh.r              EM algorithm entry point
+  update_betas.r              fastcmprsk M-step wrapper
+  expected_inclusion_probs.r  E-step: posterior inclusion probabilities
+  expected_penalty_weights.r  E-step: per-feature penalty weights
+  update_mixture_prob.r       E-step: mixture probability update
+  init_methods.r              LASSO_cv / LASSO_bic / zero initialization
+  predict.r                   predict.ssl_psdh S3 method + .predict_cif
+
+CV stack
+  cv.r                        bhcrr_cv() — cross-validation entry point
+  cv_helpers.r                bhcrr_cv_control, bhcrr_make_folds, .cv_grid,
+                              .cv_fold_init, .cv_fold_path
+
+Utilities
+  utils.r                     base-R utilities: %||%, sim_merge_lists, Laplace
+                              helpers, .dedupe_warnings
+  wolbers_c.r                 IPCW Wolbers C-index
+  cv_fastCrrp_cpp.r           cv_fastCrrp_cpp() — LASSO init helper (C++ backend)
+
+WIP diagnostics
+  cv_grid_diagnostics.r       bhcrr_check_grid(), zero-gap helpers
+
+Package infrastructure
+  bhCRR-package.r             package-level roxygen stub
+  RcppExports.R               Rcpp auto-generated wrappers
+  helpers.r                   rough-draft scratch, deliberately untouched
+
 ## Editing Files (IMPORTANT)
 Always ASK before editing any file in this workspace, even when the fix seems
 obvious or the user has described a bug. Diagnose first, propose the change
