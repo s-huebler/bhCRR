@@ -32,7 +32,7 @@ each repetition.  Use this to spot degenerate splits before fitting.}
 \description{
 Creates an \eqn{n \times \code{ncv}} integer matrix of fold assignments,
 optionally stratifying on the cause-1 indicator or full status code via
-\pkg{rsample}.  Supersedes \code{generate_foldid}.
+\pkg{rsample}.
 }
 \examples{
 \dontrun{

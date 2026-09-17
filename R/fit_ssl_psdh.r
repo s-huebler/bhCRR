@@ -77,12 +77,6 @@
 #'       time). \code{NULL} when \code{init} was supplied directly.}
 #'   }
 #'
-#' @note \code{cv_ssl_psdh}, \code{tune_ssl_psdh} and \code{bhcrr_autotune}
-#'   wrap this function but do not yet supply an initialization argument.
-#'   They are therefore non-functional pending a separate CV-stack rewrite
-#'   and will error with the initialization contract message if called.
-#'   This is expected behaviour, not a bug in \code{fit_ssl_psdh}.
-#'
 #' @seealso \code{\link{predict.ssl_psdh}}, \code{\link{update_betas}},
 #'   \code{\link{expected_inclusion_probs}},
 #'   \code{\link{expected_penalty_weights}}

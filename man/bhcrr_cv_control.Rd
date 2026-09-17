@@ -114,9 +114,8 @@ settings.  The field \code{$init_label} stores the resolved method label
 }
 \description{
 Bundles every setting that governs cross-validation and per-fold fitting
-into a single validated object.  Pass this to \code{cv_ssl_psdh},
-\code{tune_ssl_psdh}, and \code{bhcrr_autotune} instead of threading
-settings through \code{...}.
+into a single validated object.  Pass this to \code{\link{bhcrr_cv}}
+instead of threading settings through \code{...}.
 }
 \examples{
 \dontrun{

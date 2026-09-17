@@ -48,16 +48,11 @@ A list with elements \code{lambda}, \code{cv_c_index},
 \code{cv_fastCrrp()}.
 }
 \description{
-A drop-in alternative to \code{cv_fastCrrp()} that delegates the cross-validation
-metric computation to compiled RcppArmadillo kernels. Model fitting is still
-performed by \code{\link[fastcmprsk:fastCrrp]{fastcmprsk::fastCrrp()}} (an external, already-compiled
-routine); the speedup comes from moving the per-lambda prediction and the
-O(n^2) concordance computations into C++ (see \code{src/cv_fastcrrp.cpp}).
-}
-\details{
-The fold assignment, fitting calls, and returned object are identical in
-structure to \code{cv_fastCrrp()}, so results should match up to the C-index
-implementation details documented below.
+Cross-validates a \pkg{fastcmprsk} fine-Gray LASSO path, delegating the
+per-lambda prediction and the O(n^2) concordance computations to compiled
+RcppArmadillo kernels (see \code{src/cv_fastcrrp.cpp}).  Model fitting is
+performed by \code{\link[fastcmprsk:fastCrrp]{fastcmprsk::fastCrrp()}}.  Used internally by the
+\code{"LASSO_cv"} initialization method in \code{\link{bhcrr_cv_control}}.
 }
 \examples{
 \dontrun{

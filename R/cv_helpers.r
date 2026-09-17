@@ -3,9 +3,8 @@
 #' Build a CV control object for bhCRR cross-validation
 #'
 #' Bundles every setting that governs cross-validation and per-fold fitting
-#' into a single validated object.  Pass this to \code{cv_ssl_psdh},
-#' \code{tune_ssl_psdh}, and \code{bhcrr_autotune} instead of threading
-#' settings through \code{...}.
+#' into a single validated object.  Pass this to \code{\link{bhcrr_cv}}
+#' instead of threading settings through \code{...}.
 #'
 #' @param nfolds Integer \eqn{\ge 2}.  Number of CV folds per repetition.
 #'   Default \code{10L}.
@@ -298,7 +297,7 @@ print.bhcrr_cv_control <- function(x, ...) {
 #'
 #' Creates an \eqn{n \times \code{ncv}} integer matrix of fold assignments,
 #' optionally stratifying on the cause-1 indicator or full status code via
-#' \pkg{rsample}.  Supersedes \code{generate_foldid}.
+#' \pkg{rsample}.
 #'
 #' @param y Two-column numeric matrix of dimensions \eqn{n \times 2}.
 #'   Column 1 is observed time; column 2 is status (0 censored, 1 cause 1,
@@ -476,7 +475,7 @@ bhcrr_make_folds <- function(y, control) {
 #' of \code{s0_seq} and \code{s1_seq}, drops pairs where \code{s1 <= s0}, and
 #' orders the survivors in warm-start traversal order: unique \code{s1} values
 #' in the order they appear in \code{s1_seq}, and within each group \code{s0}
-#' ascending.  This matches the traversal in \code{tune_ssl_psdh}.
+#' ascending.  This is the traversal order used by \code{\link{bhcrr_cv}}.
 #'
 #' @param s0_seq Numeric vector of candidate spike scale values.
 #' @param s1_seq Numeric vector of candidate slab scale values.
@@ -498,7 +497,7 @@ bhcrr_make_folds <- function(y, control) {
 
   # Traversal order: unique s1 in s1_seq order, s0 ascending within each group.
   # expand.grid() places s1 in s1_seq order (s0 varies fastest), so
-  # unique(valid$s1) preserves that order — matching tune_ssl_psdh exactly.
+  # unique(valid$s1) preserves that order — matching the bhcrr_cv warm-start chain.
   s1_levels <- unique(valid$s1)
 
   rows <- lapply(s1_levels, function(s1_val) {

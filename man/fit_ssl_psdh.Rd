@@ -112,13 +112,6 @@ probabilities (E-step) and refitting a penalised subdistribution hazard
 model (M-step).  The penalty uses a Laplace spike-and-slab prior
 parameterised by scale pair \code{ss = c(s0, s1)}.
 }
-\note{
-\code{cv_ssl_psdh}, \code{tune_ssl_psdh} and \code{bhcrr_autotune}
-wrap this function but do not yet supply an initialization argument.
-They are therefore non-functional pending a separate CV-stack rewrite
-and will error with the initialization contract message if called.
-This is expected behaviour, not a bug in \code{fit_ssl_psdh}.
-}
 \examples{
 \dontrun{
 # Built-in CV-LASSO initialization
