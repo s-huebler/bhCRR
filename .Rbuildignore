@@ -6,3 +6,4 @@
 ^README\.Rmd$
 ^\.github$
 ^R/Archive$
+^design$
