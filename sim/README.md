@@ -184,9 +184,9 @@ Steps in implementation order; mark done as each lands.
 | 2 | `sim/R/load.r` | **done** (71b345e) | |
 | 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (5d9bce0) | |
 | 4 | `sim/R/dgp.r` | **done** (f808398) | block_signature extended with latent/lbal/uvar (PART C) |
-| 5 | `sim/R/fit.r` | **done** (this commit) | eval_time fixed at scenario midpoint; fg_oracle separated |
-| 6 | `sim/R/comparators.r` — fits | not started | lasso, alasso, scad, mcp, fg_oracle |
-| 7 | `sim/R/comparators.r` — lambda CV | not started | cv_comparator_lambda() |
+| 5 | `sim/R/fit.r` | **done** (bcb8b15) | eval_time fixed at scenario midpoint; fg_oracle separated |
+| 6 | `sim/R/comparators.r` — fits | **done** (this commit) | BIC selection; aLASSO uses unpenalized FG initial |
+| 7 | revisit comparator tuning | parked | see comparators.r FUTURE WORK; legacy CV at `sim/_legacy/code/other_comparators_cv_section.R` |
 | 8 | `sim/R/score.r` | not started | |
 | 9 | `sim/R/run_one.r` | not started | |
 | 10 | `sim/local/single.R` + `sim/local/batch.R` | not started | |
