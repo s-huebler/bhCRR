@@ -28,7 +28,8 @@ if (!file.exists(sim_tests_dir))
 # Ordered list of test files (add new ones here in dependency order)
 test_files <- c(
   "test_load.R",
-  "test_scenario.R"
+  "test_scenario.R",
+  "test_dgp.R"
 )
 
 all_passed <- TRUE

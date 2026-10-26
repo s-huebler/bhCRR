@@ -182,8 +182,8 @@ Steps in implementation order; mark done as each lands.
 |------|--------|--------|-------|
 | 1 | contracts | **done** (0541e8e → 4c2f973) | headers only; corrected before migration |
 | 2 | `sim/R/load.r` | **done** (71b345e) | |
-| 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (this commit) | |
-| 4 | `sim/R/dgp.r` | not started | |
+| 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (5d9bce0) | |
+| 4 | `sim/R/dgp.r` | **done** (this commit) | block_signature extended with latent/lbal/uvar (PART C) |
 | 5 | `sim/R/fit.r` | not started | |
 | 6 | `sim/R/comparators.r` — fits | not started | lasso, alasso, scad, mcp, fg_oracle |
 | 7 | `sim/R/comparators.r` — lambda CV | not started | cv_comparator_lambda() |
