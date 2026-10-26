@@ -92,15 +92,30 @@
 #     $standardization list(center = numeric p, scale = numeric p)
 #
 # RETURNS (fit_fg_oracle)
+#   SAME element shape as fit_comparators() entries (score_run treats all six
+#   models identically):
 #   list(
-#     coef        numeric k  named; coefficients on the active columns only
-#                            (length = number of true actives, NOT p)
+#     coef_raw    numeric p  named with colnames(x); fitted values at active
+#                            positions, 0 elsewhere. The oracle is fitted on
+#                            RAW active columns, so coef_raw is the fitted
+#                            quantity. coef_std = coef_raw * x_scale is the
+#                            exact reparameterization: x %*% coef_raw and
+#                            x_std %*% coef_std have identical rank ordering
+#     coef_std    numeric p  named; coef_raw * apply(x, 2, sd)
+#     risk        numeric n  linear predictor as.numeric(x %*% coef_raw)
 #     converged   logical(1) or NA if fastCrr does not report convergence
 #     fit_seconds numeric(1)
-#     meta        list(active_idx = integer k, fit = fastCrr object or NULL)
+#     meta        list(active_idx, fit = fastCrr object or NULL,
+#                      degenerate = TRUE when active set is empty)
 #   )
-#   empty-active case: coef = named numeric(0); converged = TRUE vacuously;
-#   fit = NULL
+#   Zero-actives case: coef_raw = coef_std = rep(0, p), risk = rep(0, n),
+#   converged = TRUE (vacuously), meta$degenerate = TRUE, meta$fit = NULL.
+#
+# ASSEMBLY NOTE
+#   run_one.r (step 9) is responsible for assembling the five-element list
+#   that score_run() consumes:
+#     c(fit_comparators(x, y),
+#       list(fg_oracle = fit_fg_oracle(x, y, beta1)))
 #
 # FUTURE WORK
 #   Lambda is currently selected by BIC over a shared geometric path.
@@ -567,24 +582,36 @@ fit_comparators <- function(x, y) {
 # ---------------------------------------------------------------------------
 
 fit_fg_oracle <- function(x, y, beta1) {
+  n              <- nrow(x)
+  p              <- ncol(x)
+  predictor_names <- colnames(x)
+  if (is.null(predictor_names)) predictor_names <- paste0("X_", seq_len(p))
+
   ftime  <- y[, "time"]
   status <- as.integer(y[, "status"])
+
+  # x_scale needed to compute coef_std = coef_raw * scale
+  x_scale <- apply(x, 2L, stats::sd)
 
   active_idx <- which(beta1 != 0)
 
   t0 <- proc.time()[["elapsed"]]
 
+  # ---- Zero-actives: well-formed degenerate result ----
   if (length(active_idx) == 0L) {
+    zero_coef <- stats::setNames(rep(0.0, p), predictor_names)
     return(list(
-      coef        = stats::setNames(numeric(0), character(0)),
+      coef_raw    = zero_coef,
+      coef_std    = zero_coef,
+      risk        = rep(0.0, n),
       converged   = TRUE,
       fit_seconds = as.numeric(proc.time()[["elapsed"]] - t0),
-      meta        = list(active_idx = integer(0), fit = NULL)
+      meta        = list(active_idx = integer(0), fit = NULL, degenerate = TRUE)
     ))
   }
 
   x_active     <- x[, active_idx, drop = FALSE]
-  active_names <- colnames(x_active)
+  active_names <- predictor_names[active_idx]
 
   fit_args <- list(
     formula  = stats::as.formula(
@@ -605,16 +632,23 @@ fit_fg_oracle <- function(x, y, beta1) {
 
   fit <- do.call(fastcmprsk::fastCrr, fit_args)
 
-  coef_raw <- as.numeric(stats::coef(fit))
-  if (length(coef_raw) != length(active_idx))
-    coef_raw <- coef_raw[seq_len(length(active_idx))]
-  names(coef_raw) <- active_names
+  active_coef <- as.numeric(stats::coef(fit))
+  if (length(active_coef) != length(active_idx))
+    active_coef <- active_coef[seq_len(length(active_idx))]
+
+  # Scatter into length-p vectors; non-active positions stay zero
+  coef_raw          <- stats::setNames(rep(0.0, p), predictor_names)
+  coef_raw[active_idx] <- active_coef
+
+  coef_std          <- coef_raw * x_scale
 
   converged <- if (!is.null(fit$converged)) isTRUE(all(as.logical(fit$converged)))
                else NA
 
   list(
-    coef        = coef_raw,
+    coef_raw    = coef_raw,
+    coef_std    = coef_std,
+    risk        = as.numeric(x %*% coef_raw),
     converged   = converged,
     fit_seconds = as.numeric(proc.time()[["elapsed"]] - t0),
     meta        = list(active_idx = active_idx, fit = fit)

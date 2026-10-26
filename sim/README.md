@@ -187,7 +187,7 @@ Steps in implementation order; mark done as each lands.
 | 5 | `sim/R/fit.r` | **done** (bcb8b15) | eval_time fixed at scenario midpoint; fg_oracle separated |
 | 6 | `sim/R/comparators.r` — fits | **done** (this commit) | BIC selection; aLASSO uses unpenalized FG initial |
 | 7 | revisit comparator tuning | parked | see comparators.r FUTURE WORK; legacy CV at `sim/_legacy/code/other_comparators_cv_section.R` |
-| 8 | `sim/R/score.r` | not started | |
+| 8 | `sim/R/score.r` | **done** (this commit) | per-block stratification; fg_oracle uniform shape |
 | 9 | `sim/R/run_one.r` | not started | |
 | 10 | `sim/local/single.R` + `sim/local/batch.R` | not started | |
 | 11 | `sim/R/parse.r` | not started | |

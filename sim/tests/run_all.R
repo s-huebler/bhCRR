@@ -31,7 +31,8 @@ test_files <- c(
   "test_scenario.R",
   "test_dgp.R",
   "test_fit.R",
-  "test_comparators.R"
+  "test_comparators.R",
+  "test_score.R"
 )
 
 all_passed <- TRUE

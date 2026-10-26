@@ -185,22 +185,41 @@ test_that("constant predictor column errors naming the offender", {
 # fit_fg_oracle
 # ---------------------------------------------------------------------------
 
-test_that("fit_fg_oracle coef length equals number of true actives", {
-  k   <- sum(.beta1 != 0)
+test_that("fit_fg_oracle coef_raw and coef_std are length p with colnames(x)", {
+  p   <- ncol(.x)
   res <- fit_fg_oracle(.x, .y, .beta1)
-  expect_length(res$coef, k)
+  expect_equal(length(res$coef_raw), p,
+               label = "coef_raw length p")
+  expect_equal(length(res$coef_std), p,
+               label = "coef_std length p")
+  expect_identical(names(res$coef_raw), colnames(.x),
+                   label = "coef_raw names")
+  expect_identical(names(res$coef_std), colnames(.x),
+                   label = "coef_std names")
+  expect_equal(length(res$risk), nrow(.x),
+               label = "risk length n")
 })
 
-test_that("fit_fg_oracle coef names match the active column names", {
-  active_nms <- colnames(.x)[.beta1 != 0]
-  res        <- fit_fg_oracle(.x, .y, .beta1)
-  expect_identical(names(res$coef), active_nms)
+test_that("fit_fg_oracle inactive entries are zero; active nonzero when converged; meta$active_idx correct", {
+  res          <- fit_fg_oracle(.x, .y, .beta1)
+  active_idx   <- which(.beta1 != 0)
+  inactive_idx <- which(.beta1 == 0)
+  expect_equal(res$meta$active_idx, active_idx,
+               label = "meta$active_idx matches which(beta1 != 0)")
+  expect_true(all(res$coef_raw[inactive_idx] == 0),
+              label = "inactive coef_raw are zero")
+  if (isTRUE(res$converged))
+    expect_true(all(res$coef_raw[active_idx] != 0),
+                label = "active coef_raw nonzero when converged")
 })
 
 test_that("fit_fg_oracle returns well-formed empty result when beta1 all zero", {
   beta_null <- rep(0, ncol(.x))
   res       <- fit_fg_oracle(.x, .y, beta_null)
-  expect_length(res$coef, 0L)
+  expect_equal(length(res$coef_raw), ncol(.x),
+               label = "coef_raw length p when no actives")
+  expect_true(all(res$coef_raw == 0),
+              label = "coef_raw all zero when no actives")
   expect_true(res$converged)
   expect_null(res$meta$fit)
 })
