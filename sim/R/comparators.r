@@ -17,7 +17,14 @@
 #                                fastcmprsk::fastCrr with no penalisation;
 #                                corresponds to the fg_true object in
 #                                sim/_legacy/code/batch_run_complex.R:173 that
-#                                was fitted there but never scored
+#                                was fitted there but never scored.
+#                                KEPT SEPARATE from fit_comparators() because
+#                                it consumes ground truth (the true active set)
+#                                -- fit_comparators(x, y) takes no beta1 and
+#                                cannot call fit_fg_oracle(); the caller
+#                                (run_one.r) is responsible for calling both
+#                                and assembling the full comparator list.
+#                                Migration step 6 implements this function.
 #   cv_comparator_lambda(x, y, penalty, nfolds)
 #                                fold-based lambda selection for one
 #                                comparator; the legacy file
@@ -25,8 +32,10 @@
 #                                carried its own CV loop independent of
 #                                bhcrr_cv(); this function centralises that
 #                                logic for all penalised comparators
-#   fit_comparators(x, y, beta1) run all five (lasso, alasso, scad, mcp,
-#                                fg_oracle); return a named list
+#   fit_comparators(x, y)        run the four penalised comparators (lasso,
+#                                alasso, scad, mcp); return a named list.
+#                                Does NOT include fg_oracle -- see note on
+#                                fit_fg_oracle() above.
 #
 # INPUTS
 #   x      matrix n x p   design matrix; predictors are standardised ONCE
@@ -49,8 +58,9 @@
 #     missing element; fit_seconds is numeric seconds (not difftime -- see
 #     score.r timing note)
 #   fit_comparators:
-#     named list with elements "lasso", "alasso", "scad", "mcp", "fg_oracle",
-#     each a list(coef, converged, fit_seconds, meta)
+#     named list with elements "lasso", "alasso", "scad", "mcp",
+#     each a list(coef, converged, fit_seconds, meta);
+#     "fg_oracle" is assembled separately by the caller -- see note above
 #
 #   TIMING: each comparator is timed individually and returns its own
 #   fit_seconds. The legacy code instrumented this wrongly: a single

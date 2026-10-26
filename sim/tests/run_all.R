@@ -29,7 +29,8 @@ if (!file.exists(sim_tests_dir))
 test_files <- c(
   "test_load.R",
   "test_scenario.R",
-  "test_dgp.R"
+  "test_dgp.R",
+  "test_fit.R"
 )
 
 all_passed <- TRUE
