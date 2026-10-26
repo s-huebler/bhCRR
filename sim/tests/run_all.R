@@ -13,8 +13,7 @@ library(testthat)
 
 # Resolve repo root from this file's location regardless of working directory
 this_file <- normalizePath(
-  if (nzchar(Sys.getenv("R_TESTS_RUNNER"))) Sys.getenv("R_TESTS_RUNNER")
-  else {
+  {
     args <- commandArgs(trailingOnly = FALSE)
     file_arg <- grep("--file=", args, value = TRUE)
     if (length(file_arg)) sub("--file=", "", file_arg[1]) else "sim/tests/run_all.R"
@@ -28,7 +27,8 @@ if (!file.exists(sim_tests_dir))
 
 # Ordered list of test files (add new ones here in dependency order)
 test_files <- c(
-  "test_load.R"
+  "test_load.R",
+  "test_scenario.R"
 )
 
 all_passed <- TRUE

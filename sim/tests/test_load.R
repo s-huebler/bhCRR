@@ -72,7 +72,8 @@ test_that("load_bhcrr('dev') attaches bhCRR and fit_ssl_psdh is callable", {
   # Force a fresh load so we test the actual attachment
   load_bhcrr("dev", force = TRUE)
   expect_true("package:bhCRR" %in% search())
-  expect_true(existsFunction("fit_ssl_psdh"))
+  expect_true(is.function(get("fit_ssl_psdh",
+    envir = as.environment("package:bhCRR"), inherits = FALSE)))
 })
 
 test_that("second consecutive load_bhcrr('dev') returns FALSE invisibly", {
@@ -125,9 +126,3 @@ test_that("load_sim() returns seven module paths and they all exist", {
   }
 })
 
-existsFunction <- function(name) {
-  tryCatch({
-    f <- get(name, envir = as.environment("package:bhCRR"), inherits = FALSE)
-    is.function(f)
-  }, error = function(e) FALSE)
-}

@@ -25,7 +25,8 @@ sim/
 │   └── batch.R          sweep over (p, run_id); writes .Rdata per run
 │
 ├── scenarios/           scenario definitions (plain R lists)
-│   └── scenarioA.R      baseline scenario (200 obs, block-correlated Gaussian)
+│   ├── _template.R      master template; copy with new_scenario(), never run directly
+│   └── <name>.R         real scenarios created from the template
 │
 ├── results/             run outputs (git-ignored except structure)
 │   ├── <scenario>/
@@ -54,11 +55,31 @@ data-generating process — `nobs`, coefficients, block structure, censoring —
 part of the scenario. Parameters that only control how you sweep (number of
 predictors, run range) are not part of the scenario.
 
-Each scenario lives in `sim/scenarios/<name>.R` and returns a plain list named
-`scenario`. The list is validated by `scenario_from_file()` in `sim/R/scenario.r`.
-
 **Changing any DGP parameter requires a new scenario name** so that old and new
 results are never mixed in `sim/results/`.
+
+### Creating a new scenario
+
+```r
+source("sim/R/load.r")
+load_sim()
+new_scenario("myScenario.01", dir = "sim/scenarios")
+# Opens sim/scenarios/myScenario.01.R with the name field pre-filled.
+# Fill in every value marked [PLACEHOLDER] before running.
+```
+
+`new_scenario()` copies `sim/scenarios/_template.R` and fills in the `name`
+field. `_template.R` carries inline documentation for every key and uses
+deliberately small placeholder values that run end-to-end as a smoke test.
+
+**Name rule:** scenario names must match `^[A-Za-z0-9][A-Za-z0-9.-]*$`. No
+underscores — they are field delimiters in the `p<P>_<scenario>_run<N>` filename
+format. Use `.` or `-` as word separators.
+
+Each scenario file assigns exactly one object named `scenario` (a plain list)
+and must contain no calls to `library()`, `require()`, `source()`, or
+`set.seed()`. `scenario_from_file()` in `sim/R/scenario.r` enforces this before
+any validation runs.
 
 ---
 
@@ -68,7 +89,7 @@ results are never mixed in `sim/results/`.
 
 ```r
 # From R (project root or any working directory):
-SCENARIO_FILE <- "sim/scenarios/scenarioA.R"
+SCENARIO_FILE <- "sim/scenarios/myScenario.01.R"
 P             <- 25
 RUN_ID        <- 1
 source("sim/local/single.R")
@@ -79,13 +100,13 @@ str(result$scores)
 ### Local batch sweep
 
 ```r
-SCENARIO_FILE <- "sim/scenarios/scenarioA.R"
+SCENARIO_FILE <- "sim/scenarios/myScenario.01.R"
 NPREDICTORS   <- c(25, 50)
 RUN_START     <- 1
 RUN_END       <- 10
 RESULTS_DIR   <- "sim/results/"
 source("sim/local/batch.R")
-# Writes sim/results/scenarioA/runs/result_p25_run01.Rdata etc.
+# Writes sim/results/myScenario.01/runs/result_p25_run01.Rdata etc.
 ```
 
 ---
@@ -97,9 +118,9 @@ ssh <you>@notchpeak.chpc.utah.edu
 cd ~/bhCRR
 source sim/chpc/config.sh          # optional; run_sim.sh sources it too
 
-# Submit a 10-run array for scenarioA, p = 25 and 50:
+# Submit a 10-run array for myScenario.01, p = 25 and 50:
 ./sim/chpc/run_sim.sh \
-    scenario=scenarioA \
+    scenario=myScenario.01 \
     npredictors=25,50 \
     run_start=1 run_end=10
 ```
@@ -146,6 +167,11 @@ testthat::test_file("sim/tests/test_dgp.R")
 `sim/tests/run_all.R` runs them in dependency order. They are never wired into
 `devtools::test()`.
 
+**Test-only dependency:** `withr` is used for environment variable isolation in
+the tests (`withr::with_envvar`). It is already in `renv.lock` (pulled in by
+`devtools`), but it is not declared in the package `DESCRIPTION` since it is only
+used here, not in the package itself.
+
 ---
 
 ## Migration status
@@ -154,9 +180,9 @@ Steps in implementation order; mark done as each lands.
 
 | Step | Module | Status | Notes |
 |------|--------|--------|-------|
-| 1 | contracts | **done** (0541e8e → corrected this commit) | headers only; no implementation |
-| 2 | `sim/R/load.r` | not started | |
-| 3 | `sim/R/scenario.r` + `sim/scenarios/scenarioA.R` | not started | |
+| 1 | contracts | **done** (0541e8e → 4c2f973) | headers only; corrected before migration |
+| 2 | `sim/R/load.r` | **done** (71b345e) | |
+| 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (this commit) | |
 | 4 | `sim/R/dgp.r` | not started | |
 | 5 | `sim/R/fit.r` | not started | |
 | 6 | `sim/R/comparators.r` — fits | not started | lasso, alasso, scad, mcp, fg_oracle |
