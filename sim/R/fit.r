@@ -81,9 +81,9 @@
 #   sim/_legacy/code/batch_run_complex.R:173.
 #
 # ERROR POLICY
-#   Errors propagate to the caller. Per-run failure handling belongs in
-#   run_one.r and the batch driver (migration steps 9 and 10). No tryCatch
-#   wrapping here.
+#   Errors propagate to the caller. Per-run failure handling belongs in the
+#   driver (sim/local/batch.R for local runs; sim/chpc/R/run_array.r for
+#   CHPC array jobs). No tryCatch wrapping here.
 #
 # DEPENDS ON
 #   bhCRR::fit_ssl_psdh, bhCRR::bhcrr_autotune, bhCRR::bhcrr_cv_control
