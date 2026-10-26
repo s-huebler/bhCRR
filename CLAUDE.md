@@ -52,7 +52,7 @@ Application of bhCRR to the harmonized ODSiData cohort.
 ## CHPC (University of Utah)
 - Connect: ssh [username]@chpc.utah.edu
 - Workflow: develop locally → push to GitHub → pull on CHPC → submit SLURM jobs
-- Job scripts live in each project's chpc/ folder
+- Job scripts live in each project's chpc/ folder (Project 2: sim/chpc/)
 
 ## Git Conventions
 - Project 1 commits: "[Study] brief description" e.g. "[Liu2017] fix DADA2 params"

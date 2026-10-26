@@ -2,7 +2,7 @@
 
 Run the `batch_run_complex` simulation as a parallel SLURM job array on the
 University of Utah CHPC, then automatically collect the per-run results into
-`Sim/chpc_results/<scenario>/` to pull back to local for figures.
+`sim/results/<scenario>/` to pull back to local for figures.
 
 ## Files
 
@@ -12,8 +12,8 @@ University of Utah CHPC, then automatically collect the per-run results into
 | `run_sim.sh` | Entry point. Parses `key=value` overrides, submits the array + a dependent parse job. |
 | `run_array.slurm` | Array task: runs a chunk of run indices, writes one `.Rdata` per run to scratch. |
 | `parse.slurm` | Runs once after the array succeeds; builds `betas_p<P>_<scenario>`. |
-| `R/run_batch.R` | CHPC-portable version of `Sim/code/batch_run_complex.R` (env-driven, renv). |
-| `R/parse_batch.R` | CHPC-portable version of `Sim/code/parse_batch_run.R`; writes CSV + `.Rdata`. |
+| `R/run_batch.R` | CHPC-portable version of `sim/_legacy/code/batch_run_complex.R` (env-driven, renv). |
+| `R/parse_batch.R` | CHPC-portable version of `sim/_legacy/code/parse_batch_run.R`; writes CSV + `.Rdata`. |
 
 ## One-time setup
 
@@ -33,8 +33,8 @@ University of Utah CHPC, then automatically collect the per-run results into
 ```bash
 ssh <you>@notchpeak.chpc.utah.edu
 cd ~/bhCRR
-source chpc/config.sh
-./chpc/run_sim.sh npredictors=15 nobs=200 run_start=1 run_end=100 \
+source sim/chpc/config.sh
+./sim/chpc/run_sim.sh npredictors=15 nobs=200 run_start=1 run_end=100 \
   scenario=scenarioA sb_time=1:00:00
 ```
 
@@ -44,13 +44,13 @@ have defaults in `config.sh` and can be overridden the same way (`key=value`,
 
 ```bash
 # Extend an existing scenario with more runs (collision guard will catch overlaps)
-./chpc/run_sim.sh scenario=scenarioA npredictors=15 nobs=200 run_start=101 run_end=200
+./sim/chpc/run_sim.sh scenario=scenarioA npredictors=15 nobs=200 run_start=101 run_end=200
 
 # Add a second npredictors value to the same scenario
-./chpc/run_sim.sh scenario=scenarioA npredictors=50 nobs=200 run_start=1 run_end=100
+./sim/chpc/run_sim.sh scenario=scenarioA npredictors=50 nobs=200 run_start=1 run_end=100
 
 # Preview without submitting
-./chpc/run_sim.sh scenario=scenarioA nobs=200 dryrun=1
+./sim/chpc/run_sim.sh scenario=scenarioA nobs=200 dryrun=1
 ```
 
 `dryrun=1` prints the banner and resolved sbatch commands without submitting
@@ -59,7 +59,7 @@ the way to confirm knobs before a real submission. Off-cluster (Mac), point
 `SCRATCH_BASE` at a local writable path:
 
 ```bash
-SCRATCH_BASE=/tmp/bhcrr_dryrun ./chpc/run_sim.sh scenario=scenarioA dryrun=1
+SCRATCH_BASE=/tmp/bhcrr_dryrun ./sim/chpc/run_sim.sh scenario=scenarioA dryrun=1
 ```
 
 Named-vector keys (`block_props`, `block_rho`, `latent_q`) use `name=val,name=val`
@@ -67,7 +67,7 @@ format. The parser splits only on the **first** `=`, so extra `=` inside the
 value are safe:
 
 ```bash
-./chpc/run_sim.sh scenario=scenarioA block_rho=indep=0.0,weak=0.5,strong=0.8
+./sim/chpc/run_sim.sh scenario=scenarioA block_rho=indep=0.0,weak=0.5,strong=0.8
 ```
 
 ## Scenarios
@@ -175,14 +175,14 @@ $SCRATCH_BASE/
       ...
 ```
 
-The `scenario.env` manifest is also copied into `Sim/chpc_results/<scenario>/`
+The `scenario.env` manifest is also copied into `sim/results/<scenario>/`
 by the parse job, so the results folder is self-describing without the scratch
 tree.
 
 ### Results (in the repo)
 
 ```
-Sim/chpc_results/
+sim/results/
   scenarioA/
     scenario.env
     betas_p15_scenarioA.csv
@@ -215,7 +215,7 @@ parsed and can be removed once no longer needed.
 3. A **parse job** (`bhcrr_parse_<scenario>`) is submitted with
    `--dependency=afterok` on the array. When every task succeeds it reads all
    matching `.Rdata` files, runs the consistency checks, and writes results to
-   `Sim/chpc_results/<scenario>/`.
+   `sim/results/<scenario>/`.
 
 Runs at different `npredictors` go into separate `p<P>` subdirs because the
 column-to-block map is derived from `npredictors`: `X_17` at p=25 is not `X_17`
@@ -226,15 +226,15 @@ at p=221, so runs at different p cannot be pooled.
 From your Mac:
 
 ```bash
-scp -r '<you>@notchpeak.chpc.utah.edu:~/bhCRR/Sim/chpc_results/scenarioA' \
-    ~/Documents/bhCRR/Sim/chpc_results/
+scp -r '<you>@notchpeak.chpc.utah.edu:~/bhCRR/sim/results/scenarioA' \
+    ~/Documents/bhCRR/sim/results/
 ```
 
 Or individual files:
 
 ```bash
-scp '<you>@notchpeak.chpc.utah.edu:~/bhCRR/Sim/chpc_results/scenarioA/betas_p*.csv' \
-    ~/Documents/bhCRR/Sim/chpc_results/scenarioA/
+scp '<you>@notchpeak.chpc.utah.edu:~/bhCRR/sim/results/scenarioA/betas_p*.csv' \
+    ~/Documents/bhCRR/sim/results/scenarioA/
 ```
 
 ## Monitoring & logs
@@ -245,12 +245,12 @@ squeue -u $USER
 squeue -M lonepeak -u $USER
 ```
 
-Per-task stdout/stderr land in `chpc/logs/run_<arrayjob>_<task>.out` and
-`chpc/logs/parse_<job>.out`.
+Per-task stdout/stderr land in `sim/chpc/logs/run_<arrayjob>_<task>.out` and
+`sim/chpc/logs/parse_<job>.out`.
 
 ## Notes
 
 - `set.seed()` is intentionally never called — each run draws fresh data.
-- Scratch is not backed up; `Sim/chpc_results/` is the durable output.
+- Scratch is not backed up; `sim/results/` is the durable output.
 - Each array task recompiles the Rcpp sources via `sourceCpp`. If this becomes a
   bottleneck, precompiling `src/*.so` once is a future optimization.

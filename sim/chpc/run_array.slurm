@@ -38,6 +38,6 @@ if [[ "${USE_RENV:-1}" == "1" ]]; then
 fi
 
 # ---- Run the models ----------------------------------------------------------
-Rscript "$REPO_ROOT/chpc/R/run_batch.R"
+Rscript "$REPO_ROOT/sim/chpc/R/run_batch.R"
 
 echo "[$(date '+%F %T')] task ${task} done."

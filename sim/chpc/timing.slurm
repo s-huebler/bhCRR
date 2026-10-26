@@ -48,6 +48,6 @@ if [[ "${USE_RENV:-0}" == "1" ]]; then
 fi
 
 # ---- Run the model ----------------------------------------------------------
-Rscript "$REPO_ROOT/chpc/R/run_timing.R"
+Rscript "$REPO_ROOT/sim/chpc/R/run_timing.R"
 
 echo "[$(date '+%F %T')] END   host=$(hostname) job=${SLURM_JOB_ID:-NA} task=${SLURM_ARRAY_TASK_ID:-NA} tag=${TIMING_TAG}"

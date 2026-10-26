@@ -6,8 +6,9 @@
 .quarto
 inst/doc
 scratch.r
-Sim/Local_Testing/**/*.Rdata
-chpc/logs/**
+sim/results/_legacy/**
+sim/chpc/logs/**
+sim/results/*/runs/**
 inst/ClinTall/*.rds
 inst/ClinTall/*.RData
 inst/ClinTall/timing/

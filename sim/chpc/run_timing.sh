@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # =============================================================================
-# chpc/run_timing.sh  --  submit bhCRR timing jobs, one sbatch per config.
+# sim/chpc/run_timing.sh  --  submit bhCRR timing jobs, one sbatch per config.
 #
 # Usage (from the repo root on CHPC):
-#   ./chpc/run_timing.sh                                 # all seven configs
-#   ./chpc/run_timing.sh tags=n200-p300,n200-p5000       # subset
-#   ./chpc/run_timing.sh init_mode=zero                  # override any config var
-#   ./chpc/run_timing.sh time_n1309_pall=48:00:00 mem_n1309_pall=192G
-#   ./chpc/run_timing.sh dryrun=1                        # print commands, no submit
+#   ./sim/chpc/run_timing.sh                                 # all seven configs
+#   ./sim/chpc/run_timing.sh tags=n200-p300,n200-p5000       # subset
+#   ./sim/chpc/run_timing.sh init_mode=zero                  # override any config var
+#   ./sim/chpc/run_timing.sh time_n1309_pall=48:00:00 mem_n1309_pall=192G
+#   ./sim/chpc/run_timing.sh dryrun=1                        # print commands, no submit
 #
 # Resource overrides use underscores for the tag part (hyphens are not valid
 # in shell variable names):  n200-p5000 -> time_n200_p5000 / mem_n200_p5000
@@ -77,7 +77,7 @@ fi
 CLUSTER_FLAG=()
 [[ -n "${CHPC_CLUSTER:-}" ]] && CLUSTER_FLAG=(--clusters="$CHPC_CLUSTER")
 
-mkdir -p "$REPO_ROOT/chpc/logs" "$TIMING_OUT_DIR"
+mkdir -p "$REPO_ROOT/sim/chpc/logs" "$TIMING_OUT_DIR"
 
 # ---- 5. Build the tag list --------------------------------------------------
 # Canonical ordering -- indices match timing.slurm's _TIMING_TAGS array.
@@ -149,7 +149,7 @@ for tag in "${SUBMIT_TAGS[@]}"; do
     --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
     --time="$t_wall" --mem="$t_mem" --cpus-per-task=1 \
     --job-name="bhcrr_timing_${tag}" \
-    --output="$REPO_ROOT/chpc/logs/timing_${tag}_%j.out" \
+    --output="$REPO_ROOT/sim/chpc/logs/timing_${tag}_%j.out" \
     --export=ALL,TIMING_TAG="$tag" \
     "$HERE/timing.slurm")
   jid="${jid%%;*}"
@@ -162,4 +162,4 @@ squeue_cmd="squeue -u \$USER"
 echo "Track with:  $squeue_cmd"
 echo "Results:     $TIMING_OUT_DIR/timing_<tag>.rds"
 echo "Logs:        $REPO_ROOT/chpc/logs/timing_<tag>_<jobid>.out"
-echo "Grep summary lines with:  grep '^TIMING |' chpc/logs/timing_*.out"
+echo "Grep summary lines with:  grep '^TIMING |' sim/chpc/logs/timing_*.out"

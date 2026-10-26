@@ -1,10 +1,10 @@
 # =============================================================================
-# chpc/config.sh  --  the ONE file you source before submitting.
+# sim/chpc/config.sh  --  the ONE file you source before submitting.
 #
 #   ssh <you>@notchpeak.chpc.utah.edu
-#   cd ~/bhCRR                       # your CHPC checkout of the repo
-#   source chpc/config.sh            # (optional; run_sim.sh sources it too)
-#   ./chpc/run_sim.sh run_start=10 run_end=40
+#   cd ~/bhCRR                           # your CHPC checkout of the repo
+#   source sim/chpc/config.sh            # (optional; run_sim.sh sources it too)
+#   ./sim/chpc/run_sim.sh run_start=10 run_end=40
 #
 # Every value below is set only if not already in the environment -- so any
 # key=value override parsed by run_sim.sh (or an env var you export by hand) WINS
@@ -17,8 +17,8 @@
 # =============================================================================
 
 # ---- Paths ------------------------------------------------------------------
-# Where the repo lives on CHPC (this file's grandparent dir by default).
-: "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
+# Where the repo lives on CHPC (this file's great-grandparent dir: sim/chpc/ -> repo root).
+: "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}"
 
 # Shared scratch base -- must be visible from every compute node so the job
 # array and the parse job all see the same files. CHPC general scratch:
@@ -38,7 +38,7 @@
 
 # ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
 # Set these to your CHPC allocation. Override at submit time with env vars, e.g.
-#   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./chpc/run_sim.sh nobs=140
+#   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./sim/chpc/run_sim.sh nobs=140
 export CHPC_ACCOUNT="${CHPC_ACCOUNT:-biostat-division-np}"          # sbatch -A / --account
 # Default to a SHARED partition, not a whole-node one. These jobs (each array
 # task = a few cores + tens of GB) do not need a full node; a whole-node
@@ -48,10 +48,10 @@ export CHPC_ACCOUNT="${CHPC_ACCOUNT:-biostat-division-np}"          # sbatch -A 
 # CHPC_CLUSTER below routes sbatch there.
 #
 # Common overrides (set on the run_sim.sh command line or as env vars):
-#   whole node:        CHPC_CLUSTER=lonepeak  CHPC_PARTITION=lonepeak
-#   back to kingspeak: CHPC_CLUSTER=""        CHPC_PARTITION=kingspeak-shared
-#   free short (<=8h): CHPC_CLUSTER=notchpeak CHPC_ACCOUNT=notchpeak-shared-short \
-#                      CHPC_PARTITION=notchpeak-shared-short
+#   whole node:          CHPC_CLUSTER=lonepeak  CHPC_PARTITION=lonepeak
+#   back to kingspeak:   CHPC_CLUSTER=""        CHPC_PARTITION=kingspeak-shared
+#   free short (<=8h):   CHPC_CLUSTER=notchpeak CHPC_ACCOUNT=notchpeak-shared-short \
+#                        CHPC_PARTITION=notchpeak-shared-short
 export CHPC_PARTITION="${CHPC_PARTITION:-biostat-division-np}"  # sbatch -p / --partition
 # Each CHPC cluster runs its OWN Slurm controller, so a partition is only valid
 # on its own cluster -- submitting a lonepeak partition from a kingspeak context
@@ -116,11 +116,11 @@ export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV RENV_CONFIG_PPM_ENABLED \
 # Fail fast if the allocation was left unset (mirrors ODSiData's check).
 check_allocation() {
     if [[ -z "$CHPC_ACCOUNT" || "$CHPC_ACCOUNT" == "CHANGE_ME" ]]; then
-        echo "ERROR: set CHPC_ACCOUNT in chpc/config.sh (or export it) before submitting." >&2
+        echo "ERROR: set CHPC_ACCOUNT in sim/chpc/config.sh (or export it) before submitting." >&2
         return 1
     fi
     if [[ -z "$CHPC_PARTITION" ]]; then
-        echo "ERROR: set CHPC_PARTITION in chpc/config.sh (or export it) before submitting." >&2
+        echo "ERROR: set CHPC_PARTITION in sim/chpc/config.sh (or export it) before submitting." >&2
         return 1
     fi
 }

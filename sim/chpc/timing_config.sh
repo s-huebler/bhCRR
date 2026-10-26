@@ -1,11 +1,11 @@
 # =============================================================================
-# chpc/timing_config.sh  --  the ONE file you source before submitting timing jobs.
+# sim/chpc/timing_config.sh  --  the ONE file you source before submitting timing jobs.
 #
 #   ssh <you>@notchpeak.chpc.utah.edu
 #   cd ~/bhCRR
-#   source chpc/timing_config.sh      # (optional; run_timing.sh sources it too)
-#   ./chpc/run_timing.sh              # all seven configs at default resources
-#   ./chpc/run_timing.sh tags=n200-p300,n200-p5000 init_mode=zero
+#   source sim/chpc/timing_config.sh      # (optional; run_timing.sh sources it too)
+#   ./sim/chpc/run_timing.sh              # all seven configs at default resources
+#   ./sim/chpc/run_timing.sh tags=n200-p300,n200-p5000 init_mode=zero
 #
 # Every value is set only if not already in the environment -- so any key=value
 # override parsed by run_timing.sh (or an env var you export by hand) WINS over
@@ -18,7 +18,8 @@
 # =============================================================================
 
 # ---- Paths ------------------------------------------------------------------
-: "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." && pwd)}"
+# This script lives at sim/chpc/timing_config.sh; two levels up is the repo root.
+: "${REPO_ROOT:=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}"
 
 # Scratch base for timing runs. Separate from SCRATCH_BASE (simulation runs)
 # to avoid accidental mixing.
@@ -105,11 +106,11 @@ export REPO_ROOT TIMING_SCRATCH TIMING_DATA_DIR TIMING_OUT_DIR CLINTALL_DIR \
 # Fail fast if the allocation was left unset.
 check_allocation() {
     if [[ -z "$CHPC_ACCOUNT" || "$CHPC_ACCOUNT" == "CHANGE_ME" ]]; then
-        echo "ERROR: set CHPC_ACCOUNT in chpc/timing_config.sh (or export it) before submitting." >&2
+        echo "ERROR: set CHPC_ACCOUNT in sim/chpc/timing_config.sh (or export it) before submitting." >&2
         return 1
     fi
     if [[ -z "$CHPC_PARTITION" ]]; then
-        echo "ERROR: set CHPC_PARTITION in chpc/timing_config.sh (or export it) before submitting." >&2
+        echo "ERROR: set CHPC_PARTITION in sim/chpc/timing_config.sh (or export it) before submitting." >&2
         return 1
     fi
 }

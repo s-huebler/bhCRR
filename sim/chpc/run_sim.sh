@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # =============================================================================
-# chpc/run_sim.sh  --  submit the bhCRR simulation as a SLURM job array, then a
-# dependent parse job that collects betas_pXX into Sim/chpc_results/.
+# sim/chpc/run_sim.sh  --  submit the bhCRR simulation as a SLURM job array, then a
+# dependent parse job that collects betas_pXX into sim/results/.
 #
 # Usage (from the repo root on CHPC):
-#   ./chpc/run_sim.sh scenario=n200_baseline              # required; all other defaults from config.sh
-#   ./chpc/run_sim.sh scenario=n200_baseline run_start=10 run_end=40
-#   ./chpc/run_sim.sh scenario=n200_baseline npredictors=25,50,206 run_end=100 runs_per_task=5
+#   ./sim/chpc/run_sim.sh scenario=n200_baseline              # required; all other defaults from config.sh
+#   ./sim/chpc/run_sim.sh scenario=n200_baseline run_start=10 run_end=40
+#   ./sim/chpc/run_sim.sh scenario=n200_baseline npredictors=25,50,206 run_end=100 runs_per_task=5
 #
 # Notes:
 #   * scenario=<name> is REQUIRED. The name must match ^[A-Za-z0-9][A-Za-z0-9.-]*$
@@ -81,7 +81,7 @@ CLUSTER_FLAG=()
 SCRATCH_RUN_DIR="$SCRATCH_BASE/${SCENARIO}"
 export SCRATCH_RUN_DIR
 
-mkdir -p "$REPO_ROOT/chpc/logs" "$REPO_ROOT/Sim/chpc_results/$SCENARIO"
+mkdir -p "$REPO_ROOT/sim/chpc/logs" "$REPO_ROOT/sim/results/$SCENARIO"
 if [[ "$DRYRUN" != "0" ]]; then
   echo "  [dryrun] scratch dir NOT created: $SCRATCH_RUN_DIR"
 else
@@ -161,7 +161,7 @@ bhCRR CHPC submission
   scenario       : $SCENARIO
   repo_root      : $REPO_ROOT
   scratch (runs) : $SCRATCH_RUN_DIR
-  results        : $REPO_ROOT/Sim/chpc_results/$SCENARIO
+  results        : $REPO_ROOT/sim/results/$SCENARIO
   R module       : $R_MODULE   (renv restore: $USE_RENV)
   account/part.  : $CHPC_ACCOUNT / $CHPC_PARTITION  (cluster: ${CHPC_CLUSTER:-<login>})
   nobs           : $NOBS
@@ -195,7 +195,7 @@ run_jid=$(submit sbatch --parsable \
   --time="$SB_TIME" --mem="$SB_MEM" --cpus-per-task="$SB_CPUS" \
   --array="0-${array_max}" \
   --job-name="bhcrr_run_${SCENARIO}" \
-  --output="$REPO_ROOT/chpc/logs/run_%A_%a.out" \
+  --output="$REPO_ROOT/sim/chpc/logs/run_%A_%a.out" \
   --export=ALL \
   "$HERE/run_array.slurm")
 # With --clusters, `sbatch --parsable` returns "jobid;cluster"; keep just the id
@@ -209,7 +209,7 @@ parse_jid=$(submit sbatch --parsable \
   --time="$SB_PARSE_TIME" --mem="$SB_MEM" --cpus-per-task=1 \
   --dependency="afterok:${run_jid}" \
   --job-name="bhcrr_parse_${SCENARIO}" \
-  --output="$REPO_ROOT/chpc/logs/parse_%j.out" \
+  --output="$REPO_ROOT/sim/chpc/logs/parse_%j.out" \
   --export=ALL \
   "$HERE/parse.slurm")
 parse_jid="${parse_jid%%;*}"
@@ -219,4 +219,4 @@ echo
 squeue_cmd="squeue -u \$USER"
 [[ -n "${CHPC_CLUSTER:-}" ]] && squeue_cmd="squeue -M $CHPC_CLUSTER -u \$USER"
 echo "Track with:  $squeue_cmd"
-echo "Results will appear in: $REPO_ROOT/Sim/chpc_results/$SCENARIO/betas_p<P>_${SCENARIO}.{csv,Rdata}"
+echo "Results will appear in: $REPO_ROOT/sim/results/$SCENARIO/betas_p<P>_${SCENARIO}.{csv,Rdata}"
