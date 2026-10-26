@@ -36,7 +36,7 @@ sim/
 ├── chpc/                CHPC / SLURM infrastructure
 │   ├── config.sh        the one file to source before submitting
 │   ├── run_sim.sh       orchestrator: builds the job array
-│   ├── run_array.slurm  array job: calls sim/chpc/R/run_batch.R
+│   ├── run_array.slurm  array job: calls sim/chpc/R/run_array.r
 │   ├── parse.slurm      post-array parse job
 │   ├── R/               thin CHPC wrappers (source load.r, call sim/R/)
 │   └── logs/            SLURM stdout/stderr (git-ignored)
@@ -131,24 +131,56 @@ Each `result_p<p>_run<id>.Rdata` contains a single object `result` with fields:
 
 ---
 
+## Testing convention
+
+`sim/` is excluded from the package build by `^sim$` in `.Rbuildignore`.
+`R CMD check` runs tests against the built package, where `sim/` does not
+exist — so **sim tests must NOT live in `tests/testthat/`**.
+
+Simulation tests live in `sim/tests/test_<module>.R`, each runnable standalone:
+
+```r
+testthat::test_file("sim/tests/test_dgp.R")
+```
+
+`sim/tests/run_all.R` runs them in dependency order. They are never wired into
+`devtools::test()`.
+
+---
+
 ## Migration status
 
-| Legacy file | Status | Replaced by |
-|---|---|---|
-| `_legacy/code/single_run_complex.R` | archived | `sim/local/single.R` + `sim/R/run_one.r` |
-| `_legacy/code/single_run.R` | archived | same |
-| `_legacy/code/batch_run_complex.R` | archived | `sim/local/batch.R` + `sim/R/run_one.r` |
-| `_legacy/code/batch_run.R` | archived | same |
-| `_legacy/code/batch_run_wolbers.R` | archived | `sim/R/score.r` (metrics consolidated) |
-| `_legacy/code/batch_run_cv_wolbers.R` | archived | same |
-| `_legacy/code/batch_run_comparison.R` | archived | `sim/R/comparators.r` |
-| `_legacy/code/single_run_comparison.R` | archived | same |
-| `_legacy/code/other_comparators_cv_section.R` | archived | `sim/R/comparators.r` |
-| `_legacy/code/parse_batch_run.R` | archived | `sim/R/parse.r` |
-| `chpc/R/parse_batch.R` | thin wrapper | calls `sim/R/parse.r` |
-| `chpc/R/run_batch.R` | thin wrapper | calls `sim/R/run_one.r` |
+Steps in implementation order; mark done as each lands.
 
-All `sim/R/` files are currently **header/contract stubs** — implementations are
-not yet written. The stubs define the public API and field contracts so that
-`run_one.r` → `parse.r` dependencies can be understood before any code is
-written.
+| Step | Module | Status | Notes |
+|------|--------|--------|-------|
+| 1 | contracts | **done** (0541e8e → corrected this commit) | headers only; no implementation |
+| 2 | `sim/R/load.r` | not started | |
+| 3 | `sim/R/scenario.r` + `sim/scenarios/scenarioA.R` | not started | |
+| 4 | `sim/R/dgp.r` | not started | |
+| 5 | `sim/R/fit.r` | not started | |
+| 6 | `sim/R/comparators.r` — fits | not started | lasso, alasso, scad, mcp, fg_oracle |
+| 7 | `sim/R/comparators.r` — lambda CV | not started | cv_comparator_lambda() |
+| 8 | `sim/R/score.r` | not started | |
+| 9 | `sim/R/run_one.r` | not started | |
+| 10 | `sim/local/single.R` + `sim/local/batch.R` | not started | |
+| 11 | `sim/R/parse.r` | not started | |
+| 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse_batch.R` wrappers | not started | thin wrappers only |
+| 13 | retire `sim/_legacy/` | not started | after end-to-end run confirmed |
+
+Legacy files absorbed by each step:
+
+| Legacy file | Absorbed at step | Replaced by |
+|---|---|---|
+| `_legacy/code/single_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/single.R` |
+| `_legacy/code/single_run.R` | 9 + 10 | same |
+| `_legacy/code/batch_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/batch.R` |
+| `_legacy/code/batch_run.R` | 9 + 10 | same |
+| `_legacy/code/batch_run_wolbers.R` | 8 | `sim/R/score.r` (metrics consolidated) |
+| `_legacy/code/batch_run_cv_wolbers.R` | 8 | same |
+| `_legacy/code/batch_run_comparison.R` | 6 + 7 | `sim/R/comparators.r` |
+| `_legacy/code/single_run_comparison.R` | 6 + 7 | same |
+| `_legacy/code/other_comparators_cv_section.R` | 6 + 7 | same |
+| `_legacy/code/parse_batch_run.R` | 11 | `sim/R/parse.r` |
+| `sim/chpc/R/parse_batch.R` | 12 | thin wrapper calling `sim/R/parse.r` |
+| `sim/chpc/R/run_batch.R` | 12 | renamed to `sim/chpc/R/run_array.r` |

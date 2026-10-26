@@ -38,6 +38,9 @@
 # REPLACES
 #   sim/_legacy/code/batch_run_complex.R lines ~80-180 (tuning + fit loop)
 #   sim/_legacy/code/single_run_complex.R (entire file; same logic, one run)
-#   sim/chpc/R/run_batch.R lines ~1-120 (CHPC adaptation of same logic)
+#   sim/chpc/R/run_batch.R becomes sim/chpc/R/run_array.r, a thin wrapper
+#     that reads env vars, resolves the scenario, and calls run_one() with
+#     no workflow logic of its own; the fitting logic it contained is
+#     absorbed by this file and run_one.r, not by the CHPC wrapper
 #
 # NOT YET IMPLEMENTED
