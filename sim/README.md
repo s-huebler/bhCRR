@@ -202,7 +202,7 @@ Steps in implementation order; mark done as each lands.
 | 9 | `sim/R/run_one.r` | **done** (20d9e6c) | deterministic seeding; fg_oracle separate field |
 | 10 | `sim/local/single.R` + `sim/local/batch.R` | **done** (this commit) | batch_sweep(); failure records; collision guard |
 | 11 | `sim/R/parse.r` | **done** (this commit) | pure stacker; fg_oracle as model row; by_block CSV added |
-| 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse.r` wrappers | **in progress** (R wrappers done; step 12b adds setup.slurm + shell wiring) | timing harness parked in `sim/_legacy/chpc-timing/` |
+| 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse.r` wrappers + shell wiring | **done** | R wrappers thin; setup.slurm one-shot prepare; DGP moved to scenario file; timing harness parked in `sim/_legacy/chpc-timing/` |
 | 13 | retire `sim/_legacy/` | not started | after end-to-end run confirmed |
 
 Legacy files absorbed by each step:

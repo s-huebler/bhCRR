@@ -269,36 +269,27 @@ test_that("check_manifest does not trip on 0.40 vs 0.4 formatting difference", {
 })
 
 # ---------------------------------------------------------------------------
-# Manifest key order must match _sig_keys in run_sim.sh
+# run_sim.sh must NOT contain a _sig_keys bash array (regression guard)
+#
+# The old run_sim.sh wrote scenario.env itself in bash (a _sig_keys array +
+# a string-comparison loop). That was a dual writer: scenario.r writes the
+# same manifest in R with numeric-aware comparison, but the bash side compared
+# values as raw strings. A manifest R wrote as "0.4" would hard-stop against
+# config.sh's literal "0.40" even though the values are numerically identical.
+# See the DUAL WRITER note at the top of sim/R/scenario.r for full context.
+#
+# The fix (step 12b) deleted the bash writer entirely; scenario.r is now the
+# sole writer and reader. The write_manifest -> read_manifest -> check_manifest
+# round-trip tests above still cover key set and order, so nothing is lost.
+# This test guards against re-introducing the bash writer in a future edit.
 # ---------------------------------------------------------------------------
 
-test_that("manifest key set and order match _sig_keys in run_sim.sh", {
+test_that("run_sim.sh contains no _sig_keys bash manifest array", {
   run_sim_path <- file.path(.test_root, "sim", "chpc", "run_sim.sh")
   skip_if(!file.exists(run_sim_path), "run_sim.sh not found")
 
   lines <- readLines(run_sim_path, warn = FALSE)
-  start_idx <- grep("^_sig_keys=\\(", lines)
-  expect_length(start_idx, 1)
-
-  # Collect lines until closing )
-  end_idx <- start_idx
-  while (!grepl("\\)", lines[end_idx])) end_idx <- end_idx + 1
-  sig_block <- paste(lines[start_idx:end_idx], collapse = " ")
-
-  # Extract all-caps words (the key names; include digits and underscores)
-  bash_keys <- regmatches(sig_block,
-                           gregexpr("[A-Z][A-Z0-9_]*", sig_block))[[1]]
-  # Remove the variable name itself (_sig_keys expands to SIG and KEYS fragments;
-  # filter to plausible key names using a minimum length and no lone letters)
-  bash_keys <- bash_keys[nchar(bash_keys) >= 3]
-
-  # Write a manifest and read its data-line keys in order
-  td <- tempfile(); dir.create(td)
-  on.exit(unlink(td, recursive = TRUE), add = TRUE)
-  spec <- do.call(scenario, .valid_args)
-  write_manifest(spec, td)
-  man <- read_manifest(file.path(td, "scenario.env"))
-  r_keys <- names(man)
-
-  expect_equal(r_keys, bash_keys)
+  sig_lines <- grep("_sig_keys", lines, value = TRUE)
+  expect_true(length(sig_lines) == 0L,
+              label = "no _sig_keys array in run_sim.sh (dual-writer guard)")
 })

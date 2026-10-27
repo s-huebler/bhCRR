@@ -1,13 +1,18 @@
 #!/bin/bash
 # =============================================================================
-# chpc/run_array.slurm  --  one array task = a chunk of run indices.
+# sim/chpc/run_array.slurm  --  one array task = a chunk of run indices.
 #
 # Submitted by run_sim.sh with --export=ALL, so every config.sh variable
-# (SCENARIO, NOBS, NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK,
-# SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, USE_RENV, ZERO_GAP_TARGET,
-# BETA1_ACTIVE, BETA2_ACTIVE)
-# is already in the environment. sbatch resource flags (--array, --account,
-# --time, ...) are set on the run_sim.sh command line, not here.
+# (SCENARIO, NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK,
+# SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, BHCRR_LOAD)
+# is already in the environment. DGP parameters are NOT exported -- they live
+# solely in sim/scenarios/$SCENARIO.R (run_array.r errors if any DGP env var
+# is set). sbatch resource flags (--array, --account, --time, ...) are set on
+# the run_sim.sh command line, not here.
+#
+# renv::restore() and compile_dll() are NOT run here -- the setup job (which
+# this array depends on via afterok) already did both. Running them again here
+# would (a) re-race on src/*.o across concurrent tasks and (b) waste time.
 # =============================================================================
 set -euo pipefail
 
@@ -23,7 +28,7 @@ if (( sub_start > RUN_END )); then
   exit 0
 fi
 export RUN_SUBSTART="$sub_start" RUN_SUBEND="$sub_end"
-echo "task $task -> runs ${RUN_SUBSTART}..${RUN_SUBEND}  (nobs=$NOBS, npredictors=$NPREDICTORS)"
+echo "task $task -> runs ${RUN_SUBSTART}..${RUN_SUBEND}  (npredictors=$NPREDICTORS)"
 
 # ---- R environment ----------------------------------------------------------
 module purge 2>/dev/null || true
@@ -32,12 +37,7 @@ module load "$R_MODULE"
 mkdir -p "$SCRATCH_RUN_DIR"
 cd "$REPO_ROOT"   # so .Rprofile activates renv for this project
 
-# Restore the renv library the first time (subsequent tasks are near-instant).
-if [[ "${USE_RENV:-1}" == "1" ]]; then
-  Rscript -e 'renv::restore(prompt = FALSE)'
-fi
-
 # ---- Run the models ----------------------------------------------------------
-Rscript "$REPO_ROOT/sim/chpc/R/run_batch.R"
+Rscript "$REPO_ROOT/sim/chpc/R/run_array.r"
 
 echo "[$(date '+%F %T')] task ${task} done."

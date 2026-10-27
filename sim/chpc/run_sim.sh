@@ -1,20 +1,26 @@
 #!/usr/bin/env bash
 # =============================================================================
-# sim/chpc/run_sim.sh  --  submit the bhCRR simulation as a SLURM job array, then a
-# dependent parse job that collects betas_pXX into sim/results/.
+# sim/chpc/run_sim.sh  --  submit the bhCRR simulation as a SLURM job chain:
+#                          setup → run array → parse
 #
 # Usage (from the repo root on CHPC):
-#   ./sim/chpc/run_sim.sh scenario=n200_baseline              # required; all other defaults from config.sh
-#   ./sim/chpc/run_sim.sh scenario=n200_baseline run_start=10 run_end=40
-#   ./sim/chpc/run_sim.sh scenario=n200_baseline npredictors=25,50,206 run_end=100 runs_per_task=5
+#   ./sim/chpc/run_sim.sh scenario=n200.baseline              # required; defaults from config.sh
+#   ./sim/chpc/run_sim.sh scenario=n200.baseline run_start=10 run_end=40
+#   ./sim/chpc/run_sim.sh scenario=n200.baseline npredictors=25,50,206 run_end=100
+#   ./sim/chpc/run_sim.sh scenario=n200.baseline skip_setup=1  # skip setup job (SO must exist)
 #
 # Notes:
 #   * scenario=<name> is REQUIRED. The name must match ^[A-Za-z0-9][A-Za-z0-9.-]*$
 #     (no underscores -- they delimit fields in p<P>_<scenario>_run<N> filenames).
-#   * Overrides are key=value with NO spaces around '=' (nobs=140, not nobs = 140).
+#   * A sim/scenarios/<name>.R file must exist; this is the authority for all DGP
+#     parameters. Create one with: source sim/R/load.r; load_sim(); new_scenario("<name>")
+#   * Overrides are key=value with NO spaces around '=' (run_end=40, not run_end = 40).
 #   * Keys are case-insensitive; they map to the UPPER_CASE vars in config.sh.
-#   * Add  dryrun=1    to print the sbatch commands without submitting.
-#   * Add  overwrite=1 to re-submit run indices that already have .Rdata output.
+#   * Add  dryrun=1     to print the sbatch commands without submitting.
+#   * Add  overwrite=1  to re-submit run indices that already have .Rdata output.
+#   * Add  skip_setup=1 to skip the setup job and submit the array directly.
+#                        USE ONLY when src/bhCRR.so is already compiled and the
+#                        renv library is known to be current.
 # =============================================================================
 set -euo pipefail
 
@@ -23,13 +29,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ---- 1. Parse key=value overrides into the environment (before config.sh) ----
 DRYRUN=0
 OVERWRITE=0
+SKIP_SETUP=0
 for arg in "$@"; do
   case "$arg" in
     *=*)
       key="${arg%%=*}"; val="${arg#*=}"
       key="$(printf '%s' "$key" | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
-      if [[ "$key" == "DRYRUN" ]];    then DRYRUN="$val";    continue; fi
-      if [[ "$key" == "OVERWRITE" ]]; then OVERWRITE="$val"; continue; fi
+      if [[ "$key" == "DRYRUN" ]];      then DRYRUN="$val";      continue; fi
+      if [[ "$key" == "OVERWRITE" ]];   then OVERWRITE="$val";   continue; fi
+      if [[ "$key" == "SKIP_SETUP" ]];  then SKIP_SETUP="$val";  continue; fi
       export "$key=$val"
       ;;
     *)
@@ -58,73 +66,36 @@ check_allocation || exit 1     # from config.sh: CHPC_ACCOUNT / CHPC_PARTITION s
 [[ "$SCENARIO" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || \
   die "SCENARIO '$SCENARIO' is invalid. Use only letters, digits, dots, and hyphens (no underscores -- they are delimiters in p<P>_<scenario>_run<N> filenames)."
 
+# Scenario file must exist -- it is the authority for all DGP parameters.
+scenario_file="$REPO_ROOT/sim/scenarios/${SCENARIO}.R"
+[[ -f "$scenario_file" ]] || \
+  die "Scenario file not found: $scenario_file
+Create it with:
+  source sim/R/load.r; load_sim(); new_scenario(\"${SCENARIO}\", dir = \"sim/scenarios\")"
+
 # Optional cross-cluster routing: each CHPC cluster has its own Slurm controller.
 # Empty CHPC_CLUSTER = submit to the login cluster's scheduler.
 CLUSTER_FLAG=()
 [[ -n "${CHPC_CLUSTER:-}" ]] && CLUSTER_FLAG=(--clusters="$CHPC_CLUSTER")
 
-# Per-scenario scratch PARENT dir. Each npredictors value then gets its own
-# subdirectory beneath it, created by run_batch.R as it sweeps the grid:
-#
-#   $SCRATCH_BASE/<scenario>/p15/p15_<scenario>_run1.Rdata
-#   $SCRATCH_BASE/<scenario>/p221/p221_<scenario>_run1.Rdata
-#
-# The block map is a function of npredictors, so runs at different p must never
-# be pooled into one summary. Separate directories make that structural rather
-# than a convention parse_batch.R has to enforce after the fact.
-#
-# parse_batch.R lists recursively, so this variable doubles as the parse scope:
-# point it at the scenario root to parse every p present, or at a single p<P>
-# subdir to parse just that one. Runs sharing the same scenario and p accumulate
-# in their subdir, so run_start=10 run_end=40 still adds to an earlier 1..10
-# batch.
+# Per-scenario scratch dir. batch_sweep() creates p<P>/ subdirs beneath this.
+#   $SCRATCH_BASE/<scenario>/p25/p25_<scenario>_run1.Rdata
 SCRATCH_RUN_DIR="$SCRATCH_BASE/${SCENARIO}"
 export SCRATCH_RUN_DIR
 
-mkdir -p "$REPO_ROOT/sim/chpc/logs" "$REPO_ROOT/sim/results/$SCENARIO"
+mkdir -p "$REPO_ROOT/sim/chpc/logs"
 if [[ "$DRYRUN" != "0" ]]; then
-  echo "  [dryrun] scratch dir NOT created: $SCRATCH_RUN_DIR"
+  echo "  [dryrun] directories NOT created"
 else
-  mkdir -p "$SCRATCH_RUN_DIR"
+  mkdir -p "$SCRATCH_RUN_DIR" "$REPO_ROOT/sim/results/$SCENARIO/parsed"
 fi
 
-# ---- 3b. Scenario manifest ---------------------------------------------------
-# Signature = the 12 DGP keys (sorted alphabetically). Deliberately excluded:
-# NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK, and all SLURM/account knobs.
-_sig_keys=(ACTIVE_BLOCK BETA1_ACTIVE BETA2_ACTIVE BLOCK_PROPS BLOCK_RHO CENS_RATE
-           LATENT_Q LATENT_TYPE NOBS U_MAX U_MIN ZERO_GAP_TARGET)
-
-scenario_env="$SCRATCH_RUN_DIR/scenario.env"
-
-if [[ -f "$scenario_env" ]]; then
-  # Compare the recorded signature line by line against current values.
-  mismatch=0
-  for k in "${_sig_keys[@]}"; do
-    recorded=$(grep "^${k}=" "$scenario_env" | cut -d= -f2-)
-    current="${!k}"
-    if [[ "$recorded" != "$current" ]]; then
-      printf 'run_sim.sh: scenario mismatch -- %s:\n  recorded : %s\n  current  : %s\n' \
-        "$k" "$recorded" "$current" >&2
-      mismatch=1
-    fi
-  done
-  [[ "$mismatch" -eq 0 ]] || \
-    die "Scenario '$SCENARIO' has recorded settings that differ from what you passed (see above). Fix the mismatch or choose a new scenario name with scenario=<new>."
-elif [[ "$DRYRUN" == "0" ]]; then
-  {
-    printf '# scenario:  %s\n' "$SCENARIO"
-    printf '# created:   %s\n' "$(date '+%Y-%m-%dT%H:%M:%S')"
-    printf '# git:       %s\n' "$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo 'unknown')"
-    for k in "${_sig_keys[@]}"; do printf '%s=%s\n' "$k" "${!k}"; done
-  } > "$scenario_env"
-  echo "  wrote scenario manifest: $scenario_env"
-else
-  echo "  [dryrun] scenario.env would be created at: $scenario_env"
-fi
-
-# ---- 3c. Collision guard -----------------------------------------------------
+# ---- 3b. Collision guard -----------------------------------------------------
 # Refuse to submit if any requested run indices already have .Rdata output under
 # $SCRATCH_RUN_DIR/p<P>/, unless overwrite=1 was passed.
+# This check runs before any job is queued, so it fails fast without wasting
+# queue time. batch_sweep() also checks on the compute node; keeping both is
+# deliberate (the bash check is cheap and doesn't need the renv library).
 if [[ "$OVERWRITE" != "1" ]]; then
   any_collision=0
   for P in $(echo "$NPREDICTORS" | tr ',' ' '); do
@@ -155,28 +126,25 @@ total_runs=$(( RUN_END - RUN_START + 1 ))
 ntasks=$(( (total_runs + RUNS_PER_TASK - 1) / RUNS_PER_TASK ))   # ceil
 array_max=$(( ntasks - 1 ))
 
+# Resolve the USE_RENV display string for the banner
+use_renv_display="${USE_RENV:-auto}"
+
 cat <<EOF
 ------------------------------------------------------------
 bhCRR CHPC submission
   scenario       : $SCENARIO
+  scenario file  : $scenario_file
   repo_root      : $REPO_ROOT
   scratch (runs) : $SCRATCH_RUN_DIR
-  results        : $REPO_ROOT/sim/results/$SCENARIO
-  R module       : $R_MODULE   (renv restore: $USE_RENV)
+  results        : $REPO_ROOT/sim/results/$SCENARIO/parsed
+  R module       : $R_MODULE
+  USE_RENV       : $use_renv_display
+  BHCRR_LOAD     : ${BHCRR_LOAD:-cluster}
   account/part.  : $CHPC_ACCOUNT / $CHPC_PARTITION  (cluster: ${CHPC_CLUSTER:-<login>})
-  nobs           : $NOBS
   npredictors    : $NPREDICTORS
   runs           : $RUN_START .. $RUN_END  ($total_runs runs)
   runs/task      : $RUNS_PER_TASK  ->  array 0-$array_max ($ntasks tasks)
-  -- scenario --
-  beta1_active   : $BETA1_ACTIVE
-  beta2_active   : $BETA2_ACTIVE
-  active_block   : $ACTIVE_BLOCK
-  block_props    : $BLOCK_PROPS
-  block_rho      : $BLOCK_RHO
-  latent_type    : $LATENT_TYPE
-  latent_q       : $LATENT_Q
-  cens_rate      : $CENS_RATE  u_min: $U_MIN  u_max: $U_MAX
+  skip_setup     : $SKIP_SETUP
 ------------------------------------------------------------
 EOF
 
@@ -189,11 +157,31 @@ submit() {  # echo + run (or just echo under dryrun); returns job id on stdout
   fi
 }
 
-# ---- 5. Submit the run array -------------------------------------------------
+# ---- 5. Submit setup job (unless skip_setup=1) --------------------------------
+if [[ "$SKIP_SETUP" == "1" ]]; then
+  echo "skip_setup=1: skipping setup job."
+  echo "  NOTE: src/bhCRR.so must already exist and the renv library must be current."
+  echo "  If in doubt, omit skip_setup=1 so the setup job runs first."
+  array_dep=""
+else
+  setup_jid=$(submit sbatch --parsable \
+    --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
+    --time="$SB_SETUP_TIME" --mem="$SB_SETUP_MEM" --cpus-per-task="$SB_SETUP_CPUS" \
+    --job-name="bhcrr_setup_${SCENARIO}" \
+    --output="$REPO_ROOT/sim/chpc/logs/setup_%j.out" \
+    --export=ALL \
+    "$HERE/setup.slurm")
+  setup_jid="${setup_jid%%;*}"
+  echo "Submitted setup job  : job $setup_jid"
+  array_dep="--dependency=afterok:${setup_jid}"
+fi
+
+# ---- 6. Submit the run array -------------------------------------------------
 run_jid=$(submit sbatch --parsable \
   --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
   --time="$SB_TIME" --mem="$SB_MEM" --cpus-per-task="$SB_CPUS" \
   --array="0-${array_max}" \
+  ${array_dep:+"$array_dep"} \
   --job-name="bhcrr_run_${SCENARIO}" \
   --output="$REPO_ROOT/sim/chpc/logs/run_%A_%a.out" \
   --export=ALL \
@@ -201,9 +189,9 @@ run_jid=$(submit sbatch --parsable \
 # With --clusters, `sbatch --parsable` returns "jobid;cluster"; keep just the id
 # so the dependency below is a clean numeric job ID.
 run_jid="${run_jid%%;*}"
-echo "Submitted run array : job $run_jid  (array 0-$array_max)"
+echo "Submitted run array  : job $run_jid  (array 0-$array_max)"
 
-# ---- 6. Submit the parse job, gated on the whole array succeeding -------------
+# ---- 7. Submit the parse job, gated on the whole array succeeding -------------
 parse_jid=$(submit sbatch --parsable \
   --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
   --time="$SB_PARSE_TIME" --mem="$SB_MEM" --cpus-per-task=1 \
@@ -213,10 +201,10 @@ parse_jid=$(submit sbatch --parsable \
   --export=ALL \
   "$HERE/parse.slurm")
 parse_jid="${parse_jid%%;*}"
-echo "Submitted parse job : job $parse_jid  (runs after array $run_jid succeeds)"
+echo "Submitted parse job  : job $parse_jid  (runs after array $run_jid succeeds)"
 
 echo
 squeue_cmd="squeue -u \$USER"
 [[ -n "${CHPC_CLUSTER:-}" ]] && squeue_cmd="squeue -M $CHPC_CLUSTER -u \$USER"
 echo "Track with:  $squeue_cmd"
-echo "Results will appear in: $REPO_ROOT/sim/results/$SCENARIO/betas_p<P>_${SCENARIO}.{csv,Rdata}"
+echo "Results will appear in: $REPO_ROOT/sim/results/$SCENARIO/parsed/"

@@ -1,26 +1,27 @@
 #!/bin/bash
 # =============================================================================
 # sim/chpc/parse.slurm  --  runs once, after the whole run array succeeds
-# (--dependency=afterok). Collects every RData in $SCRATCH_RUN_DIR, groups by
-# npredictors, and writes betas_p<P>_n<NOBS>.{csv,Rdata} to sim/results/.
+# (--dependency=afterok). Collects every .Rdata in $SCRATCH_RUN_DIR, groups
+# by npredictors, and writes summary CSVs to sim/results/$SCENARIO/parsed/.
 #
 # Inherits the environment from run_sim.sh via --export=ALL
-# (SCENARIO, SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, USE_RENV, and all DGP vars).
+# (SCENARIO, SCRATCH_RUN_DIR, REPO_ROOT, R_MODULE, BHCRR_LOAD).
+# DGP parameters are NOT exported -- they live solely in the scenario file.
+#
+# renv::restore() and compile_dll() are NOT run here -- the setup job already
+# did both.
 # =============================================================================
 set -euo pipefail
 
 echo "[$(date '+%F %T')] parse on host=$(hostname) job=${SLURM_JOB_ID:-NA}"
 echo "scratch : $SCRATCH_RUN_DIR"
-echo "results : $REPO_ROOT/sim/results"
+echo "results : $REPO_ROOT/sim/results/$SCENARIO/parsed"
 
 module purge 2>/dev/null || true
 module load "$R_MODULE"
 
 cd "$REPO_ROOT"
-if [[ "${USE_RENV:-1}" == "1" ]]; then
-  Rscript -e 'renv::restore(prompt = FALSE)'
-fi
 
-Rscript "$REPO_ROOT/sim/chpc/R/parse_batch.R"
+Rscript "$REPO_ROOT/sim/chpc/R/parse.r"
 
 echo "[$(date '+%F %T')] parse done."

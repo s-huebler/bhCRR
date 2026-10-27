@@ -1,16 +1,19 @@
 # =============================================================================
 # sim/chpc/config.sh  --  the ONE file you source before submitting.
 #
+# What lives here: cluster identity (allocation, partition), paths, sweep scope
+# (npredictors, run range), and renv policy. NOTHING about the data-generating
+# process -- DGP parameters live solely in sim/scenarios/<slug>.R.
+#
 #   ssh <you>@notchpeak.chpc.utah.edu
-#   cd ~/bhCRR                           # your CHPC checkout of the repo
-#   source sim/chpc/config.sh            # (optional; run_sim.sh sources it too)
-#   ./sim/chpc/run_sim.sh run_start=10 run_end=40
+#   cd ~/Documents/bhCRR           # your CHPC checkout of the repo
+#   source sim/chpc/config.sh      # (optional; run_sim.sh sources it too)
+#   ./sim/chpc/run_sim.sh scenario=<name> run_start=1 run_end=40
 #
 # Every value below is set only if not already in the environment -- so any
-# key=value override parsed by run_sim.sh (or an env var you export by hand) WINS
-# over the default here. So `./chpc/run_sim.sh nobs=140` overrides NOBS, and
-# `CHPC_PARTITION=notchpeak-shared-short ./chpc/run_sim.sh` overrides the
-# partition, without you touching this file.
+# key=value override parsed by run_sim.sh (or an env var you export by hand)
+# WINS over the default here. So `./sim/chpc/run_sim.sh R_MODULE=R/4.6.0`
+# overrides R_MODULE without touching this file.
 #
 # Allocation is prefilled for the qiaox / lonepeak setup (carried over from the
 # ODSiData CHPC config). The only thing to confirm once is R_MODULE.
@@ -28,17 +31,38 @@
 # ---- R environment ----------------------------------------------------------
 # `module load` name. renv.lock pins R 4.5.1, so match the minor version.
 : "${R_MODULE:=R/4.5.2}"          # <-- confirm this module exists: `module spider R`
-# 1 = run renv::restore() before the models (recommended, matches renv.lock).
-: "${USE_RENV:=0}"
+
+# BHCRR_LOAD=cluster tells load_sim() to use pkgload::load_all(compile=FALSE).
+# "dev" would recompile on every task and concurrent array tasks would race on
+# src/*.o and src/bhCRR.so. The setup job compiles once; tasks never compile.
+: "${BHCRR_LOAD:=cluster}"
+
+# USE_RENV -- three-state renv restore policy for the setup job:
+#   auto  restore only if renv reports the project is NOT synchronized with the
+#         lockfile (detected via renv::status()$synchronized).  This is the
+#         right default: it fixes a missing or outdated library without forcing
+#         a full reinstall every time.  It also resolves the 2026-10-27 state
+#         where the library under ~/.cache was incomplete but USE_RENV=0 was set
+#         deliberately to avoid a broken restore -- "auto" bridges that gap.
+#   1     always run renv::restore(prompt=FALSE), even if in sync.
+#   0     skip renv::restore() entirely. Use this only when you know the library
+#         is current and want to save the restore overhead. Note: as of
+#         2026-10-27 the CHPC renv library was incomplete due to a PPM binary
+#         incompatibility (see RENV_CONFIG_PPM_ENABLED below). Setting 0 with
+#         an incomplete library will cause load failures in the array tasks.
+: "${USE_RENV:=auto}"
+
 # CHPC's R is built against an external LAPACK, so it has no libRlapack.so.
 # Posit Package Manager's Linux binaries are built against an R that does, and
 # fail to load here ("libRlapack.so: cannot open shared object file"). Disabling
 # the PPM binary endpoint forces source installs that link against this R.
+# The renv cellar (renv/cellar/fastcmprsk_1.24.10.tar.gz) is vendored in the
+# repo and reaches CHPC on `git pull`, so renv uses it instead of fetching.
 : "${RENV_CONFIG_PPM_ENABLED:=FALSE}"
 
 # ---- SLURM allocation (logic carried from the ODSiData CHPC config) ----------
 # Set these to your CHPC allocation. Override at submit time with env vars, e.g.
-#   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./sim/chpc/run_sim.sh nobs=140
+#   CHPC_ACCOUNT=my-alloc CHPC_PARTITION=notchpeak ./sim/chpc/run_sim.sh scenario=x
 export CHPC_ACCOUNT="${CHPC_ACCOUNT:-biostat-division-np}"          # sbatch -A / --account
 # Default to a SHARED partition, not a whole-node one. These jobs (each array
 # task = a few cores + tens of GB) do not need a full node; a whole-node
@@ -57,61 +81,41 @@ export CHPC_PARTITION="${CHPC_PARTITION:-biostat-division-np}"  # sbatch -p / --
 # on its own cluster -- submitting a lonepeak partition from a kingspeak context
 # fails with "invalid partition specified". Empty = your login cluster's
 # scheduler; set this (paired with a matching account/partition) to reach another
-# cluster. run_sim.sh turns this into `sbatch --clusters=$CHPC_CLUSTER`.
-# Note the `-` (not `:-`): an explicitly-set empty CHPC_CLUSTER="" is preserved
-# (routes to your login cluster), while leaving it unset defaults to lonepeak.
+# cluster. Note the `-` (not `:-`): an explicitly-set empty CHPC_CLUSTER="" is
+# preserved (routes to your login cluster), while leaving it unset defaults to
+# notchpeak.
 export CHPC_CLUSTER="${CHPC_CLUSTER-notchpeak}"        # sbatch -M / --clusters ("" = login cluster)
 
-# ---- SLURM resource requests (per job; tune freely) -------------------------
-: "${SB_TIME:=00:15:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
-: "${SB_MEM:=4G}"                # memory per array task
-: "${SB_CPUS:=1}"                 # cpus-per-task
-: "${SB_PARSE_TIME:=00:20:00}"    # walltime for the (single) parse job
+# ---- SLURM resource requests -- setup job -----------------------------------
+: "${SB_SETUP_TIME:=04:00:00}"     # renv::restore() from source can take 1-2 h for 166 packages
+: "${SB_SETUP_MEM:=16G}"           # source installs (e.g. Matrix, survival) need headroom
+: "${SB_SETUP_CPUS:=4}"            # passed to options(Ncpus=) inside setup.slurm
 
-# ---- Simulation defaults (override any of these on the run_sim.sh line) ------
+# ---- SLURM resource requests -- array and parse jobs ------------------------
+: "${SB_TIME:=00:15:00}"           # walltime per array task (rough guess for p=221 + autotune; trim after first timing run)
+: "${SB_MEM:=4G}"                  # memory per array task
+: "${SB_CPUS:=1}"                  # cpus-per-task
+: "${SB_PARSE_TIME:=00:20:00}"     # walltime for the (single) parse job
+
+# ---- Simulation sweep scope --------------------------------------------------
+# SCENARIO names a file in sim/scenarios/. DGP parameters are defined there --
+# not here. What goes here: the sweep dimensions (which p values, which run range)
+# and task geometry for SLURM.
 #
-# SCENARIO names a user-maintained set of data-generating settings. All DGP
-# parameters below (NOBS through U_MAX) are considered part of the scenario
-# definition -- changing any of them requires a new scenario name. n (NOBS) is
-# part of the scenario and therefore drops out of individual file naming.
-#
-# NOT part of the scenario: NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK
-# (these control how you sweep or extend a scenario, not what the scenario is),
-# and all SLURM / account knobs.
-#
-# There is no default -- you must pass scenario=<name> on the run_sim.sh line.
+# There is no default for SCENARIO -- you must pass scenario=<name> on the
+# run_sim.sh command line.
 : "${SCENARIO:=}"
 
-: "${NOBS:=200}"                                   # sample size
-: "${NPREDICTORS:=25}"                            # single value OR comma list, e.g. 25,50,221
-: "${RUN_START:=1}"                                # first run index (inclusive)
-: "${RUN_END:=10}"                                 # last  run index (inclusive)
-: "${RUNS_PER_TASK:=5}"                            # runs handled by each array task
-: "${ZERO_GAP_TARGET:=0.1}"                        # clinically-relevant min treatment effect
-: "${BETA1_ACTIVE:=0.40,-0.50,0.60,0.75,-0.80}"    # active cause-1 coefficients
-: "${BETA2_ACTIVE:=neg_beta1}"                      # cause-2 coefficients; "neg_beta1" = -BETA1_ACTIVE
-#
-# Named-vector variables below use "name=val,name=val" format. run_sim.sh parses
-# overrides with key="${arg%%=*}" / val="${arg#*=}", which splits only on the FIRST
-# '=', so extra '=' inside the value are safe. Example:
-#   ./chpc/run_sim.sh block_rho=indep=0.0,weak=0.5,strong=0.8
-: "${ACTIVE_BLOCK:=strong,strong,weak,weak,indep}"   # block labels aligned with BETA1_ACTIVE
-: "${BLOCK_PROPS:=indep=0.50,weak=0.25,strong=0.25}" # block proportions (name=val,...)
-: "${BLOCK_RHO:=indep=0.00,weak=0.30,strong=0.60}"   # within-block correlations (name=val,...)
-: "${LATENT_TYPE:=gaussian}"                          # latent variable distribution
-: "${LATENT_Q:=indep=0.5,weak=0.4,strong=0.5}"       # latent quantile per block (name=val,...)
-: "${CENS_RATE:=0.05}"                                # Exp rate for random censoring (0 = none)
-: "${U_MIN:=100}"                                     # lower bound for observation window
-: "${U_MAX:=100}"                                     # upper bound for observation window
+: "${NPREDICTORS:=25}"             # single value OR comma list, e.g. 25,50,221
+: "${RUN_START:=1}"                # first run index (inclusive)
+: "${RUN_END:=10}"                 # last  run index (inclusive)
+: "${RUNS_PER_TASK:=5}"            # runs handled by each array task
 
 # CHPC_ACCOUNT / CHPC_PARTITION / CHPC_CLUSTER are already exported inline above.
-export REPO_ROOT SCRATCH_BASE R_MODULE USE_RENV RENV_CONFIG_PPM_ENABLED \
+export REPO_ROOT SCRATCH_BASE R_MODULE BHCRR_LOAD USE_RENV RENV_CONFIG_PPM_ENABLED \
+       SB_SETUP_TIME SB_SETUP_MEM SB_SETUP_CPUS \
        SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
-       SCENARIO \
-       NOBS NPREDICTORS RUN_START RUN_END RUNS_PER_TASK ZERO_GAP_TARGET \
-       BETA1_ACTIVE BETA2_ACTIVE \
-       ACTIVE_BLOCK BLOCK_PROPS BLOCK_RHO LATENT_TYPE LATENT_Q \
-       CENS_RATE U_MIN U_MAX
+       SCENARIO NPREDICTORS RUN_START RUN_END RUNS_PER_TASK
 
 # Fail fast if the allocation was left unset (mirrors ODSiData's check).
 check_allocation() {
