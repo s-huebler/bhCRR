@@ -1,0 +1,36 @@
+chpc/logs/timing_n1309-p10000_15388212.out:TIMING | tag=n1309-p10000 | n=1309 p= 10000 | init= bic | fit=8.1s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n1309-p10000_15388212.out:TIMING | tag=n1309-p10000 | init_bic=123.9s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-p10000_15388212.out:TIMING | tag=n1309-p10000 | peak_mem_vcells=979.6 MB (0.96 GB)
+chpc/logs/timing_n1309-p1000_15388163.out:TIMING | tag=n1309-p1000  | n=1309 p=  1000 | init= bic | fit=0.9s | iter=5 conv=TRUE | nnz=2 | err=none
+chpc/logs/timing_n1309-p1000_15388163.out:TIMING | tag=n1309-p1000  | init_bic=12.4s lambda=0.035938 df=2 nnz=2  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-p1000_15388163.out:TIMING | tag=n1309-p1000  | peak_mem_vcells=181.3 MB (0.18 GB)
+chpc/logs/timing_n1309-p300_15387607.out:TIMING | tag=n1309-p300   | n=1309 p=   300 | init=  cv | fit=16.8s | iter=5 conv=TRUE | nnz=4 | err=none
+chpc/logs/timing_n1309-p300_15387607.out:TIMING | tag=n1309-p300   | init_cv_est=17.0s  (separate call; not subtracted from fit time)
+chpc/logs/timing_n1309-p300_15387607.out:TIMING | tag=n1309-p300   | peak_mem_vcells=112.9 MB (0.11 GB)
+chpc/logs/timing_n1309-p300_15387985.out:TIMING | tag=n1309-p300   | n=1309 p=   300 | init= bic | fit=0.3s | iter=5 conv=TRUE | nnz=1 | err=none
+chpc/logs/timing_n1309-p300_15387985.out:TIMING | tag=n1309-p300   | init_bic=3.5s lambda=0.035938 df=1 nnz=1  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-p300_15387985.out:TIMING | tag=n1309-p300   | peak_mem_vcells=96.2 MB (0.09 GB)
+chpc/logs/timing_n1309-p300_15388162.out:TIMING | tag=n1309-p300   | n=1309 p=   300 | init= bic | fit=0.5s | iter=5 conv=TRUE | nnz=1 | err=none
+chpc/logs/timing_n1309-p300_15388162.out:TIMING | tag=n1309-p300   | init_bic=3.3s lambda=0.035938 df=1 nnz=1  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-p300_15388162.out:TIMING | tag=n1309-p300   | peak_mem_vcells=96.2 MB (0.09 GB)
+chpc/logs/timing_n1309-p5000_15388211.out:TIMING | tag=n1309-p5000  | n=1309 p=  5000 | init= bic | fit=4.5s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n1309-p5000_15388211.out:TIMING | tag=n1309-p5000  | init_bic=61.0s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-p5000_15388211.out:TIMING | tag=n1309-p5000  | peak_mem_vcells=472.0 MB (0.46 GB)
+chpc/logs/timing_n1309-pall_15388213.out:TIMING | tag=n1309-pall   | n=1309 p= 24619 | init= bic | fit=18.3s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n1309-pall_15388213.out:TIMING | tag=n1309-pall   | init_bic=313.6s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n1309-pall_15388213.out:TIMING | tag=n1309-pall   | peak_mem_vcells=2353.2 MB (2.30 GB)
+chpc/logs/timing_n200-p1000_15387608.out:TIMING | tag=n200-p1000   | n= 200 p=  1000 | init=  cv | fit=12.8s | iter=0 conv=FALSE | nnz=53 | err=none
+chpc/logs/timing_n200-p1000_15387608.out:TIMING | tag=n200-p1000   | init_cv_est=11.0s  (separate call; not subtracted from fit time)
+chpc/logs/timing_n200-p1000_15387608.out:TIMING | tag=n200-p1000   | peak_mem_vcells=93.6 MB (0.09 GB)
+chpc/logs/timing_n200-p1000_15387986.out:TIMING | tag=n200-p1000   | n= 200 p=  1000 | init= bic | fit=0.2s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n200-p1000_15387986.out:TIMING | tag=n200-p1000   | init_bic=2.3s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n200-p1000_15387986.out:TIMING | tag=n200-p1000   | peak_mem_vcells=77.5 MB (0.08 GB)
+chpc/logs/timing_n200-p300_15387558.out:TIMING | tag=n200-p300    | n= 200 p=   300 | init=  cv | fit=3.6s | iter=5 conv=TRUE | nnz=48 | err=none
+chpc/logs/timing_n200-p300_15387558.out:TIMING | tag=n200-p300    | init_cv_est=3.5s  (separate call; not subtracted from fit time)
+chpc/logs/timing_n200-p300_15387558.out:TIMING | tag=n200-p300    | peak_mem_vcells=77.5 MB (0.08 GB)
+chpc/logs/timing_n200-p300_15387962.out:TIMING | tag=n200-p300    | n= 200 p=   300 | init= bic | fit=0.1s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n200-p300_15387962.out:TIMING | tag=n200-p300    | init_bic=0.7s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n200-p300_15387962.out:TIMING | tag=n200-p300    | peak_mem_vcells=73.2 MB (0.07 GB)
+chpc/logs/timing_n200-p5000_15388008.out:TIMING | tag=n200-p5000   | n= 200 p=  5000 | init= bic | fit=0.5s | iter=5 conv=TRUE | nnz=0 | err=none
+chpc/logs/timing_n200-p5000_15388008.out:TIMING | tag=n200-p5000   | init_bic=13.9s lambda=0.1 df=0 nnz=0  (fit BEFORE the model; not included in fit time)
+chpc/logs/timing_n200-p5000_15388008.out:TIMING | tag=n200-p5000   | peak_mem_vcells=160.1 MB (0.16 GB)

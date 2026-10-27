@@ -4,7 +4,7 @@ Parked 2026-10-27.
 
 ## Why parked
 
-These five files make up a separate EM-timing study (not the main simulation
+These files make up a separate EM-timing study (not the main simulation
 pipeline). They depend on archived R/ files that were never ported:
 
 - `R/dedupe_warnings.r` — folded into `R/utils.r` during the sim/ migration
@@ -34,3 +34,5 @@ cannot run as-is.
 | `run_timing.sh` | Submission script for the timing array. |
 | `timing_config.sh` | Config for the timing study (separate from `config.sh`; carries its own `USE_RENV:=0`). |
 | `timing.slurm` | SLURM job template for timing runs; includes its own `renv::restore()` block. |
+| `prep_timing.slurm` | sbatch wrapper that runs `prep_timing_data.R` (resource flags on the sbatch line). Never tracked before 2026-10-27; existed only in the CHPC checkout. |
+| `timing_measurements_2026-10-27.txt` | The 36 `TIMING \|` lines (fit time, BIC-init time, peak memory) grepped from the 12 gitignored `timing_*.out` logs: the study's only empirical scaling data. |
