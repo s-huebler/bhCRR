@@ -34,18 +34,13 @@ source(file.path(.test_root, "sim", "local", "batch.R"))
 )
 
 # ---------------------------------------------------------------------------
-# Regex: parse.r must be identical to parse_batch.R line 147
+# Regex: .parse_rx (sourced from sim/R/parse.r via load_sim) has the canonical form
 # ---------------------------------------------------------------------------
 
-.pb_rx <- local({
-  pb <- readLines(file.path(.test_root, "sim", "chpc", "R", "parse_batch.R"))
-  rx_line <- grep('^rx <- ', pb, value = TRUE)[1L]
-  eval(parse(text = sub('^rx <- ', '', rx_line)))
-})
-
-test_that("parse.r .parse_rx is identical to parse_batch.R rx", {
-  expect_identical(.parse_rx, .pb_rx,
-                   label = "parse.r .parse_rx matches parse_batch.R:147 rx")
+test_that(".parse_rx matches the canonical p<P>_<scenario>_run<N>.Rdata pattern", {
+  expected <- "^p(\\d+)_([A-Za-z0-9][A-Za-z0-9.-]*)_run(\\d+)\\.Rdata$"
+  expect_identical(.parse_rx, expected,
+                   label = ".parse_rx == canonical p<P>_<scenario>_run<N>.Rdata regex")
 })
 
 # ---------------------------------------------------------------------------

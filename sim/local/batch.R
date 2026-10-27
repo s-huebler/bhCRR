@@ -2,8 +2,8 @@
 #
 # OWNS
 #   batch_sweep(scenario_file, npredictors, run_start, run_end,
-#               results_root, load_mode, seed, fit_control,
-#               s0_seq, s1_seq, max_widen, overwrite, dryrun)
+#               results_root, runs_root, manifest_dir, load_mode, seed,
+#               fit_control, s0_seq, s1_seq, max_widen, overwrite, dryrun)
 #                     sweep over every combination of p in npredictors and
 #                     run_id in run_start:run_end; call run_one() for each;
 #                     save the result to the canonical path; handle per-run
@@ -40,6 +40,16 @@
 #   results_root   character(1) or NULL
 #                                 root of the results tree;
 #                                 NULL -> file.path(repo_root(), "sim", "results")
+#   runs_root      character(1) or NULL
+#                                 directory under which p<P>/ subdirs are created;
+#                                 NULL -> file.path(results_root, scenario, "runs")
+#                                 CHPC passes $SCRATCH_RUN_DIR here so that
+#                                 p<P>/ sits directly under the scenario dir
+#                                 with no intervening "runs" level
+#   manifest_dir   character(1) or NULL
+#                                 directory where scenario.env is written and
+#                                 checked; NULL -> file.path(results_root, scenario)
+#                                 CHPC passes $SCRATCH_RUN_DIR here too
 #   load_mode      character(1)   passed to load_bhcrr(); "dev" or "cluster";
 #                                 default: Sys.getenv("BHCRR_LOAD", "dev")
 #   seed           logical(1) or integer(1)
@@ -57,13 +67,15 @@
 #
 # OUTPUTS
 #   One file per run:
-#     <results_root>/<scenario>/runs/p<P>/p<P>_<scenario>_run<N>.Rdata
+#     <runs_root>/p<P>/p<P>_<scenario>_run<N>.Rdata
+#   where runs_root defaults to <results_root>/<scenario>/runs.
 #   Each contains a single object `result` (output of run_one()), saved with
-#   compress = "xz" to match sim/chpc/R/run_batch.R.
+#   compress = "xz" to match sim/chpc/R/run_array.r.
 #   Failed runs produce a failure record at the same path (see FAILURE RECORD).
 #
 #   Manifest on first run:
-#     <results_root>/<scenario>/scenario.env
+#     <manifest_dir>/scenario.env
+#   where manifest_dir defaults to <results_root>/<scenario>.
 #   On subsequent runs with the same scenario, check_manifest() validates it.
 #
 # FAILURE RECORD
@@ -109,6 +121,8 @@ batch_sweep <- function(scenario_file,
                         run_start    = 1L,
                         run_end      = 10L,
                         results_root = NULL,
+                        runs_root    = NULL,
+                        manifest_dir = NULL,
                         load_mode    = Sys.getenv("BHCRR_LOAD", "dev"),
                         seed         = TRUE,
                         fit_control  = NULL,
@@ -152,12 +166,14 @@ batch_sweep <- function(scenario_file,
   spec <- scenario_from_file(scenario_file)
   scenario_name <- spec$name
 
-  # ---- Resolve results root ----
+  # ---- Resolve results root and path overrides ----
   if (is.null(results_root))
     results_root <- file.path(repo_root(), "sim", "results")
   scenario_dir <- file.path(results_root, scenario_name)
-  runs_dir     <- file.path(scenario_dir, "runs")
-  manifest_dir <- scenario_dir   # scenario.env lives directly in scenario_dir
+
+  # runs_root / manifest_dir may be supplied by CHPC wrappers; NULL = default local layout
+  runs_dir     <- if (!is.null(runs_root))    runs_root    else file.path(scenario_dir, "runs")
+  manifest_dir <- if (!is.null(manifest_dir)) manifest_dir else scenario_dir
 
   # ---- C2: Manifest: write on first run, check on subsequent ----
   manifest_path <- file.path(manifest_dir, "scenario.env")

@@ -11,9 +11,9 @@ University of Utah CHPC, then automatically collect the per-run results into
 | `config.sh` | The **one** file you edit/source. Paths, R module, SLURM account, and default sim params. |
 | `run_sim.sh` | Entry point. Parses `key=value` overrides, submits the array + a dependent parse job. |
 | `run_array.slurm` | Array task: runs a chunk of run indices, writes one `.Rdata` per run to scratch. |
-| `parse.slurm` | Runs once after the array succeeds; builds `betas_p<P>_<scenario>`. |
-| `R/run_batch.R` | CHPC-portable version of `sim/_legacy/code/batch_run_complex.R` (env-driven, renv). |
-| `R/parse_batch.R` | CHPC-portable version of `sim/_legacy/code/parse_batch_run.R`; writes CSV + `.Rdata`. |
+| `parse.slurm` | Runs once after the array succeeds; collects `.Rdata` files into CSV summaries. |
+| `R/run_array.r` | Thin wrapper: reads env vars, calls `batch_sweep()`. All logic in `sim/local/batch.R`. |
+| `R/parse.r` | Thin wrapper: reads env vars, calls `parse_results()`. All logic in `sim/R/parse.r`. |
 
 ## One-time setup
 
@@ -250,7 +250,9 @@ Per-task stdout/stderr land in `sim/chpc/logs/run_<arrayjob>_<task>.out` and
 
 ## Notes
 
-- `set.seed()` is intentionally never called — each run draws fresh data.
+- `set.seed()` is intentionally never called at the global level — each run
+  derives a deterministic seed from `(scenario, p, run_id)` inside `run_one()`.
 - Scratch is not backed up; `sim/results/` is the durable output.
-- Each array task recompiles the Rcpp sources via `sourceCpp`. If this becomes a
-  bottleneck, precompiling `src/*.so` once is a future optimization.
+- The array tasks use `load_sim("cluster")` which requires a pre-built
+  `src/bhCRR.so`. The setup job (`sim/chpc/setup.slurm`, added at migration
+  step 12b) builds it once before the array is submitted.

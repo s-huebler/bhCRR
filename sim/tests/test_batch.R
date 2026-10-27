@@ -17,11 +17,12 @@ source(file.path(.test_root, "sim", "R", "load.r"))
 load_sim("dev", force = FALSE)
 source(file.path(.test_root, "sim", "local", "batch.R"))
 
-# Read the regex from parse_batch.R so local and CHPC naming cannot drift
+# .parse_rx is defined in sim/R/parse.r; load_sim() already sourced it above.
+# Re-read it here so this test file is self-contained when run standalone.
 .parse_rx <- local({
-  pb <- readLines(file.path(.test_root, "sim", "chpc", "R", "parse_batch.R"))
-  rx_line <- grep('^rx <- ', pb, value = TRUE)[1L]
-  eval(parse(text = sub('^rx <- ', '', rx_line)))
+  pb <- readLines(file.path(.test_root, "sim", "R", "parse.r"))
+  rx_line <- grep('^\\.parse_rx <- ', pb, value = TRUE)[1L]
+  eval(parse(text = sub('^\\.parse_rx <- ', '', rx_line)))
 })
 
 # ---------------------------------------------------------------------------
@@ -109,7 +110,7 @@ test_that("real sweep writes exactly the expected canonical paths", {
   }
 })
 
-test_that("every written filename matches parse_batch.R's regex", {
+test_that("every written filename matches parse.r's regex", {
   p <- 10L
   runs_p <- file.path(.tmp_real, "run1.test", "runs", sprintf("p%d", p))
   files <- list.files(runs_p, pattern = "\\.Rdata$")

@@ -1,14 +1,20 @@
+---
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
 # sim/ — bhCRR Simulation Study
 
-Simulation infrastructure for benchmarking bhCRR against penalised Fine-Gray
-comparators (LASSO, aLASSO, SCAD, MCP) under block-correlated covariates and
-competing risks.
+Simulation infrastructure for benchmarking bhCRR against penalised
+Fine-Gray comparators (LASSO, aLASSO, SCAD, MCP) under block-correlated
+covariates and competing risks.
 
----
+------------------------------------------------------------------------
 
 ## Layout
 
-```
+```         
 sim/
 ├── R/                   shared core: load, DGP, fitting, scoring, parsing
 │   ├── load.r           bring bhCRR into scope (single source-of-truth)
@@ -46,21 +52,22 @@ sim/
     └── code/            archived pre-restructure scripts (read-only reference)
 ```
 
----
+------------------------------------------------------------------------
 
 ## Scenarios
 
-A **scenario** is a named set of DGP parameters. All parameters that affect the
-data-generating process — `nobs`, coefficients, block structure, censoring — are
-part of the scenario. Parameters that only control how you sweep (number of
-predictors, run range) are not part of the scenario.
+A **scenario** is a named set of DGP parameters. All parameters that
+affect the data-generating process — `nobs`, coefficients, block
+structure, censoring — are part of the scenario. Parameters that only
+control how you sweep (number of predictors, run range) are not part of
+the scenario.
 
-**Changing any DGP parameter requires a new scenario name** so that old and new
-results are never mixed in `sim/results/`.
+**Changing any DGP parameter requires a new scenario name** so that old
+and new results are never mixed in `sim/results/`.
 
 ### Creating a new scenario
 
-```r
+``` r
 source("sim/R/load.r")
 load_sim()
 new_scenario("myScenario.01", dir = "sim/scenarios")
@@ -68,26 +75,28 @@ new_scenario("myScenario.01", dir = "sim/scenarios")
 # Fill in every value marked [PLACEHOLDER] before running.
 ```
 
-`new_scenario()` copies `sim/scenarios/_template.R` and fills in the `name`
-field. `_template.R` carries inline documentation for every key and uses
-deliberately small placeholder values that run end-to-end as a smoke test.
+`new_scenario()` copies `sim/scenarios/_template.R` and fills in the
+`name` field. `_template.R` carries inline documentation for every key
+and uses deliberately small placeholder values that run end-to-end as a
+smoke test.
 
-**Name rule:** scenario names must match `^[A-Za-z0-9][A-Za-z0-9.-]*$`. No
-underscores — they are field delimiters in the `p<P>_<scenario>_run<N>` filename
-format. Use `.` or `-` as word separators.
+**Name rule:** scenario names must match `^[A-Za-z0-9][A-Za-z0-9.-]*$`.
+No underscores — they are field delimiters in the
+`p<P>_<scenario>_run<N>` filename format. Use `.` or `-` as word
+separators.
 
-Each scenario file assigns exactly one object named `scenario` (a plain list)
-and must contain no calls to `library()`, `require()`, `source()`, or
-`set.seed()`. `scenario_from_file()` in `sim/R/scenario.r` enforces this before
-any validation runs.
+Each scenario file assigns exactly one object named `scenario` (a plain
+list) and must contain no calls to `library()`, `require()`, `source()`,
+or `set.seed()`. `scenario_from_file()` in `sim/R/scenario.r` enforces
+this before any validation runs.
 
----
+------------------------------------------------------------------------
 
 ## Local workflow
 
 ### Single interactive run
 
-```r
+``` r
 # From R (project root or any working directory):
 SCENARIO_FILE <- "sim/scenarios/myScenario.01.R"
 P             <- 25
@@ -99,7 +108,7 @@ str(result$scores)
 
 ### Local batch sweep
 
-```r
+``` r
 SCENARIO_FILE <- "sim/scenarios/myScenario.01.R"
 NPREDICTORS   <- c(25, 50)
 RUN_START     <- 1
@@ -109,11 +118,11 @@ source("sim/local/batch.R")
 # Writes sim/results/myScenario.01/runs/result_p25_run01.Rdata etc.
 ```
 
----
+------------------------------------------------------------------------
 
 ## CHPC workflow
 
-```bash
+``` bash
 ssh <you>@notchpeak.chpc.utah.edu
 cd ~/bhCRR
 source sim/chpc/config.sh          # optional; run_sim.sh sources it too
@@ -125,15 +134,15 @@ source sim/chpc/config.sh          # optional; run_sim.sh sources it too
     run_start=1 run_end=10
 ```
 
-All DGP parameters that differ from `config.sh` defaults can be passed as
-`key=value` overrides on the `run_sim.sh` command line. See
+All DGP parameters that differ from `config.sh` defaults can be passed
+as `key=value` overrides on the `run_sim.sh` command line. See
 `sim/chpc/README.md` for full options.
 
----
+------------------------------------------------------------------------
 
 ## Results layout
 
-```
+```         
 sim/results/<scenario>/
 ├── runs/
 │   ├── result_p25_run001.Rdata
@@ -146,43 +155,45 @@ sim/results/<scenario>/
     └── model_performance_scenarioA.csv    # stacked across all p values
 ```
 
-Each `result_p<p>_run<id>.Rdata` contains a single object `result` with fields:
-`$run_id`, `$p`, `$scenario`, `$data`, `$fit`, `$comparators`, `$scores`,
-`$meta`. See `sim/R/run_one.r` for the exact contract.
+Each `result_p<p>_run<id>.Rdata` contains a single object `result` with
+fields: `$run_id`, `$p`, `$scenario`, `$data`, `$fit`, `$comparators`,
+`$scores`, `$meta`. See `sim/R/run_one.r` for the exact contract.
 
----
+------------------------------------------------------------------------
 
 ## Testing convention
 
 `sim/` is excluded from the package build by `^sim$` in `.Rbuildignore`.
-`R CMD check` runs tests against the built package, where `sim/` does not
-exist — so **sim tests must NOT live in `tests/testthat/`**.
+`R CMD check` runs tests against the built package, where `sim/` does
+not exist — so **sim tests must NOT live in `tests/testthat/`**.
 
-Simulation tests live in `sim/tests/test_<module>.R`, each runnable standalone:
+Simulation tests live in `sim/tests/test_<module>.R`, each runnable
+standalone:
 
-```r
+``` r
 testthat::test_file("sim/tests/test_dgp.R")
 ```
 
-`sim/tests/run_all.R` runs them in dependency order. They are never wired into
-`devtools::test()`.
+`sim/tests/run_all.R` runs them in dependency order. They are never
+wired into `devtools::test()`.
 
-**Test-only dependency:** `withr` is used for environment variable isolation in
-the tests (`withr::with_envvar`). It is already in `renv.lock` (pulled in by
-`devtools`), but it is not declared in the package `DESCRIPTION` since it is only
-used here, not in the package itself.
+**Test-only dependency:** `withr` is used for environment variable
+isolation in the tests (`withr::with_envvar`). It is already in
+`renv.lock` (pulled in by `devtools`), but it is not declared in the
+package `DESCRIPTION` since it is only used here, not in the package
+itself.
 
----
+------------------------------------------------------------------------
 
 ## Migration status
 
 Steps in implementation order; mark done as each lands.
 
 | Step | Module | Status | Notes |
-|------|--------|--------|-------|
+|-----------------|-------------------|-------------------|-----------------|
 | 1 | contracts | **done** (0541e8e → 4c2f973) | headers only; corrected before migration |
-| 2 | `sim/R/load.r` | **done** (71b345e) | |
-| 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (5d9bce0) | |
+| 2 | `sim/R/load.r` | **done** (71b345e) |  |
+| 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (5d9bce0) |  |
 | 4 | `sim/R/dgp.r` | **done** (f808398) | block_signature extended with latent/lbal/uvar (PART C) |
 | 5 | `sim/R/fit.r` | **done** (bcb8b15) | eval_time fixed at scenario midpoint; fg_oracle separated |
 | 6 | `sim/R/comparators.r` — fits | **done** (this commit) | BIC selection; aLASSO uses unpenalized FG initial |
@@ -191,13 +202,13 @@ Steps in implementation order; mark done as each lands.
 | 9 | `sim/R/run_one.r` | **done** (20d9e6c) | deterministic seeding; fg_oracle separate field |
 | 10 | `sim/local/single.R` + `sim/local/batch.R` | **done** (this commit) | batch_sweep(); failure records; collision guard |
 | 11 | `sim/R/parse.r` | **done** (this commit) | pure stacker; fg_oracle as model row; by_block CSV added |
-| 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse_batch.R` wrappers | not started | thin wrappers only |
+| 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse.r` wrappers | **in progress** (R wrappers done; step 12b adds setup.slurm + shell wiring) | timing harness parked in `sim/_legacy/chpc-timing/` |
 | 13 | retire `sim/_legacy/` | not started | after end-to-end run confirmed |
 
 Legacy files absorbed by each step:
 
 | Legacy file | Absorbed at step | Replaced by |
-|---|---|---|
+|------------------------|------------------------|------------------------|
 | `_legacy/code/single_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/single.R` |
 | `_legacy/code/single_run.R` | 9 + 10 | same |
 | `_legacy/code/batch_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/batch.R` |

@@ -145,8 +145,9 @@ check_compiled <- function(root) {
       "src/*.o and src/*.so are gitignored, so a fresh pull never has one.\n",
       "Fix: from the repo root, run:\n",
       "  Rscript -e 'pkgbuild::compile_dll()'\n",
-      "Migration step 12 adds this as an automated pre-array step in ",
-      "sim/chpc/run_sim.sh."
+      "If pkgbuild is not installed: renv::restore() or renv::install(\"pkgbuild\")\n",
+      "On CHPC, this build step is handled by sim/chpc/setup.slurm ",
+      "(added at migration step 12b)."
     )
   }
   invisible(NULL)
@@ -159,11 +160,16 @@ check_compiled <- function(root) {
 load_bhcrr <- function(mode = Sys.getenv("BHCRR_LOAD", "dev"),
                        force = FALSE) {
 
-  if (!requireNamespace("pkgload", quietly = TRUE))
-    stop(
-      "pkgload is required but not installed. ",
-      "Install it with: install.packages(\"pkgload\")"
-    )
+  if (!requireNamespace("pkgload", quietly = TRUE)) {
+    .advice <- if (identical(mode, "cluster"))
+      paste0("On CHPC, pkgload is installed by the setup job ",
+             "(sim/chpc/setup.slurm, added at migration step 12b). ",
+             "If renv reported the library incomplete as of 2026-10-27, ",
+             "run: renv::restore()")
+    else
+      "Run renv::restore() or renv::install(\"pkgload\") to install it."
+    stop("pkgload is required but not installed. ", .advice)
+  }
 
   # Validate mode before the idempotence check so an invalid mode always errors.
   if (!mode %in% c("dev", "cluster"))
