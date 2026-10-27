@@ -188,8 +188,8 @@ Steps in implementation order; mark done as each lands.
 | 6 | `sim/R/comparators.r` — fits | **done** (this commit) | BIC selection; aLASSO uses unpenalized FG initial |
 | 7 | revisit comparator tuning | parked | see comparators.r FUTURE WORK; legacy CV at `sim/_legacy/code/other_comparators_cv_section.R` |
 | 8 | `sim/R/score.r` | **done** (821bb48) | per-block stratification; fg_oracle uniform shape |
-| 9 | `sim/R/run_one.r` | **done** (this commit) | deterministic seeding; fg_oracle separate field |
-| 10 | `sim/local/single.R` + `sim/local/batch.R` | not started | |
+| 9 | `sim/R/run_one.r` | **done** (20d9e6c) | deterministic seeding; fg_oracle separate field |
+| 10 | `sim/local/single.R` + `sim/local/batch.R` | **done** (this commit) | batch_sweep(); failure records; collision guard |
 | 11 | `sim/R/parse.r` | not started | |
 | 12 | `sim/chpc/R/run_array.r` + `sim/chpc/R/parse_batch.R` wrappers | not started | thin wrappers only |
 | 13 | retire `sim/_legacy/` | not started | after end-to-end run confirmed |

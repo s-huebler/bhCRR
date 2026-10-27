@@ -66,8 +66,8 @@ CLUSTER_FLAG=()
 # Per-scenario scratch PARENT dir. Each npredictors value then gets its own
 # subdirectory beneath it, created by run_batch.R as it sweeps the grid:
 #
-#   $SCRATCH_BASE/<scenario>/p15/<scenario>_p15_run1.Rdata
-#   $SCRATCH_BASE/<scenario>/p221/<scenario>_p221_run1.Rdata
+#   $SCRATCH_BASE/<scenario>/p15/p15_<scenario>_run1.Rdata
+#   $SCRATCH_BASE/<scenario>/p221/p221_<scenario>_run1.Rdata
 #
 # The block map is a function of npredictors, so runs at different p must never
 # be pooled into one summary. Separate directories make that structural rather

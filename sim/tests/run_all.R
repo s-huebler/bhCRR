@@ -33,7 +33,8 @@ test_files <- c(
   "test_fit.R",
   "test_comparators.R",
   "test_score.R",
-  "test_run_one.R"
+  "test_run_one.R",
+  "test_batch.R"
 )
 
 all_passed <- TRUE
@@ -49,7 +50,8 @@ for (tf in test_files) {
     }
   )
   if (!is.null(result)) {
-    failed <- sum(as.data.frame(result)$failed, na.rm = TRUE)
+    df     <- as.data.frame(result)
+    failed <- sum(df$failed, na.rm = TRUE) + sum(df$error, na.rm = TRUE)
     if (failed > 0) all_passed <- FALSE
   }
 }
