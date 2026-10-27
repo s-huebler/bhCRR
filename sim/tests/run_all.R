@@ -34,7 +34,8 @@ test_files <- c(
   "test_comparators.R",
   "test_score.R",
   "test_run_one.R",
-  "test_batch.R"
+  "test_batch.R",
+  "test_parse.R"
 )
 
 all_passed <- TRUE
