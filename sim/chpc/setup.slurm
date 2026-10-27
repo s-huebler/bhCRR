@@ -85,8 +85,12 @@ REOF
 esac
 
 # ---- Compile the package ----------------------------------------------------
+# compile_attributes = FALSE: never let compile_dll() regenerate src/RcppExports.cpp.
+# If it did, it would leave the CHPC checkout dirty and block the next fast-forward
+# pull. src/RcppExports.cpp is generated locally with the pinned Rcpp (1.1.1.1.1)
+# and committed; the committed file is authoritative.
 echo "[setup] Compiling bhCRR (pkgbuild::compile_dll)..."
-Rscript -e 'pkgbuild::compile_dll()'
+Rscript -e 'pkgbuild::compile_dll(compile_attributes = FALSE)'
 echo "[setup] Compilation done."
 
 # ---- Verification suite -----------------------------------------------------

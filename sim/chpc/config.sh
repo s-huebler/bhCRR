@@ -87,8 +87,13 @@ export CHPC_PARTITION="${CHPC_PARTITION:-biostat-division-np}"  # sbatch -p / --
 export CHPC_CLUSTER="${CHPC_CLUSTER-notchpeak}"        # sbatch -M / --clusters ("" = login cluster)
 
 # ---- SLURM resource requests -- setup job -----------------------------------
-: "${SB_SETUP_TIME:=04:00:00}"     # renv::restore() from source can take 1-2 h for 166 packages
-: "${SB_SETUP_MEM:=16G}"           # source installs (e.g. Matrix, survival) need headroom
+# Measured 2026-10-27 on notchpeak: restoring 46 missing packages from source
+# on 4 cores with PPM disabled took 8.1 min, peaked at 2.0 GB; compile_dll()
+# took 20 s; whole job was 8:41. A cold restore into an empty library would be
+# several times longer but still well under 1 h. Keeping the request tight also
+# queues faster on notchpeak-shared-short (QOS cap: 16 CPUs, 128 GB, 8 h MaxTime).
+: "${SB_SETUP_TIME:=01:00:00}"     # measured worst-case ~9 min; 1 h is a generous buffer
+: "${SB_SETUP_MEM:=8G}"            # measured peak 2.0 GB; 8 G gives 4x headroom
 : "${SB_SETUP_CPUS:=4}"            # passed to options(Ncpus=) inside setup.slurm
 
 # ---- SLURM resource requests -- array and parse jobs ------------------------
