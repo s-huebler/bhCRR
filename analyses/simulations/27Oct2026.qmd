@@ -1,0 +1,29 @@
+---
+title: "Untitled"
+format: html
+editor: visual
+---
+
+# Local single run
+
+```{r}
+#| label: setup
+#| include: false
+
+knitr::opts_knit$set(root.dir = "/Users/sophiehuebler/Documents/bhCRR")
+```
+
+```{r}
+source("sim/local/single.R")
+```
+
+```{r}
+ctrl <- bhcrr_cv_control(nfolds = 3, ncv = 1,
+          fit_args = list(maxit = 20L, epsilon = 1e-3))
+```
+
+```{r}
+result <- run_single("sim/scenarios/troubleshoot.01.R", p = 200, run_id = 1,
+                     fit_control = ctrl, s0_seq = c(0.04, 0.08),
+                     s1_seq = c(0.4, 0.8), max_widen = 0L)
+```

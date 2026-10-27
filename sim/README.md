@@ -97,9 +97,9 @@ this before any validation runs.
 ## Local workflow
 
 Both drivers in `sim/local/` are **functions**, not source-and-assign
-scripts. Sourcing the file defines the function; you then call it.
-(The old `SCENARIO_FILE <- ...; source("sim/local/single.R")` pattern
-was retired because a long debugging session could feed a stale variable
+scripts. Sourcing the file defines the function; you then call it. (The
+old `SCENARIO_FILE <- ...; source("sim/local/single.R")` pattern was
+retired because a long debugging session could feed a stale variable
 into a new run.)
 
 ### Single interactive run
@@ -118,12 +118,11 @@ str(result$scores)
 `run_single()` prints a compact summary (bhCRR tuning, score tables,
 timing, warning counts) and returns the full `run_one()` result
 **invisibly** — assign it, or the returned object is lost.
-`scenario_file` is required with no default.
-Warnings from `fastcmprsk` and bhCRR are collected into `$warnings`
-rather than flooding the console.
-`quiet = TRUE` suppresses all printed output;
-`show_by_block = FALSE` omits the per-block score table from the
-summary but keeps it in `$scores$by_block`.
+`scenario_file` is required with no default. Warnings from `fastcmprsk`
+and bhCRR are collected into `$warnings` rather than flooding the
+console. `quiet = TRUE` suppresses all printed output;
+`show_by_block = FALSE` omits the per-block score table from the summary
+but keeps it in `$scores$by_block`.
 
 **Quick look with a cheap control** (avoids the 10-fold × 2-rep
 production cost — slow at larger p):
@@ -140,9 +139,10 @@ result <- run_single(
 )
 ```
 
-To truncate the fold fits further, add `fit_args = list(maxit = 20L)`
-to the control. The default control is production settings; `nfolds = 3,
-ncv = 1` trades tuning quality for speed during development.
+To truncate the fold fits further, add `fit_args = list(maxit = 20L)` to
+the control. The default control is production settings;
+`nfolds = 3, ncv = 1` trades tuning quality for speed during
+development.
 
 ### Local batch sweep
 
@@ -158,8 +158,8 @@ batch_sweep(
 # Writes sim/results/myScenario.01/runs/p25/p25_myScenario.01_run1.Rdata etc.
 ```
 
-`batch_sweep()` writes one `.Rdata` file per `(p, run_id)` pair and
-logs progress to the console. Key behaviours:
+`batch_sweep()` writes one `.Rdata` file per `(p, run_id)` pair and logs
+progress to the console. Key behaviours:
 
 -   **Collision guard / overwrite**: by default, existing files are
     skipped. Pass `overwrite = TRUE` to replace them.
@@ -214,14 +214,14 @@ coefficient, block structure, and censoring rate lives in
 `run_sim.sh` accepts sweep and resource keys as `key=value` with no
 spaces around the equals sign:
 
-| Key | What it controls |
-|---|---|
-| `scenario` | Scenario slug (required) |
-| `npredictors` | Comma-separated p values |
-| `run_start`, `run_end` | Run index range |
-| `runs_per_task` | Runs bundled per array task |
-| `SB_*` | SLURM resource overrides (time, mem, cpus) |
-| `dryrun=1` | Print `sbatch` commands without submitting |
+| Key                    | What it controls                           |
+|------------------------|--------------------------------------------|
+| `scenario`             | Scenario slug (required)                   |
+| `npredictors`          | Comma-separated p values                   |
+| `run_start`, `run_end` | Run index range                            |
+| `runs_per_task`        | Runs bundled per array task                |
+| `SB_*`                 | SLURM resource overrides (time, mem, cpus) |
+| `dryrun=1`             | Print `sbatch` commands without submitting |
 
 See `sim/chpc/README.md` for the full list.
 
@@ -290,7 +290,7 @@ itself.
 Steps in implementation order; mark done as each lands.
 
 | Step | Module | Status | Notes |
-|-----------------|-------------------|-------------------|-----------------|
+|----|----|----|----|
 | 1 | contracts | **done** (0541e8e → 4c2f973) | headers only; corrected before migration |
 | 2 | `sim/R/load.r` | **done** (71b345e) |  |
 | 3 | `sim/R/scenario.r` + `sim/scenarios/_template.R` | **done** (5d9bce0) |  |
@@ -308,7 +308,7 @@ Steps in implementation order; mark done as each lands.
 Legacy files absorbed by each step:
 
 | Legacy file | Absorbed at step | Replaced by |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | `_legacy/code/single_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/single.R` |
 | `_legacy/code/single_run.R` | 9 + 10 | same |
 | `_legacy/code/batch_run_complex.R` | 9 + 10 | `sim/R/run_one.r` + `sim/local/batch.R` |
