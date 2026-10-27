@@ -1,7 +1,7 @@
 # sim/R/parse.r -- many result files -> CSV and .Rdata summary tables
 #
 # OWNS
-#   parse_results(runs_root, scenario_name, out_dir = NULL)
+#   parse_results(runs_root, scenario_name, out_dir = NULL, manifest_dir = NULL)
 #                       discover .Rdata run files under runs_root/p<P>/,
 #                       validate them, assemble long tables from the
 #                       precomputed metrics in $scores and the saved
@@ -23,11 +23,17 @@
 #                               where to write the summary files;
 #                               NULL -> file.path(repo_root(), "sim", "results",
 #                                        scenario_name, "parsed")
+#   manifest_dir  character(1) or NULL
+#                               directory containing scenario.env for the
+#                               cross-check; NULL auto-searches runs_root
+#                               then dirname(runs_root) to handle both the
+#                               local layout (<scenario>/runs/) and the CHPC
+#                               layout ($SCRATCH_RUN_DIR flat)
 #
 # CALL SITES
 #   Local:  source("sim/R/load.r"); load_sim()
 #           parse_results("sim/results/scenarioA/runs", "scenarioA")
-#   CHPC:   sim/chpc/R/parse_batch.R (thin wrapper; step 12)
+#   CHPC:   sim/chpc/R/parse.r (thin wrapper; step 12)
 #
 # RETURNS
 #   invisible(list) with:
@@ -137,7 +143,7 @@
 # parse_results
 # ---------------------------------------------------------------------------
 
-parse_results <- function(runs_root, scenario_name, out_dir = NULL) {
+parse_results <- function(runs_root, scenario_name, out_dir = NULL, manifest_dir = NULL) {
 
   # ---- Resolve out_dir ----
   if (is.null(out_dir))
@@ -192,7 +198,22 @@ parse_results <- function(runs_root, scenario_name, out_dir = NULL) {
   file_run <- file_run[ord]
 
   # ---- B5: manifest check setup ----
-  manifest_dir  <- dirname(runs_root)   # parent of runs/ is <scenario>/
+  # Resolve manifest_dir. NULL triggers an automatic search because the two
+  # layouts differ:
+  #   Local: runs_root = <scenario>/runs/  -> manifest at <scenario>/
+  #          (manifest_dir = dirname(runs_root))
+  #   CHPC:  runs_root = $SCRATCH_RUN_DIR  -> manifest alongside runs
+  #          (manifest_dir = runs_root itself)
+  # Search order: runs_root first, then dirname(runs_root); use the first
+  # that contains scenario.env. The CHPC wrapper passes manifest_dir
+  # explicitly rather than relying on this search.
+  if (is.null(manifest_dir)) {
+    if (file.exists(file.path(runs_root, "scenario.env"))) {
+      manifest_dir <- runs_root
+    } else {
+      manifest_dir <- dirname(runs_root)
+    }
+  }
   manifest_path <- file.path(manifest_dir, "scenario.env")
   has_manifest  <- file.exists(manifest_path)
   if (!has_manifest)

@@ -66,5 +66,6 @@ message(sprintf("  out_dir      : %s", out_dir))
 parse_results(
   runs_root     = scratch_run_dir,
   scenario_name = scenario_name,
-  out_dir       = out_dir
+  out_dir       = out_dir,
+  manifest_dir  = scratch_run_dir
 )

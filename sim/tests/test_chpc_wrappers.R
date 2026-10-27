@@ -219,6 +219,9 @@ test_that("run_array.r end-to-end: canonical files appear under scratch/p<P>/", 
 
   tmp_scratch <- file.path(tempdir(), paste0("chpc_e2e_", Sys.getpid()))
   dir.create(tmp_scratch, showWarnings = FALSE)
+  # run_array.r passes manifest = "check_only"; pre-write the manifest as
+  # run_sim.sh would on CHPC.
+  write_manifest(scenario_from_file(.scenario_file), tmp_scratch)
 
   env <- c(
     REPO_ROOT       = .test_root,

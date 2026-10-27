@@ -30,6 +30,19 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRYRUN=0
 OVERWRITE=0
 SKIP_SETUP=0
+
+# Allowlist of keys that run_sim.sh accepts. Derived from config.sh's sweep
+# and resource knobs; does not include DGP keys (those belong in the scenario
+# file) or internal-only shell vars.
+_ALLOWED_KEYS="SCENARIO NPREDICTORS RUN_START RUN_END RUNS_PER_TASK \
+  SB_TIME SB_MEM SB_CPUS SB_PARSE_TIME \
+  SB_SETUP_TIME SB_SETUP_MEM SB_SETUP_CPUS \
+  SCRATCH_BASE R_MODULE USE_RENV BHCRR_LOAD \
+  CHPC_ACCOUNT CHPC_PARTITION CHPC_CLUSTER"
+
+_DGP_KEYS="NOBS ZERO_GAP_TARGET BETA1_ACTIVE BETA2_ACTIVE ACTIVE_BLOCK \
+  BLOCK_PROPS BLOCK_RHO LATENT_TYPE LATENT_Q CENS_RATE U_MIN U_MAX"
+
 for arg in "$@"; do
   case "$arg" in
     *=*)
@@ -38,6 +51,20 @@ for arg in "$@"; do
       if [[ "$key" == "DRYRUN" ]];      then DRYRUN="$val";      continue; fi
       if [[ "$key" == "OVERWRITE" ]];   then OVERWRITE="$val";   continue; fi
       if [[ "$key" == "SKIP_SETUP" ]];  then SKIP_SETUP="$val";  continue; fi
+      # Check DGP keys first -- specific, actionable error message
+      if echo " $_DGP_KEYS " | grep -qw "$key"; then
+        echo "run_sim.sh: '$key' is a DGP parameter -- it belongs in sim/scenarios/\${SCENARIO}.R" >&2
+        echo "  DGP parameters are no longer accepted on the command line." >&2
+        echo "  Create or edit the scenario file: sim/scenarios/\${SCENARIO:-<name>}.R" >&2
+        echo "  (new_scenario() copies the template; see sim/README.md)" >&2
+        exit 1
+      fi
+      # Validate against allowlist
+      if ! echo " $_ALLOWED_KEYS " | grep -qw "$key"; then
+        echo "run_sim.sh: unknown key '$key' -- not in the allowed list." >&2
+        echo "  Allowed keys: $(echo $_ALLOWED_KEYS | tr ' ' ', ')" >&2
+        exit 1
+      fi
       export "$key=$val"
       ;;
     *)
@@ -45,10 +72,31 @@ for arg in "$@"; do
       ;;
   esac
 done
+unset _ALLOWED_KEYS _DGP_KEYS
 
 # ---- 2. Fill in anything not overridden from the single config file ----------
 # shellcheck source=/dev/null
 source "$HERE/config.sh"
+
+# ---- 2b. Guard: DGP env vars must NOT be set --------------------------------
+# If a shell still has the pre-12b config.sh sourced, all 12 DGP vars are
+# exported. run_array.r would catch them, but only after the queue wait.
+# Detect and fail here before any sbatch.
+_dgp_vars=(NOBS ZERO_GAP_TARGET BETA1_ACTIVE BETA2_ACTIVE ACTIVE_BLOCK
+           BLOCK_PROPS BLOCK_RHO LATENT_TYPE LATENT_Q CENS_RATE U_MIN U_MAX)
+_set_dgp=()
+for _v in "${_dgp_vars[@]}"; do
+  [[ -n "${!_v:-}" ]] && _set_dgp+=("$_v")
+done
+if [[ ${#_set_dgp[@]} -gt 0 ]]; then
+  echo "run_sim.sh: the following DGP environment variable(s) are set:" >&2
+  printf '  %s\n' "${_set_dgp[@]}" >&2
+  echo "  DGP parameters are defined in sim/scenarios/${SCENARIO:-<name>}.R" >&2
+  echo "  Unset them before submitting:" >&2
+  printf '  unset %s\n' "${_set_dgp[@]}" >&2
+  exit 1
+fi
+unset _dgp_vars _set_dgp _v
 
 # ---- 3. Sanity checks --------------------------------------------------------
 die() { echo "run_sim.sh: $*" >&2; exit 1; }
@@ -90,7 +138,45 @@ else
   mkdir -p "$SCRATCH_RUN_DIR" "$REPO_ROOT/sim/results/$SCENARIO/parsed"
 fi
 
-# ---- 3b. Collision guard -----------------------------------------------------
+# ---- 3b. Manifest write/check via R -----------------------------------------
+# Write or check scenario.env before any sbatch so a DGP mismatch fails before
+# anything queues. Uses scenario.r (no bhCRR package needed -- scenario.r has
+# no intra-sim or bhCRR dependencies). Permitted on login nodes (lightweight
+# data analysis, no compilation, ~2 s). Hard-fails if R is unavailable.
+if [[ "$DRYRUN" == "0" ]]; then
+  command -v Rscript >/dev/null 2>&1 || \
+    { module load "$R_MODULE" 2>/dev/null || true; }
+  if ! command -v Rscript >/dev/null 2>&1; then
+    die "Rscript not found after 'module load $R_MODULE'. Ensure the R module is available before submitting."
+  fi
+  echo "[run_sim.sh] Writing/checking scenario manifest..."
+  _r_tmp=$(mktemp /tmp/bhcrr_manifest_XXXXX.R)
+  cat > "$_r_tmp" <<'REOF'
+args <- commandArgs(trailingOnly = TRUE)
+manifest_dir  <- args[1]
+scenario_path <- args[2]
+source(file.path(Sys.getenv("REPO_ROOT"), "sim", "R", "scenario.r"))
+env_path <- file.path(manifest_dir, "scenario.env")
+if (file.exists(env_path)) {
+  check_manifest(scenario_path, manifest_dir)
+  message("  manifest OK: ", env_path)
+} else {
+  if (!dir.exists(manifest_dir)) dir.create(manifest_dir, recursive = TRUE)
+  write_manifest(scenario_path, manifest_dir)
+  message("  manifest written: ", env_path)
+}
+REOF
+  if ! Rscript --vanilla "$_r_tmp" "$SCRATCH_RUN_DIR" "$scenario_file"; then
+    rm -f "$_r_tmp"
+    die "Manifest write/check failed. Fix the scenario mismatch before submitting."
+  fi
+  rm -f "$_r_tmp"
+  echo "[run_sim.sh] Manifest OK."
+else
+  echo "  [dryrun] manifest write/check skipped"
+fi
+
+# ---- 3c. Collision guard -----------------------------------------------------
 # Refuse to submit if any requested run indices already have .Rdata output under
 # $SCRATCH_RUN_DIR/p<P>/, unless overwrite=1 was passed.
 # This check runs before any job is queued, so it fails fast without wasting

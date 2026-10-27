@@ -50,6 +50,11 @@
 #                                 directory where scenario.env is written and
 #                                 checked; NULL -> file.path(results_root, scenario)
 #                                 CHPC passes $SCRATCH_RUN_DIR here too
+#   manifest       character(1)   "write_or_check" (default) or "check_only";
+#                                 check_only is used by CHPC array tasks where
+#                                 run_sim.sh has already written the manifest --
+#                                 it validates but never writes, and errors if
+#                                 the manifest is absent
 #   load_mode      character(1)   passed to load_bhcrr(); "dev" or "cluster";
 #                                 default: Sys.getenv("BHCRR_LOAD", "dev")
 #   seed           logical(1) or integer(1)
@@ -123,6 +128,7 @@ batch_sweep <- function(scenario_file,
                         results_root = NULL,
                         runs_root    = NULL,
                         manifest_dir = NULL,
+                        manifest     = c("write_or_check", "check_only"),
                         load_mode    = Sys.getenv("BHCRR_LOAD", "dev"),
                         seed         = TRUE,
                         fit_control  = NULL,
@@ -131,6 +137,8 @@ batch_sweep <- function(scenario_file,
                         max_widen    = 1L,
                         overwrite    = FALSE,
                         dryrun       = FALSE) {
+
+  manifest <- match.arg(manifest)
 
   t_sweep_start <- proc.time()[["elapsed"]]
 
@@ -175,15 +183,22 @@ batch_sweep <- function(scenario_file,
   runs_dir     <- if (!is.null(runs_root))    runs_root    else file.path(scenario_dir, "runs")
   manifest_dir <- if (!is.null(manifest_dir)) manifest_dir else scenario_dir
 
-  # ---- C2: Manifest: write on first run, check on subsequent ----
+  # ---- C2: Manifest: write or check ----
+  # manifest = "check_only": the caller (e.g. run_sim.sh via run_array.r) has
+  # already written it; this task only validates. Errors if absent.
+  # manifest = "write_or_check" (default): write on first run, check on subsequent.
   manifest_path <- file.path(manifest_dir, "scenario.env")
   if (!dryrun) {
-    if (file.exists(manifest_path)) {
-      check_manifest(spec, manifest_dir)   # hard-stops on any signature mismatch
+    if (manifest == "check_only") {
+      check_manifest(spec, manifest_dir)   # hard-stops on mismatch; errors if absent
     } else {
-      dir.create(manifest_dir, showWarnings = FALSE, recursive = TRUE)
-      write_manifest(spec, manifest_dir)
-      message(sprintf("[batch] manifest written to %s", manifest_path))
+      if (file.exists(manifest_path)) {
+        check_manifest(spec, manifest_dir)
+      } else {
+        dir.create(manifest_dir, showWarnings = FALSE, recursive = TRUE)
+        write_manifest(spec, manifest_dir)
+        message(sprintf("[batch] manifest written to %s", manifest_path))
+      }
     }
   }
 

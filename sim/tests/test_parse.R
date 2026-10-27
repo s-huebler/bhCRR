@@ -423,3 +423,69 @@ test_that("empty directory (no .Rdata files) -> stop", {
     label = "empty directory causes an error"
   )
 })
+
+# ---------------------------------------------------------------------------
+# manifest_dir search and explicit override
+# ---------------------------------------------------------------------------
+
+test_that("manifest_dir = NULL finds manifest in runs_root (CHPC layout)", {
+  # Build a minimal valid run file
+  td <- file.path(tempdir(), paste0("parse_mdir_chpc_", Sys.getpid()))
+  dir.create(file.path(td, "p10"), recursive = TRUE, showWarnings = FALSE)
+  # Copy one real run file from the shared fixture runs_root
+  f <- file.path(.runs_root1, "p10", "p10_run1.test_run1.Rdata")
+  file.copy(f, file.path(td, "p10", "p10_run1.test_run1.Rdata"))
+  # Write manifest in td itself (CHPC layout: manifest alongside p<P>/ dirs)
+  spec <- scenario_from_file(.scenario_file)
+  write_manifest(spec, td)
+  expect_true(file.exists(file.path(td, "scenario.env")))
+
+  # parse_results with manifest_dir = NULL should find it in runs_root
+  out <- file.path(td, "out")
+  expect_no_error(suppressWarnings(suppressMessages(
+    parse_results(td, "run1.test", out_dir = out)
+  )))
+  # scenario.env should be copied into out_dir
+  expect_true(file.exists(file.path(out, "scenario.env")),
+              label = "scenario.env copied to out_dir (CHPC layout)")
+})
+
+test_that("manifest_dir = NULL falls back to dirname(runs_root) (local layout)", {
+  # Build local layout: manifest at parent level, runs one level down
+  td <- file.path(tempdir(), paste0("parse_mdir_local_", Sys.getpid()))
+  runs <- file.path(td, "runs", "p10")
+  dir.create(runs, recursive = TRUE, showWarnings = FALSE)
+  f <- file.path(.runs_root1, "p10", "p10_run1.test_run1.Rdata")
+  file.copy(f, file.path(runs, "p10_run1.test_run1.Rdata"))
+  # Write manifest at parent (local layout)
+  spec <- scenario_from_file(.scenario_file)
+  write_manifest(spec, td)
+  expect_true(file.exists(file.path(td, "scenario.env")))
+
+  out <- file.path(td, "out")
+  expect_no_error(suppressWarnings(suppressMessages(
+    parse_results(file.path(td, "runs"), "run1.test", out_dir = out)
+  )))
+  expect_true(file.exists(file.path(out, "scenario.env")),
+              label = "scenario.env copied to out_dir (local layout)")
+})
+
+test_that("explicit manifest_dir overrides search", {
+  # Manifest is in a custom dir, not runs_root or its parent
+  td   <- file.path(tempdir(), paste0("parse_mdir_expl_", Sys.getpid()))
+  mdir <- file.path(td, "manifest_here")
+  runs <- file.path(td, "p10")
+  dir.create(runs, recursive = TRUE, showWarnings = FALSE)
+  dir.create(mdir, showWarnings = FALSE)
+  f <- file.path(.runs_root1, "p10", "p10_run1.test_run1.Rdata")
+  file.copy(f, file.path(runs, "p10_run1.test_run1.Rdata"))
+  spec <- scenario_from_file(.scenario_file)
+  write_manifest(spec, mdir)
+
+  out <- file.path(td, "out")
+  expect_no_error(suppressWarnings(suppressMessages(
+    parse_results(td, "run1.test", out_dir = out, manifest_dir = mdir)
+  )))
+  expect_true(file.exists(file.path(out, "scenario.env")),
+              label = "scenario.env copied when explicit manifest_dir used")
+})

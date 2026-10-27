@@ -290,3 +290,54 @@ test_that("batch_sweep return value does not accumulate run result objects", {
   for (nm in expected_fields)
     expect_true(nm %in% nms, label = paste("return field", nm))
 })
+
+# ---------------------------------------------------------------------------
+# manifest = "check_only"
+# ---------------------------------------------------------------------------
+
+test_that("manifest = check_only errors when manifest absent (never writes)", {
+  tmp <- file.path(tempdir(), paste0("batch_chk_", Sys.getpid()))
+  dir.create(tmp, showWarnings = FALSE)
+  # No scenario.env in tmp; check_only must error before fitting
+  expect_error(
+    suppressMessages(
+      batch_sweep(.scenario_file,
+                  npredictors  = 10L,
+                  run_start    = 1L, run_end = 1L,
+                  results_root = tmp,
+                  fit_control  = .tiny_ctrl,
+                  s0_seq = c(0.04, 0.08), s1_seq = c(0.4, 0.8),
+                  max_widen = 0L,
+                  manifest = "check_only")
+    ),
+    regexp = "scenario.env|manifest|No scenario",
+    label = "check_only with absent manifest errors"
+  )
+  # Confirm no manifest was written and no Rdata files were created
+  expect_false(file.exists(file.path(tmp, "run1.test", "scenario.env")),
+               label = "check_only does not write manifest")
+})
+
+test_that("write_manifest is atomic: tempfile in same dir then rename", {
+  td <- tempfile(); dir.create(td)
+  on.exit(unlink(td, recursive = TRUE), add = TRUE)
+  spec <- do.call(scenario, list(
+    name = "run1.test", nobs = 80L, zero_gap_target = 0.05,
+    beta1_active = c(1.0, -1.0), beta2_active = "neg_beta1",
+    active_block = c("strong", "weak"),
+    block_props  = c(indep = 0.50, weak = 0.25, strong = 0.25),
+    block_rho    = c(indep = 0.00, weak = 0.30, strong = 0.50),
+    latent_type  = "gaussian",
+    latent_q     = c(indep = 0.50, weak = 0.50, strong = 0.50),
+    cens_rate = 0.05, u_min = 50, u_max = 150
+  ))
+  path <- write_manifest(spec, td)
+  # The .env.tmp tempfile must NOT be present after write_manifest returns
+  tmp_files <- list.files(td, pattern = "\\.env\\.tmp$")
+  expect_equal(length(tmp_files), 0L,
+               label = "no .env.tmp tempfile left after write_manifest")
+  # The manifest itself must exist and be readable
+  expect_true(file.exists(path), label = "scenario.env written")
+  man <- read_manifest(path)
+  expect_true("NOBS" %in% names(man), label = "manifest contains NOBS key")
+})

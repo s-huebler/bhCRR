@@ -134,6 +134,7 @@ batch_sweep(
   run_end       = run_end,
   runs_root     = scratch_run_dir,
   manifest_dir  = scratch_run_dir,
+  manifest      = "check_only",
   load_mode     = "cluster",
   overwrite     = FALSE,
   dryrun        = FALSE

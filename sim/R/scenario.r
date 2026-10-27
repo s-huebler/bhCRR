@@ -74,17 +74,17 @@
 #   Changing any of these requires a new scenario name.
 #   NOT signature: NPREDICTORS, RUN_START, RUN_END, RUNS_PER_TASK.
 #
-# DUAL WRITER NOTE
-#   Two implementations can write sim/results/<scenario>/scenario.env:
-#   (1) sim/chpc/run_sim.sh -- for CHPC runs, written via the parse job
-#   (2) write_manifest() -- for local runs
-#   bash compares recorded values as strings (see run_sim.sh lines ~102-112),
-#   so a manifest that R wrote with "0.4" will not string-match bash's "0.40"
-#   even though they are numerically identical. check_manifest() on the R side
-#   uses numeric comparison and is immune to this. The intended end state is
-#   ONE writer: migration step 12 changes run_sim.sh to call R for both writing
-#   and checking, deleting the duplicated serialization logic. Until then,
-#   mixed-origin manifests may produce false positives in bash's string check.
+# DUAL WRITER NOTE (resolved at step 12b)
+#   write_manifest() is now the SOLE writer of scenario.env.
+#   run_sim.sh calls write_manifest() via a short Rscript before any sbatch,
+#   so on CHPC the manifest is written once on the login node before the array
+#   starts. batch_sweep() on CHPC array tasks passes manifest = "check_only"
+#   and never writes. The old bash writer (_sig_keys array + string comparison
+#   loop) was deleted; it compared values as raw strings, causing spurious
+#   mismatches between "0.4" and "0.40". check_manifest() uses numeric
+#   comparison and is immune to that; it is the sole reader and checker.
+#   write_manifest() uses file.rename() for atomicity so a concurrent or
+#   interrupted write cannot leave a partial file.
 #
 # DEPENDS ON
 #   sim/R/  (none; scenario.r has no intra-sim dependencies)
@@ -403,7 +403,9 @@ write_manifest <- function(spec_or_path, dir) {
 
   if (!dir.exists(dir)) dir.create(dir, recursive = TRUE)
   path <- file.path(dir, "scenario.env")
-  writeLines(lines, path)
+  tmp  <- tempfile(tmpdir = dir, fileext = ".env.tmp")
+  writeLines(lines, tmp)
+  file.rename(tmp, path)
   invisible(path)
 }
 

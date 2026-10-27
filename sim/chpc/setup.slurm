@@ -84,6 +84,19 @@ REOF
     ;;
 esac
 
+# ---- Post-restore: assert renv is synchronized ----
+echo "[setup] Verifying renv synchronization..."
+Rscript - <<'REOF' || { echo "ERROR [setup]: renv reports project not synchronized after restore." >&2; exit 1; }
+st <- renv::status()
+synchronized <- if (!is.null(st$synchronized)) isTRUE(st$synchronized) else FALSE
+if (!synchronized) {
+  print(st)
+  stop("renv is not synchronized after restore. ",
+       "Check renv::status() output above.", call. = FALSE)
+}
+cat("  [ok] renv synchronized\n")
+REOF
+
 # ---- Compile the package ----------------------------------------------------
 # compile_attributes = FALSE: never let compile_dll() regenerate src/RcppExports.cpp.
 # If it did, it would leave the CHPC checkout dirty and block the next fast-forward
@@ -106,26 +119,25 @@ echo "  [ok] src/bhCRR.so exists"
 
 # 2. Key packages loadable
 Rscript - <<'REOF' || { echo "ERROR [setup]: package loadability check failed." >&2; exit 1; }
-for (pkg in c("pkgload", "pkgbuild", "fastcmprsk")) {
+for (pkg in c("pkgload", "pkgbuild", "fastcmprsk", "Rcpp", "RcppArmadillo")) {
   ok <- requireNamespace(pkg, quietly = TRUE)
   cat(sprintf("  [%s] requireNamespace('%s')\n", if (ok) "ok" else "FAIL", pkg))
   if (!ok) stop(pkg, " is not available.", call. = FALSE)
 }
 REOF
 
-# 3. bhCRR loads via load_sim("cluster")
-Rscript - <<'REOF' || { echo "ERROR [setup]: load_sim('cluster') failed." >&2; exit 1; }
+# 3. bhCRR loads; key functions callable (one invocation -- loading twice is waste)
+Rscript - <<'REOF' || { echo "ERROR [setup]: load/callability check failed." >&2; exit 1; }
 source(file.path(Sys.getenv("REPO_ROOT"), "sim", "R", "load.r"))
 load_sim("cluster")
 cat("  [ok] load_sim('cluster') succeeded\n")
-REOF
-
-# 4. fit_ssl_psdh callable
-Rscript - <<'REOF' || { echo "ERROR [setup]: fit_ssl_psdh not found after load_sim." >&2; exit 1; }
-source(file.path(Sys.getenv("REPO_ROOT"), "sim", "R", "load.r"))
-load_sim("cluster")
-stopifnot(existsFunction("fit_ssl_psdh"))
-cat("  [ok] fit_ssl_psdh is callable\n")
+pkg_env <- as.environment("package:bhCRR")
+for (fn in c("fit_ssl_psdh", "bhcrr_cv", "wolbers_c")) {
+  ok <- tryCatch(is.function(get(fn, envir = pkg_env, inherits = FALSE)),
+                 error = function(e) FALSE)
+  cat(sprintf("  [%s] bhCRR::%s callable\n", if (ok) "ok" else "FAIL", fn))
+  if (!ok) stop(fn, " not found in package:bhCRR", call. = FALSE)
+}
 REOF
 
 echo "========================================"
