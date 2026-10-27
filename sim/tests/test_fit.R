@@ -199,6 +199,172 @@ test_that("$control$eval_time matches $eval_time", {
 })
 
 # ---------------------------------------------------------------------------
+# Control merging: new cases exercising the merge behavior (PART B)
+# ---------------------------------------------------------------------------
+
+# Minimal fast control for merge tests: empty fit_args so all five mirrored
+# entries come from defaults; small lambda path to keep CV cheap.
+.merge_base_ctrl <- bhcrr_cv_control(
+  nfolds      = 3L, ncv = 1L,
+  init_method = "LASSO_cv",
+  init_args   = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
+  parallel    = FALSE,
+  eval_time   = 100
+)
+
+test_that("fit_args = list(): all five mirrored entries present after merge", {
+  set.seed(10L)
+  r <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              control = .merge_base_ctrl,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L,
+              maxit_folds = 20L, maxit_final = 20L)
+  )
+  fa <- r$control$fit_args
+  expect_equal(fa$initial_sparsity,  0.05,  label = "initial_sparsity filled")
+  expect_equal(fa$theta_a,           1,     label = "theta_a filled")
+  expect_equal(fa$theta_b,           1,     label = "theta_b filled")
+  expect_equal(fa$epsilon,           1e-04, label = "epsilon filled")
+  expect_equal(fa$inner_maxit_start, 1000,  label = "inner_maxit_start filled")
+})
+
+test_that("fit_args = list(maxit=20L): five mirrored entries AND maxit=20L present", {
+  ctrl_m20 <- bhcrr_cv_control(
+    nfolds = 3L, ncv = 1L, init_method = "LASSO_cv",
+    init_args = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
+    fit_args  = list(maxit = 20L),
+    parallel  = FALSE, eval_time = 100
+  )
+  set.seed(11L)
+  r <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              control = ctrl_m20,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  fa <- r$control$fit_args
+  # Five mirrored entries
+  expect_equal(fa$initial_sparsity,  0.05)
+  expect_equal(fa$theta_a,           1)
+  expect_equal(fa$theta_b,           1)
+  expect_equal(fa$epsilon,           1e-04)
+  expect_equal(fa$inner_maxit_start, 1000)
+  # Fold maxit taken from fit_args
+  expect_equal(fa$maxit, 20L,
+               label = "fold maxit = 20 from control$fit_args")
+  # Fit ran successfully (maxit_final = 100 by default, not 20)
+  expect_s3_class(r$fit, "ssl_psdh")
+})
+
+test_that("theta_b = 2 propagates: control$fit_args$theta_b is 2 and pips differ from theta_b = 1", {
+  make_ctrl_tb <- function(tb) {
+    bhcrr_cv_control(
+      nfolds = 3L, ncv = 1L, init_method = "LASSO_cv",
+      init_args = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
+      fit_args  = list(theta_b = tb, maxit = 20L),
+      parallel  = FALSE, eval_time = 100
+    )
+  }
+  set.seed(55L)
+  r1 <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L, control = make_ctrl_tb(1),
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  set.seed(55L)
+  r2 <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L, control = make_ctrl_tb(2),
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  expect_equal(r2$control$fit_args$theta_b, 2,
+               label = "$control$fit_args$theta_b is 2")
+  # Assert against the fit object: pips must differ between theta_b=1 and
+  # theta_b=2 because the prior precision parameter changed. If theta_b were
+  # silently ignored, both fits would run at theta_b=1 and pips would be
+  # identical with the same seed.
+  expect_false(identical(r2$fit$pips, r1$fit$pips),
+               label = "$fit$pips differ between theta_b=1 and theta_b=2")
+})
+
+test_that("eval_time = NULL in supplied control -> $eval_time == tau and $control$eval_time == tau", {
+  ctrl_no_tau <- bhcrr_cv_control(
+    nfolds = 3L, ncv = 1L, init_method = "LASSO_cv",
+    init_args = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
+    fit_args  = list(maxit = 20L),
+    parallel  = FALSE
+    # eval_time omitted -> NULL
+  )
+  set.seed(20L)
+  r <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              control = ctrl_no_tau,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  tau <- (.spec$u_min + .spec$u_max) / 2
+  expect_equal(r$eval_time,          tau, label = "$eval_time == tau")
+  expect_equal(r$control$eval_time,  tau, label = "$control$eval_time == tau")
+})
+
+test_that("eval_time = 77 honored: $eval_time == 77 not silently replaced by tau", {
+  ctrl_77 <- bhcrr_cv_control(
+    nfolds = 3L, ncv = 1L, init_method = "LASSO_cv",
+    init_args = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
+    fit_args  = list(maxit = 20L),
+    parallel  = FALSE, eval_time = 77
+  )
+  set.seed(21L)
+  r <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              control = ctrl_77,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  expect_equal(r$eval_time,         77, label = "$eval_time == 77")
+  expect_equal(r$control$eval_time, 77, label = "$control$eval_time == 77")
+  tau <- (.spec$u_min + .spec$u_max) / 2
+  expect_false(isTRUE(all.equal(r$eval_time, tau)),
+               label = "$eval_time != tau (not silently replaced)")
+})
+
+test_that("init_method = 'LASSO_bic' propagates to $fit and $mod_initial", {
+  ctrl_bic <- bhcrr_cv_control(
+    nfolds = 3L, ncv = 1L, init_method = "LASSO_bic",
+    fit_args = list(maxit = 20L),
+    parallel = FALSE, eval_time = 100
+  )
+  set.seed(30L)
+  r <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              control = ctrl_bic,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  expect_true(grepl("LASSO_bic", r$fit$init_method,         ignore.case = TRUE),
+              label = "$fit$init_method used LASSO_bic")
+  expect_true(grepl("LASSO_bic", r$mod_initial$init_method, ignore.case = TRUE),
+              label = "$mod_initial$init_method used LASSO_bic")
+})
+
+test_that("control = NULL regression guard: resolved $control matches production defaults", {
+  set.seed(1L)
+  r_null <- suppressWarnings(
+    fit_bhcrr(.x, .y, .spec, run_id = 1L,
+              s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
+  )
+  ctrl <- r_null$control
+  fa   <- ctrl$fit_args
+  tau  <- (.spec$u_min + .spec$u_max) / 2
+
+  expect_equal(fa$initial_sparsity,  0.05,  label = "default initial_sparsity")
+  expect_equal(fa$theta_a,           1,     label = "default theta_a")
+  expect_equal(fa$theta_b,           1,     label = "default theta_b")
+  expect_equal(fa$epsilon,           1e-04, label = "default epsilon")
+  expect_equal(fa$inner_maxit_start, 1000,  label = "default inner_maxit_start")
+  expect_equal(fa$maxit,             50,    label = "default fold maxit = 50")
+  expect_equal(ctrl$init_method,     "LASSO_cv", label = "default init_method")
+  expect_true(length(ctrl$init_args$lambda_path) == 10L,
+              label = "default 10-point lambda_path")
+  expect_equal(ctrl$eval_time,       tau,   label = "$control$eval_time == tau")
+  expect_equal(r_null$eval_time,     tau,   label = "$eval_time == tau")
+})
+
+# ---------------------------------------------------------------------------
 # B5 guard: NULL best stops with a message naming run_id
 # ---------------------------------------------------------------------------
 

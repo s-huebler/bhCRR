@@ -2,24 +2,35 @@
 #
 # OWNS
 #   fit_bhcrr(x, y, scenario, run_id,
-#             control = NULL, s0_seq = NULL, s1_seq = NULL, max_widen = 1L)
+#             control = NULL, s0_seq = NULL, s1_seq = NULL, max_widen = 1L,
+#             maxit_folds = 50L, maxit_final = 100L)
 #                    run bhcrr_autotune() on an untuned bhCRR fit, refit at
 #                    the chosen (s0, s1), and return everything score.r needs
 #
 # INPUTS
-#   x          matrix n x p   design matrix from sim/R/dgp.r, column names
-#                             X_1..X_p
-#   y          matrix n x 2   outcome from sim/R/dgp.r (colnames time, status)
-#   scenario   list           validated bhcrr_scenario; used for
-#                               $zero_gap_target -> beta_min
-#                               $u_min, $u_max    -> eval_time (fixed horizon)
-#   run_id     integer(1)     run index; used only in error messages
-#   control    bhcrr_cv_control or NULL
-#                             NULL builds the default; pass an overriding
-#                             object in tests or when changing CV parameters
-#   s0_seq     numeric or NULL  override the default s0 grid from preflight
-#   s1_seq     numeric or NULL  override the default s1 grid from preflight
-#   max_widen  integer(1)     max grid-widening attempts (default 1L)
+#   x           matrix n x p   design matrix from sim/R/dgp.r, column names
+#                              X_1..X_p
+#   y           matrix n x 2   outcome from sim/R/dgp.r (colnames time, status)
+#   scenario    list           validated bhcrr_scenario; used for
+#                                $zero_gap_target -> beta_min
+#                                $u_min, $u_max    -> eval_time (fixed horizon)
+#   run_id      integer(1)     run index; used only in error messages
+#   control     bhcrr_cv_control or NULL
+#                              NULL builds the default (nfolds=10, ncv=2).
+#                              Supplied controls are MERGED: the five mirrored
+#                              hyperparameters are filled from defaults into
+#                              control$fit_args so fold fits and direct fits are
+#                              aligned by construction. See MIRRORING NOTE.
+#   s0_seq      numeric or NULL  override the default s0 grid from preflight
+#   s1_seq      numeric or NULL  override the default s1 grid from preflight
+#   max_widen   integer(1)     max grid-widening attempts (default 1L)
+#   maxit_folds integer(1)     EM iterations for the initial fit and each fold
+#                              fit; default 50L. If control$fit_args$maxit is
+#                              present it takes precedence over this formal.
+#   maxit_final integer(1)     EM iterations for the final refit; default 100L.
+#                              Kept independent of maxit_folds so a cheap
+#                              interactive run can truncate the CV folds for
+#                              speed while the final model still converges.
 #
 # RETURNS
 #   list with fields:
@@ -48,9 +59,22 @@
 #                                   $init_fit   untuned fit
 #                                   $autotune   bhcrr_autotune() including CV
 #                                   $final_fit  final refit at best (s0, s1)
-#     $control      bhcrr_cv_control  the control actually used; stored so
-#                                 tests can verify hyperparameter mirroring
-#                                 without inspecting internals
+#     $control      bhcrr_cv_control  the resolved, merged control actually
+#                                 used; contains the five mirrored fit_args,
+#                                 eval_time, init_method, and init_args as
+#                                 applied to every fit path
+#
+# MIRRORING NOTE
+#   Five hyperparameters must be identical in the fold fits (inside bhcrr_cv)
+#   and the two direct fit_ssl_psdh() calls:
+#     initial_sparsity = 0.05, theta_a = 1, theta_b = 1 (legacy choice; NOT
+#     ncol(x)), epsilon = 1e-04, inner_maxit_start = 1000.
+#   theta_b in particular: fit_ssl_psdh's default is ncol(x), so omitting it
+#   from fit_args silently changes the prior. With the old "accept wholesale"
+#   approach, a supplied control whose fit_args omitted theta_b would cause
+#   fold fits to tune at theta_b=ncol(x) while the final model ran at theta_b=1.
+#   The merge makes consistency structural: a caller can override any mirrored
+#   value via control$fit_args and it propagates everywhere.
 #
 # EVAL_TIME NOTE
 #   Legacy bhcrr_autotune() (sim/_legacy/code/batch_run_complex.R:192-198) had
@@ -66,12 +90,11 @@
 #   use the same value (returned as $eval_time).
 #
 # INIT_METHOD NOTE
-#   init_method must be kept identical in TWO places:
-#     1. The direct fit_ssl_psdh() calls (init fit and final fit)
-#     2. control$init_method -- the CV fold fits read it from there
-#   They are separate code paths that feed the same initializer. A mismatch
-#   means the untuned fit and the fold fits start from different initial
-#   estimates, which biases the surface that autotune searches.
+#   init_method and init_args are read from the resolved control for ALL THREE
+#   fit paths (init fit, fold fits, final fit). Before this refactor, the direct
+#   fits used file-level locals and only the fold fits read from the control,
+#   making bhcrr_cv_control(init_method="LASSO_bic") apply only to the folds.
+#   Now the control is the single authoritative source for initialization.
 #
 # FG_ORACLE NOTE
 #   fg_oracle is NOT fitted here. It is fitted in sim/R/comparators.r by
@@ -103,51 +126,64 @@
 # ---------------------------------------------------------------------------
 
 fit_bhcrr <- function(x, y, scenario, run_id,
-                      control   = NULL,
-                      s0_seq    = NULL,
-                      s1_seq    = NULL,
-                      max_widen = 1L) {
+                      control     = NULL,
+                      s0_seq      = NULL,
+                      s1_seq      = NULL,
+                      max_widen   = 1L,
+                      maxit_folds = 50L,
+                      maxit_final = 100L) {
 
-  # ---- Shared hyperparameters (define once; reused in all three fit paths) ----
-  initial_sparsity  <- 0.05
-  theta_a           <- 1
-  theta_b           <- 1      # deliberate legacy choice; fit_ssl_psdh default is
-                               # ncol(x), which changes the prior relative to
-                               # batch_run_complex.R -- do not "fix" to default
-  epsilon           <- 1e-04
-  inner_maxit_start <- 1000
-  init_method       <- "LASSO_cv"
-  init_args         <- list(lambda_path =
-                              10^seq(log10(0.1), log10(0.001), length = 10))
+  # ---- Mirrored hyperparameter defaults ----
+  # Applied to all three fit paths. A supplied control$fit_args overrides these
+  # selectively; unset entries get the values below.
+  .mirror_defaults <- list(
+    initial_sparsity  = 0.05,
+    theta_a           = 1,
+    theta_b           = 1,      # deliberate legacy choice; fit_ssl_psdh default is
+                                 # ncol(x), which changes the prior relative to
+                                 # batch_run_complex.R -- do not "fix" to default
+    epsilon           = 1e-04,
+    inner_maxit_start = 1000
+  )
 
   # ---- eval_time: scenario-fixed, not data-dependent (see EVAL_TIME NOTE) ----
   tau <- (scenario$u_min + scenario$u_max) / 2
 
-  # ---- Control (build default if not supplied) ----
+  # ---- Resolve control: build default or merge into a supplied one ----
+  # After this block, control$fit_args carries all five mirrored entries plus
+  # maxit = maxit_folds, so fold fits and direct fits read from the same source.
   if (is.null(control)) {
     control <- bhcrr_cv_control(
       nfolds      = 10L,
       ncv         = 2L,
-      init_method = init_method,
-      init_args   = init_args,
-      # fold fits receive every hyperparameter through fit_args; without
-      # theta_b = 1 here, folds run at theta_b = ncol(x) and autotune would
-      # select (s0, s1) under a different prior than the final model uses
-      fit_args    = list(
-        initial_sparsity  = initial_sparsity,
-        theta_a           = theta_a,
-        theta_b           = theta_b,
-        epsilon           = epsilon,
-        inner_maxit_start = inner_maxit_start,
-        maxit             = 50L
-      ),
-      parallel    = FALSE,   # forking is unreliable in Positron; CHPC array
-                              # tasks use one cpu (SB_CPUS=1 in config.sh) so
-                              # there is nothing to fork onto; if that ever
-                              # changes, set workers from the SLURM allocation
-                              # rather than detectCores()
+      init_method = "LASSO_cv",
+      init_args   = list(lambda_path =
+                           10^seq(log10(0.1), log10(0.001), length = 10)),
+      fit_args    = c(.mirror_defaults, list(maxit = maxit_folds)),
+      parallel    = FALSE,   # forking unreliable in Positron; CHPC array tasks
+                              # use one cpu so there is nothing to fork onto
       eval_time   = tau
     )
+  } else {
+    # Merge: mirrored defaults < control$fit_args (minus maxit).
+    # maxit in control$fit_args overrides maxit_folds for fold fits;
+    # maxit_final stays independent so a cheap run can truncate folds for speed
+    # while the final model still converges properly.
+    fa <- if (is.null(control$fit_args)) list() else control$fit_args
+    if (!is.null(fa$maxit)) maxit_folds <- fa$maxit
+    mirrored         <- modifyList(.mirror_defaults, fa[setdiff(names(fa), "maxit")])
+    control$fit_args <- c(mirrored, list(maxit = maxit_folds))
+
+    # init_method / init_args: apply defaults if not set in the supplied control
+    if (is.null(control$init_method))
+      control$init_method <- "LASSO_cv"
+    if (!("lambda_path" %in% names(control$init_args)))
+      control$init_args[["lambda_path"]] <-
+        10^seq(log10(0.1), log10(0.001), length = 10)
+
+    # eval_time: honor the supplied value; fall back to tau
+    if (is.null(control$eval_time))
+      control$eval_time <- tau
   }
 
   # ---- Stage 1: untuned fit to estimate theta for preflight ----
@@ -156,14 +192,14 @@ fit_bhcrr <- function(x, y, scenario, run_id,
   mod_initial <- fit_ssl_psdh(
     x, y,
     ss                = c(0.04, 0.6),
-    initial_sparsity  = initial_sparsity,
-    theta_a           = theta_a,
-    theta_b           = theta_b,
-    maxit             = 50L,
-    epsilon           = epsilon,
-    init_method       = init_method,
-    init_args         = init_args,
-    inner_maxit_start = inner_maxit_start
+    initial_sparsity  = control$fit_args$initial_sparsity,
+    theta_a           = control$fit_args$theta_a,
+    theta_b           = control$fit_args$theta_b,
+    maxit             = maxit_folds,
+    epsilon           = control$fit_args$epsilon,
+    init_method       = control$init_method,
+    init_args         = control$init_args,
+    inner_maxit_start = control$fit_args$inner_maxit_start
   )
 
   t1 <- proc.time()[["elapsed"]]
@@ -194,14 +230,14 @@ fit_bhcrr <- function(x, y, scenario, run_id,
   final_fit <- fit_ssl_psdh(
     x, y,
     ss                = c(best_s0, best_s1),
-    initial_sparsity  = initial_sparsity,
-    theta_a           = theta_a,
-    theta_b           = theta_b,
-    maxit             = 100L,    # legacy used 100 here vs 50 for the untuned fit
-    epsilon           = epsilon,
-    init_method       = init_method,
-    init_args         = init_args,
-    inner_maxit_start = inner_maxit_start
+    initial_sparsity  = control$fit_args$initial_sparsity,
+    theta_a           = control$fit_args$theta_a,
+    theta_b           = control$fit_args$theta_b,
+    maxit             = maxit_final,
+    epsilon           = control$fit_args$epsilon,
+    init_method       = control$init_method,
+    init_args         = control$init_args,
+    inner_maxit_start = control$fit_args$inner_maxit_start
   )
 
   t3 <- proc.time()[["elapsed"]]
@@ -232,7 +268,7 @@ fit_bhcrr <- function(x, y, scenario, run_id,
     all_pass     = autotune$all_pass,
     flags        = autotune$flags,
     n_attempts   = autotune$n_attempts,
-    eval_time    = tau,
+    eval_time    = control$eval_time,
     fit_seconds  = fit_seconds,
     timing       = timing,
     control      = control
