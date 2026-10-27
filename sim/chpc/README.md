@@ -42,7 +42,12 @@ module load "$R_MODULE"            # needed if you run R interactively on login
 
 `scenario=<name>` is **required** on every submission. All other parameters
 have defaults in `config.sh` and can be overridden with `key=value` (**no
-spaces** around `=`, keys are case-insensitive).
+whitespace anywhere in the token**, keys are case-insensitive).
+
+> **Warning:** comma-separated values must contain no spaces.
+> `npredictors=50,200,1000` is correct; `npredictors=50, 200, 1000` is wrong
+> — the shell splits the latter into three words and `run_sim.sh` exits with
+> an error on the unexpected bare words.
 
 ```bash
 # Extend an existing scenario with more runs (collision guard catches overlaps)

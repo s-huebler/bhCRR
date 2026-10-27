@@ -66,9 +66,28 @@ for arg in "$@"; do
         exit 1
       fi
       export "$key=$val"
+      # Reject malformed comma lists: a leading, trailing, or doubled comma
+      # signals a typo, most commonly from writing spaces after commas so the
+      # shell split the argument. "npredictors=50, 200, 1000" becomes three
+      # words; the first word lands here as "npredictors=50," with a trailing
+      # comma.
+      if [[ "$key" == "NPREDICTORS" ]]; then
+        if [[ "$val" =~ ^,|,,|,$ ]]; then
+          echo "run_sim.sh: NPREDICTORS value '$val' has an empty element (leading, trailing, or doubled comma)." >&2
+          echo "  This usually means spaces were written after commas, causing the shell to" >&2
+          echo "  split the argument into multiple words. Only the first word reached here." >&2
+          echo "  Wrong:  npredictors=50, 200, 1000   <- shell sees 3 words; first is 'npredictors=50,'" >&2
+          echo "  Right:  npredictors=50,200,1000" >&2
+          exit 1
+        fi
+      fi
       ;;
     *)
-      echo "run_sim.sh: ignoring unrecognized argument '$arg' (expected key=value)" >&2
+      echo "run_sim.sh: unrecognized argument '$arg'" >&2
+      echo "  Every argument must be a key=value token with no whitespace anywhere in the token." >&2
+      echo "  Wrong:  npredictors=50, 200, 1000   <- shell splits this into 3 words; '200,' and '1000' land here" >&2
+      echo "  Right:  npredictors=50,200,1000" >&2
+      exit 1
       ;;
   esac
 done
