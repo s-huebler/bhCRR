@@ -58,3 +58,8 @@ mix <- t(sapply(1:20, function(r) {
 }))
 round(summary(mix), 3)
 ```
+
+```         
+./sim/chpc/run_sim.sh scenario=equalblocks.01 npredictors=1000 \
+    run_start=1 run_end=50 runs_per_task=1 sb_time=1:00:00 
+```
