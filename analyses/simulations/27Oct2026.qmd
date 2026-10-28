@@ -27,3 +27,34 @@ result <- run_single("sim/scenarios/troubleshoot.01.R", p = 200, run_id = 1,
                      fit_control = ctrl, s0_seq = c(0.04, 0.08),
                      s1_seq = c(0.4, 0.8), max_widen = 0L)
 ```
+
+# Sending this on chpc
+
+```         
+./sim/chpc/run_sim.sh \
+    scenario=troubleshoot.01 \
+    npredictors=200,1000 \
+    run_start=1 run_end=50
+```
+
+# Checking the equalblocks.01 event mix
+
+```{r}
+source("sim/R/load.r")
+load_sim()
+
+s <- scenario_from_file("sim/scenarios/equalblocks.01.R")
+
+# Same seed the real run 1 at p = 1000 will use
+set.seed(.derive_seed(s$name, 1000L, 1L))
+d <- sim_data(s, p = 1000L)
+d$design_settings$event_mix
+```
+
+```{r}
+mix <- t(sapply(1:20, function(r) {
+  set.seed(.derive_seed(s$name, 1000L, r))
+  sim_data(s, p = 1000L)$design_settings$event_mix
+}))
+round(summary(mix), 3)
+```
