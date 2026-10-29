@@ -1,0 +1,215 @@
+---
+title: "Simulation results: `r params$scenario`"
+date: last-modified
+params:
+  scenario: "equalblocks.01"
+  p: null
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    code-summary: "Code"
+    embed-resources: true
+    fig-width: 12
+    fig-height: 5.5
+execute:
+  warning: false
+  message: false
+editor: visual
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+# TO MAKE A REPORT FOR ANOTHER SCENARIO
+#   Copy this file to sim/analysis/outputs/<scenario>.qmd and change
+#   params: scenario in the YAML header. Set params: p when the scenario was run
+#   at more than one p. Everything below reads from the parsed tables, so no
+#   other edit is needed.
+#
+# TO CHANGE WHICH MODELS ARE SHOWN, OR THEIR NAMES AND COLOURS
+#   Edit default_models() in sim/analysis/R/models.r for a permanent change, or
+#   the `models` line below for this report only.
+
+# `params` only exists during quarto render. This fallback lets the chunks run
+# one at a time in Positron; keep it in step with the YAML header.
+if (!exists("params")) params <- list(scenario = "equalblocks.01", p = NULL)
+
+# Find the repo root whether rendered (cwd = this folder) or run interactively
+# (cwd = repo root), then load the analysis modules. bhCRR itself is not loaded.
+root <- local({
+  d <- normalizePath(getwd())
+  while (!file.exists(file.path(d, "sim", "analysis", "R", "load_analysis.r"))) {
+    if (dirname(d) == d) stop("Cannot find sim/analysis/R/load_analysis.r above ", getwd())
+    d <- dirname(d)
+  }
+  d
+})
+source(file.path(root, "sim", "analysis", "R", "load_analysis.r"))
+load_analysis(root)
+
+res <- read_scenario_results(params$scenario, root, p = params$p)
+
+# The model registry. To drop or reorder models for this report only, e.g.
+#   models <- select_models(default_models(), c("bhcrr", "fg_oracle", "lasso"))
+models <- resolve_models(default_models(), res$performance$Model)
+
+kbl <- function(x, ...) knitr::kable(x, row.names = FALSE, ...)
+```
+
+# Scenario
+
+`r scenario_design_notes(res) %||% "No DESIGN section found in the scenario file header."`
+
+```{r}
+#| label: tbl-overview
+#| tbl-cap: "Data generating settings"
+kbl(scenario_overview(res))
+```
+
+```{r}
+#| label: tbl-blocks
+#| tbl-cap: "Correlation blocks. Predictors are split into blocks with a common within-block correlation; the active predictors are spread across the blocks."
+kbl(block_design_table(res), digits = 2)
+```
+
+## Simulation run
+
+```{r}
+#| label: tbl-provenance
+#| tbl-cap: "Provenance of the parsed results"
+prov <- run_provenance(res, root)
+kbl(prov$summary)
+```
+
+```{r}
+#| label: tbl-commits
+#| tbl-cap: "Commits that touched this scenario's parsed results"
+if (is.null(prov$commits)) {
+  cat("Git history not available here.")
+} else {
+  kbl(prov$commits)
+}
+```
+
+## Models compared
+
+```{r}
+#| label: tbl-models
+kbl(models[, c("label", "model", "role")],
+    col.names = c("Label", "Id in results", "Role"))
+```
+
+## Run health
+
+```{r}
+#| label: tbl-health
+#| tbl-cap: "Runs per model. Usable = converged and returned coefficients; only usable runs enter the bias and selection summaries. Fit time includes shared comparator setup."
+health <- run_health(res, models)
+kbl(health)
+```
+
+```{r}
+#| label: health-flags
+#| results: asis
+bad <- health[health$Usable < health$Runs, ]
+if (nrow(bad)) {
+  cat("::: {.callout-warning}\n## Failed fits\n\n")
+  cat(sprintf("- **%s**: %d of %d runs usable.%s\n", bad$Model, bad$Usable,
+              bad$Runs, ifelse(bad$Usable == 0,
+                               " It is absent from every plot and table below.",
+                               "")), sep = "")
+  cat(":::\n")
+}
+```
+
+```{r}
+#| label: tbl-tuning
+#| tbl-cap: "Tuning diagnostics for models that report them"
+tune <- tuning_summary(res, models)
+if (!is.null(tune)) kbl(tune)
+```
+
+# Coefficient bias
+
+The bias summaries cover the `r sum(res$design$beta1_active != 0)` active predictors only. Panels are the correlation blocks, ordered by within-block correlation.
+
+```{r}
+#| label: bias-summary
+bias_sum <- summarise_bias(res$betas, models, active_only = TRUE)
+```
+
+```{r}
+#| label: fig-estimates
+#| fig-cap: "Mean estimate by predictor against the true coefficient."
+plot_estimates(bias_sum)
+```
+
+```{r}
+#| label: fig-bias
+#| fig-cap: "Mean bias by predictor."
+plot_bias(bias_sum)
+```
+
+```{r}
+#| label: fig-pct-bias
+#| fig-cap: "Mean percent bias by predictor. Negative values are shrinkage toward zero for either sign of the truth; the dotted line at -100% is an estimate of exactly zero."
+plot_pct_bias(bias_sum)
+```
+
+```{r}
+#| label: tbl-bias-block
+#| tbl-cap: "Bias over the active predictors, by block"
+kbl(bias_by_block(res$betas, models), digits = 3)
+```
+
+# Variable selection
+
+A predictor counts as selected when its estimated coefficient is nonzero. Truth is a nonzero cause 1 coefficient.
+
+```{r}
+#| label: selection
+sel <- selection_metrics(res$performance, models)
+```
+
+```{r}
+#| label: fig-confusion
+#| fig-height: 3.2
+#| fig-cap: "Mean confusion matrix per model."
+plot_confusion(sel)
+```
+
+```{r}
+#| label: tbl-selection
+#| tbl-cap: "Selection and prediction metrics, mean (SD) over usable runs"
+kbl(summarise_selection(sel))
+```
+
+```{r}
+#| label: fig-selection
+#| fig-height: 6.5
+#| fig-cap: "Distribution over runs of the selection metrics and the Wolbers C-index."
+plot_selection(sel)
+```
+
+## By correlation block
+
+```{r}
+#| label: fig-selection-block
+#| fig-height: 4.5
+#| fig-cap: "Recall among the active predictors and false positive rate among the null predictors, by block."
+sbb <- selection_by_block(res$by_block, res$performance, models)
+plot_selection_by_block(sbb)
+```
+
+```{r}
+#| label: tbl-selection-block
+#| tbl-cap: "Selection by block. FP rate pools counts over runs."
+kbl(summarise_selection_by_block(sbb), digits = 3)
+```
+
+# Discussion
+
+Notes on this scenario go here.
