@@ -68,11 +68,15 @@
   p <- ncol(x)
   t0 <- proc.time()[["elapsed"]]
 
-  fit <- fastcmprsk::fastCrrp(
+  args_bic <- list(
     fastcmprsk::Crisk(y[, 1L], y[, 2L], cencode = 0, failcode = 1) ~ x,
     penalty = "LASSO",
     lambda  = lambda_path
   )
+  if ("getBreslowJumps" %in% names(formals(fastcmprsk::fastCrrp))) {
+    args_bic$getBreslowJumps <- FALSE
+  }
+  fit <- do.call(fastcmprsk::fastCrrp, args_bic)
 
   beta_path <- as.matrix(fit$coef)
   if (nrow(beta_path) != p && ncol(beta_path) == p) beta_path <- t(beta_path)

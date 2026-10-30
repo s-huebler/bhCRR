@@ -62,7 +62,7 @@ raises an error. Pass \code{init_args = list(lambda_path = ...)} instead.}
 \item{inner_maxit_start}{Integer. Starting value for the inner
 \code{fastCrrp} iteration budget (\code{max.iter}) used in the M-step.
 If the inner solver fails to converge, this is escalated by 200 per
-refit up to a ceiling of 2000; if it still has not converged the EM
+refit up to a ceiling of 20000; if it still has not converged the EM
 stops and \code{conv} is returned as \code{FALSE}. The escalated value
 is carried across EM iterations. Default \code{1000}.}
 

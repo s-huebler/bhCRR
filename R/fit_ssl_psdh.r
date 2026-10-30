@@ -37,7 +37,7 @@
 #' @param inner_maxit_start Integer. Starting value for the inner
 #'   \code{fastCrrp} iteration budget (\code{max.iter}) used in the M-step.
 #'   If the inner solver fails to converge, this is escalated by 200 per
-#'   refit up to a ceiling of 2000; if it still has not converged the EM
+#'   refit up to a ceiling of 20000; if it still has not converged the EM
 #'   stops and \code{conv} is returned as \code{FALSE}. The escalated value
 #'   is carried across EM iterations. Default \code{1000}.
 #' @param init_method Character string naming a built-in initialization method
@@ -228,7 +228,7 @@ fit_ssl_psdh <- function(x, y,
                           max.iter = inner_maxit)
 
       # If fastCrrp did not converge, escalate the inner iteration budget by
-      # 200 and refit, up to a ceiling of 2000. inner_maxit is defined
+      # 200 and refit, up to a ceiling of 20000. inner_maxit is defined
       # outside the EM loop, so once escalated it stays escalated for
       # subsequent iterations (which tend to need at least as many inner
       # iterations as the one that first stalled).
