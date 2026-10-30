@@ -1,2 +1,4 @@
-*
-!.gitignore
+# Ignore per-run result files (large, regenerable from CHPC)
+*.rds
+*.RData
+# Keep committed summary CSVs (find_s0.csv, clintall_timing_*.csv)

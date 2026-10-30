@@ -34,6 +34,8 @@ REPO_SIM_CHPC="$(cd "$HERE/../chpc" && pwd)"
 TAG=""
 REPS=""
 INIT_OVERRIDE=""
+SS0_OVERRIDE=""
+SS1_OVERRIDE=""
 TIME_OVERRIDE=""
 MEM_OVERRIDE=""
 ARRAY_OVERRIDE=""
@@ -42,7 +44,7 @@ CONSTRAINT_OVERRIDE=""
 SKIP_SETUP=0
 DRYRUN=0
 
-_ALLOWED_KEYS="TAG REPS INIT TIME MEM ARRAY THROTTLE CONSTRAINT SKIP_SETUP DRYRUN"
+_ALLOWED_KEYS="TAG REPS INIT SS0 SS1 TIME MEM ARRAY THROTTLE CONSTRAINT SKIP_SETUP DRYRUN"
 
 for arg in "$@"; do
   case "$arg" in
@@ -58,6 +60,8 @@ for arg in "$@"; do
         TAG)        TAG="$val"            ;;
         REPS)       REPS="$val"           ;;
         INIT)       INIT_OVERRIDE="$val"  ;;
+        SS0)        SS0_OVERRIDE="$val"   ;;
+        SS1)        SS1_OVERRIDE="$val"   ;;
         TIME)       TIME_OVERRIDE="$val"  ;;
         MEM)        MEM_OVERRIDE="$val"   ;;
         ARRAY)      ARRAY_OVERRIDE="$val" ;;
@@ -92,6 +96,8 @@ REPS="${REPS:-3}"
 INIT_METHOD="${INIT_OVERRIDE:-LASSO_bic}"
 [[ "$INIT_METHOD" =~ ^(LASSO_bic|zero)$ ]] || \
   die "init must be 'LASSO_bic' or 'zero', got '$INIT_METHOD'."
+SS0="${SS0_OVERRIDE:-0.03}"
+SS1="${SS1_OVERRIDE:-0.3}"
 TASK_TIME="${TIME_OVERRIDE:-01:00:00}"
 TASK_MEM="${MEM_OVERRIDE:-8G}"
 THROTTLE="${THROTTLE_OVERRIDE:-30}"
@@ -146,7 +152,7 @@ bhCRR ClinTALL timing submission
   BHCRR_LOAD     : ${BHCRR_LOAD:-cluster}
   account/part.  : $CHPC_ACCOUNT / $CHPC_PARTITION  (cluster: ${CHPC_CLUSTER:-<login>})
   init_method    : $INIT_METHOD
-  ss             : ($SS0, $SS1) ... (not set here; defaults in fit_one_timing.r)
+  ss             : ($SS0, $SS1)
   reps           : $REPS  ->  G*REPS=$(( G * REPS )) tasks
   array_spec     : $ARRAY_SPEC
   time / mem     : $TASK_TIME / $TASK_MEM
@@ -193,7 +199,7 @@ run_jid=$(submit sbatch --parsable \
   "${CONSTRAINT_FLAG[@]}" \
   --job-name="bhcrr_timing_${TAG}" \
   --output="$REPO_ROOT/sim/chpc/logs/timing_%A_%a.out" \
-  --export=ALL,TIMING_TAG="$TAG",TIMING_INPUT="$TIMING_INPUT",TIMING_OUT_DIR="$TIMING_OUT_DIR",REPS="$REPS",INIT_METHOD="$INIT_METHOD" \
+  --export=ALL,TIMING_TAG="$TAG",TIMING_INPUT="$TIMING_INPUT",TIMING_OUT_DIR="$TIMING_OUT_DIR",REPS="$REPS",INIT_METHOD="$INIT_METHOD",SS0="$SS0",SS1="$SS1" \
   "$HERE/timing.slurm")
 run_jid="${run_jid%%;*}"
 echo "Submitted timing array: job $run_jid  (array $ARRAY_SPEC)"
