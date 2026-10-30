@@ -1,0 +1,11 @@
+md5=c698590db8304668b911caf85c5f7a6a
+dim_x=1309x24619
+n_cause1=120
+n_cause2=97
+n_censored=1092
+n_dropped=0
+pmax=24619
+G=50
+seed=20261030
+git_hash=859db3f
+created=2026-10-30 09:30:23 MDT
