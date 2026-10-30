@@ -306,6 +306,8 @@ dat_design <- dat_simple %>%
 dat_design <- dat_design %>%
   filter(!is.na(Insurance) & !is.na(Treatment.Arm))
 
+dat_design_gexp <- dat_design[,10:ncol(dat_design)]
+
 dat_cr <- dat_cr %>%
   filter(sample_id %in% rownames(dat_design))
 ```
@@ -317,9 +319,12 @@ saveRDS(dat_design,
         file = "/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design.rds")
 saveRDS(dat_cr,
         file = "/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_cr.rds")
+saveRDS(dat_design_gexp,
+        file = "/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design_gexp.rds")
 ```
 
 ```{r}
 dat_design <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design.rds")
 dat_cr <- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_cr.rds")
+dat_design_gexp<- readRDS("/Users/sophiehuebler/Documents/bhCRR/inst/ClinTall/dat_design_gexp.rds")
 ```
