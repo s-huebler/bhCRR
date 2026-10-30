@@ -139,10 +139,27 @@ retry outputs safely overlay the original failed rows.
 
 ## P-grid and array geometry
 
-`grid.tsv` contains one row per p value:
-`p ∈ {500, 1000, …, 500·⌊pmax/500⌋, pmax}` where pmax is the number of
-genes kept after dropping zero-variance genes.  See `input_manifest.txt`
-for the exact pmax and G.
+`grid.tsv` contains one row per p value, built by
+`make_timing_grid(pmax, start = 500, step = 2000)`:
+
+```
+p ∈ {500, 2500, 4500, …, 22500, 24500, 24619}   (G = 14)
+```
+
+The current grid uses `step = 2000`.  To regenerate `grid.tsv` after
+changing the step **without** touching `input/` or `input_manifest.txt`:
+
+```bash
+Rscript -e "
+  p <- sort(unique(c(seq(500L, 24619L, by = 2000L), 24619L)))
+  d <- data.frame(p_index = seq_along(p), p = p)
+  write.table(d, 'sim/timing/grid.tsv', sep='\t', quote=FALSE, row.names=FALSE)
+  cat('G=', length(p), '\n')
+"
+```
+
+Do **not** source `prep_clintall_timing.r` for this — sourcing runs the
+full script and overwrites `input/clintall_timing_input.rds`.
 
 Array task `i` (0-based) maps to:
 
@@ -151,7 +168,7 @@ p   = grid$p[ (i %% G) + 1 ]
 rep = i %/% G + 1
 ```
 
-So for 3 reps and G grid points the full array is `0..(3G-1)`.
+With G = 14 and reps = 3 the full array is `0..41` (42 tasks).
 
 ---
 

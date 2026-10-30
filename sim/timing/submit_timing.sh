@@ -179,7 +179,7 @@ if [[ "$SKIP_SETUP" == "1" ]]; then
   array_dep=""
 else
   setup_jid=$(submit sbatch --parsable \
-    --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
+    --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" ${CLUSTER_FLAG[@]+"${CLUSTER_FLAG[@]}"} \
     --time="$SB_SETUP_TIME" --mem="$SB_SETUP_MEM" --cpus-per-task="$SB_SETUP_CPUS" \
     --job-name="bhcrr_setup_timing" \
     --output="$REPO_ROOT/sim/chpc/logs/setup_%j.out" \
@@ -192,11 +192,11 @@ fi
 
 # ---- 7. Timing array --------------------------------------------------------
 run_jid=$(submit sbatch --parsable \
-  --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
+  --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" ${CLUSTER_FLAG[@]+"${CLUSTER_FLAG[@]}"} \
   --time="$TASK_TIME" --mem="$TASK_MEM" --cpus-per-task=1 \
   --array="$ARRAY_SPEC" \
   ${array_dep:+"$array_dep"} \
-  "${CONSTRAINT_FLAG[@]}" \
+  ${CONSTRAINT_FLAG[@]+"${CONSTRAINT_FLAG[@]}"} \
   --job-name="bhcrr_timing_${TAG}" \
   --output="$REPO_ROOT/sim/chpc/logs/timing_%A_%a.out" \
   --export=ALL,TIMING_TAG="$TAG",TIMING_INPUT="$TIMING_INPUT",TIMING_OUT_DIR="$TIMING_OUT_DIR",REPS="$REPS",INIT_METHOD="$INIT_METHOD",SS0="$SS0",SS1="$SS1" \
@@ -206,7 +206,7 @@ echo "Submitted timing array: job $run_jid  (array $ARRAY_SPEC)"
 
 # ---- 8. Collect job (afterany so it runs even if some tasks fail) -----------
 collect_jid=$(submit sbatch --parsable \
-  --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" "${CLUSTER_FLAG[@]}" \
+  --account="$CHPC_ACCOUNT" --partition="$CHPC_PARTITION" ${CLUSTER_FLAG[@]+"${CLUSTER_FLAG[@]}"} \
   --time="00:10:00" --mem=4G --cpus-per-task=1 \
   --dependency="afterany:${run_jid}" \
   --job-name="bhcrr_collect_${TAG}" \

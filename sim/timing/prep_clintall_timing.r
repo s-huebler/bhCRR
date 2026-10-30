@@ -10,6 +10,43 @@
 #
 # Run from the repo root:
 #   Rscript sim/timing/prep_clintall_timing.r
+#   Rscript sim/timing/prep_clintall_timing.r grid_step=2000   # coarser grid
+#
+# To regenerate ONLY grid.tsv without touching input/ (e.g. to coarsen the grid):
+#   Rscript -e "
+#     p <- sort(unique(c(seq(500L, 24619L, by = 2000L), 24619L)))
+#     d <- data.frame(p_index = seq_along(p), p = p)
+#     write.table(d, 'sim/timing/grid.tsv', sep='\t', quote=FALSE, row.names=FALSE)
+#     cat('G=', length(p), '\n')
+#   "
+# Do NOT source this file for that purpose — sourcing runs the full script and
+# overwrites input/clintall_timing_input.rds.
+
+# ---------------------------------------------------------------------------
+# Exported helpers (usable via source() or Rscript -e)
+# ---------------------------------------------------------------------------
+
+#' Build the p-grid for the timing study.
+#'
+#' Returns unique(c(seq(start, pmax, by = step), pmax)), sorted.
+#' Default start=500, step=2000 gives the production grid.
+make_timing_grid <- function(pmax, start = 500L, step = 2000L) {
+  sort(unique(c(seq(start, pmax, by = step), pmax)))
+}
+
+#' Write a p-grid vector to grid.tsv.
+write_grid <- function(p_grid, path) {
+  grid_df <- data.frame(p_index = seq_along(p_grid), p = p_grid)
+  write.table(grid_df, path, sep = "\t", quote = FALSE, row.names = FALSE)
+  cat(sprintf("[prep] Wrote grid.tsv (%d rows): p = %d, ..., %d\n",
+              length(p_grid), p_grid[1], p_grid[length(p_grid)]))
+  invisible(grid_df)
+}
+
+# Parse optional grid_step=<n> from command-line args
+.args      <- commandArgs(trailingOnly = TRUE)
+.step_arg  <- grep("^grid_step=", .args, value = TRUE)
+GRID_STEP  <- if (length(.step_arg)) as.integer(sub("^grid_step=", "", .step_arg[1])) else 2000L
 
 source(file.path(Sys.getenv("REPO_ROOT", getwd()), "sim", "R", "load.r"))
 load_bhcrr(Sys.getenv("BHCRR_LOAD", "dev"))
@@ -93,15 +130,13 @@ x <- x[, gene_order]   # reorder so first p columns = nested subset
 # ---------------------------------------------------------------------------
 # 5. Build p-grid and write grid.tsv
 # ---------------------------------------------------------------------------
-p_seq   <- seq(500L, 500L * floor(pmax_val / 500L), by = 500L)
-p_grid  <- sort(unique(c(p_seq, pmax_val)))
-G       <- length(p_grid)
-cat(sprintf("[prep] Grid: G=%d  p values from %d to %d\n", G, p_grid[1], p_grid[G]))
+p_grid <- make_timing_grid(pmax_val, start = 500L, step = GRID_STEP)
+G      <- length(p_grid)
+cat(sprintf("[prep] Grid: step=%d  G=%d  p values from %d to %d\n",
+            GRID_STEP, G, p_grid[1], p_grid[G]))
 
-grid_df <- data.frame(p_index = seq_len(G), p = p_grid)
 grid_path <- file.path(root, "sim", "timing", "grid.tsv")
-write.table(grid_df, grid_path, sep = "\t", quote = FALSE, row.names = FALSE)
-cat("[prep] Wrote grid.tsv (", G, "rows )\n")
+write_grid(p_grid, grid_path)
 
 # ---------------------------------------------------------------------------
 # 6. Save input .rds
