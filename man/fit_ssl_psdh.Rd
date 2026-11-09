@@ -50,12 +50,14 @@ noise coefficients. Set \code{theta_b = 1} to recover the flat
 \item{maxit}{Integer. Maximum number of EM iterations. Default \code{50}.}
 
 \item{epsilon}{Numeric. Convergence threshold. After at least 5 EM
-iterations the loop stops when (a) the relative deviance change
-\eqn{|\text{dev}_t - \text{dev}_{t-1}| / (0.1 + |\text{dev}_t|)},
-where \eqn{\text{dev} = -2 \times \log} pseudo-likelihood, is below
-\code{epsilon} (necessary condition; matches \code{BhGLM::bmlasso})
-AND (b) every coefficient changes by less than \code{epsilon} in
-absolute value (sufficient condition). Default \code{1e-04}.}
+iterations the loop stops when (a)
+\eqn{|\text{dev}_t - \text{dev}_{t-1}| / (0.1 + |\text{dev}_t|) < \epsilon},
+where \eqn{\text{dev} = -2 \times \log} pseudo-likelihood (matches
+\code{BhGLM::bmlasso}), AND (b) no coefficient moved between zero and
+nonzero, AND (c) among coefficients nonzero in both iterations,
+\eqn{\max_j |\beta_j^t - \beta_j^{t-1}| / |\beta_j^{t-1}| < \epsilon};
+condition (c) is vacuously satisfied when that shared-support set is
+empty. Default \code{1e-04}.}
 
 \item{init}{Length-\eqn{p} numeric vector of initial coefficient values.
 Exactly one of \code{init} or \code{init_method} must be supplied.}

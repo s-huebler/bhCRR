@@ -28,12 +28,14 @@
 #'   \eqn{Beta(1, 1)} (separable-like) behaviour.
 #' @param maxit Integer. Maximum number of EM iterations. Default \code{50}.
 #' @param epsilon Numeric. Convergence threshold. After at least 5 EM
-#'   iterations the loop stops when (a) the relative deviance change
-#'   \eqn{|\text{dev}_t - \text{dev}_{t-1}| / (0.1 + |\text{dev}_t|)},
-#'   where \eqn{\text{dev} = -2 \times \log} pseudo-likelihood, is below
-#'   \code{epsilon} (necessary condition; matches \code{BhGLM::bmlasso})
-#'   AND (b) every coefficient changes by less than \code{epsilon} in
-#'   absolute value (sufficient condition). Default \code{1e-04}.
+#'   iterations the loop stops when (a)
+#'   \eqn{|\text{dev}_t - \text{dev}_{t-1}| / (0.1 + |\text{dev}_t|) < \epsilon},
+#'   where \eqn{\text{dev} = -2 \times \log} pseudo-likelihood (matches
+#'   \code{BhGLM::bmlasso}), AND (b) no coefficient moved between zero and
+#'   nonzero, AND (c) among coefficients nonzero in both iterations,
+#'   \eqn{\max_j |\beta_j^t - \beta_j^{t-1}| / |\beta_j^{t-1}| < \epsilon};
+#'   condition (c) is vacuously satisfied when that shared-support set is
+#'   empty. Default \code{1e-04}.
 #' @param init Length-\eqn{p} numeric vector of initial coefficient values.
 #'   Exactly one of \code{init} or \code{init_method} must be supplied.
 #' @param init_lam_path Defunct. Passing any value other than \code{NULL}
@@ -182,6 +184,9 @@ fit_ssl_psdh <- function(x, y,
     previous_dev <- 0
     outer_convergence <- FALSE
     iterations <- 0
+    rel_dev_change     <- NA_real_
+    n_support_changes  <- NA_integer_
+    rel_beta_change    <- NA_real_
     for(iter in 1:maxit){
       previous_betas <- current_betas
 
@@ -271,13 +276,18 @@ fit_ssl_psdh <- function(x, y,
       rel_dev_change <- abs(dev - previous_dev) / (0.1 + abs(dev))
       if (iter > 5 && rel_dev_change < epsilon) {
         #sufficient condition
+        nz_prev <- previous_betas != 0
+        nz_cur  <- current_betas  != 0
+        n_support_changes <- sum(nz_prev != nz_cur)
+        both_nz <- nz_prev & nz_cur
+        rel_beta_change <- if (any(both_nz)) {
+          max(abs(current_betas[both_nz] - previous_betas[both_nz]) /
+              abs(previous_betas[both_nz]))
+        } else 0
 
-        #to-do: optimize efficiency
-        unstable <- sum(abs(current_betas - previous_betas) > epsilon)
-
-        if(unstable < 1){
-        outer_convergence <- TRUE
-        break
+        if (n_support_changes == 0L && rel_beta_change < epsilon) {
+          outer_convergence <- TRUE
+          break
         }
       }
       previous_dev <- dev
@@ -288,8 +298,8 @@ fit_ssl_psdh <- function(x, y,
 
     if(!outer_convergence){
       warning(sprintf(
-        "fit_ssl_psdh did not converge within maxit = %d EM iterations; consider increasing maxit or relaxing epsilon.",
-        maxit))
+        "fit_ssl_psdh did not converge within maxit = %d EM iterations; consider increasing maxit or relaxing epsilon. last relative deviance change = %g; support changes = %d; max relative coefficient change on shared support = %g",
+        maxit, rel_dev_change, n_support_changes, rel_beta_change))
     }
 
     # One final refit at the converged state with Breslow jumps enabled.
