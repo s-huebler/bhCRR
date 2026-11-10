@@ -17,7 +17,7 @@
 #   run_id      integer(1)     run index; used only in error messages
 #   control     bhcrr_cv_control or NULL
 #                              NULL builds the default (nfolds=10, ncv=2).
-#                              Supplied controls are MERGED: the five mirrored
+#                              Supplied controls are MERGED: the six mirrored
 #                              hyperparameters are filled from defaults into
 #                              control$fit_args so fold fits and direct fits are
 #                              aligned by construction. See MIRRORING NOTE.
@@ -60,21 +60,24 @@
 #                                   $autotune   bhcrr_autotune() including CV
 #                                   $final_fit  final refit at best (s0, s1)
 #     $control      bhcrr_cv_control  the resolved, merged control actually
-#                                 used; contains the five mirrored fit_args,
+#                                 used; contains the six mirrored fit_args,
 #                                 eval_time, init_method, and init_args as
 #                                 applied to every fit path
 #
 # MIRRORING NOTE
-#   Five hyperparameters must be identical in the fold fits (inside bhcrr_cv)
+#   Six hyperparameters must be identical in the fold fits (inside bhcrr_cv)
 #   and the two direct fit_ssl_psdh() calls:
-#     initial_sparsity = 0.05, theta_a = 1, theta_b = 1 (legacy choice; NOT
-#     ncol(x)), epsilon = 1e-04, inner_maxit_start = 1000.
+#     initial_sparsity = 0.5, theta_a = 1, theta_b = 1 (legacy choice; NOT
+#     ncol(x)), epsilon = 1e-04, inner_maxit_start = 1000, theta_update = "count".
 #   theta_b in particular: fit_ssl_psdh's default is ncol(x), so omitting it
 #   from fit_args silently changes the prior. With the old "accept wholesale"
 #   approach, a supplied control whose fit_args omitted theta_b would cause
 #   fold fits to tune at theta_b=ncol(x) while the final model ran at theta_b=1.
 #   The merge makes consistency structural: a caller can override any mirrored
 #   value via control$fit_args and it propagates everywhere.
+#   theta_update is mirrored explicitly so saved $control objects record which
+#   theta rule produced a run and a future package default change cannot silently
+#   alter simulations.
 #
 # EVAL_TIME NOTE
 #   Legacy bhcrr_autotune() (sim/_legacy/code/batch_run_complex.R:192-198) had
@@ -137,20 +140,21 @@ fit_bhcrr <- function(x, y, scenario, run_id,
   # Applied to all three fit paths. A supplied control$fit_args overrides these
   # selectively; unset entries get the values below.
   .mirror_defaults <- list(
-    initial_sparsity  = 0.05,
+    initial_sparsity  = 0.5,
     theta_a           = 1,
     theta_b           = 1,      # deliberate legacy choice; fit_ssl_psdh default is
                                  # ncol(x), which changes the prior relative to
                                  # batch_run_complex.R -- do not "fix" to default
     epsilon           = 1e-04,
-    inner_maxit_start = 1000
+    inner_maxit_start = 1000,
+    theta_update      = "count"
   )
 
   # ---- eval_time: scenario-fixed, not data-dependent (see EVAL_TIME NOTE) ----
   tau <- (scenario$u_min + scenario$u_max) / 2
 
   # ---- Resolve control: build default or merge into a supplied one ----
-  # After this block, control$fit_args carries all five mirrored entries plus
+  # After this block, control$fit_args carries all six mirrored entries plus
   # maxit = maxit_folds, so fold fits and direct fits read from the same source.
   if (is.null(control)) {
     control <- bhcrr_cv_control(
@@ -195,6 +199,7 @@ fit_bhcrr <- function(x, y, scenario, run_id,
     initial_sparsity  = control$fit_args$initial_sparsity,
     theta_a           = control$fit_args$theta_a,
     theta_b           = control$fit_args$theta_b,
+    theta_update      = control$fit_args$theta_update,
     maxit             = maxit_folds,
     epsilon           = control$fit_args$epsilon,
     init_method       = control$init_method,
@@ -233,6 +238,7 @@ fit_bhcrr <- function(x, y, scenario, run_id,
     initial_sparsity  = control$fit_args$initial_sparsity,
     theta_a           = control$fit_args$theta_a,
     theta_b           = control$fit_args$theta_b,
+    theta_update      = control$fit_args$theta_update,
     maxit             = maxit_final,
     epsilon           = control$fit_args$epsilon,
     init_method       = control$init_method,

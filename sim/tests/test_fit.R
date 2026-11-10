@@ -165,6 +165,7 @@ test_that("control$fit_args has theta_b=1 and matches final-fit hyperparameters"
   expect_equal(fa$initial_sparsity,  0.05)
   expect_equal(fa$epsilon,           1e-04)
   expect_equal(fa$inner_maxit_start, 1000)
+  expect_equal(fa$theta_update,      "count")
 })
 
 # ---------------------------------------------------------------------------
@@ -202,7 +203,7 @@ test_that("$control$eval_time matches $eval_time", {
 # Control merging: new cases exercising the merge behavior (PART B)
 # ---------------------------------------------------------------------------
 
-# Minimal fast control for merge tests: empty fit_args so all five mirrored
+# Minimal fast control for merge tests: empty fit_args so all six mirrored
 # entries come from defaults; small lambda path to keep CV cheap.
 .merge_base_ctrl <- bhcrr_cv_control(
   nfolds      = 3L, ncv = 1L,
@@ -212,7 +213,7 @@ test_that("$control$eval_time matches $eval_time", {
   eval_time   = 100
 )
 
-test_that("fit_args = list(): all five mirrored entries present after merge", {
+test_that("fit_args = list(): all six mirrored entries present after merge", {
   set.seed(10L)
   r <- suppressWarnings(
     fit_bhcrr(.x, .y, .spec, run_id = 1L,
@@ -221,14 +222,15 @@ test_that("fit_args = list(): all five mirrored entries present after merge", {
               maxit_folds = 20L, maxit_final = 20L)
   )
   fa <- r$control$fit_args
-  expect_equal(fa$initial_sparsity,  0.05,  label = "initial_sparsity filled")
-  expect_equal(fa$theta_a,           1,     label = "theta_a filled")
-  expect_equal(fa$theta_b,           1,     label = "theta_b filled")
-  expect_equal(fa$epsilon,           1e-04, label = "epsilon filled")
-  expect_equal(fa$inner_maxit_start, 1000,  label = "inner_maxit_start filled")
+  expect_equal(fa$initial_sparsity,  0.5,    label = "initial_sparsity filled")
+  expect_equal(fa$theta_a,           1,      label = "theta_a filled")
+  expect_equal(fa$theta_b,           1,      label = "theta_b filled")
+  expect_equal(fa$epsilon,           1e-04,  label = "epsilon filled")
+  expect_equal(fa$inner_maxit_start, 1000,   label = "inner_maxit_start filled")
+  expect_equal(fa$theta_update,      "count", label = "theta_update filled")
 })
 
-test_that("fit_args = list(maxit=20L): five mirrored entries AND maxit=20L present", {
+test_that("fit_args = list(maxit=20L): six mirrored entries AND maxit=20L present", {
   ctrl_m20 <- bhcrr_cv_control(
     nfolds = 3L, ncv = 1L, init_method = "LASSO_cv",
     init_args = list(lambda_path = 10^seq(log10(0.1), log10(0.001), length = 5)),
@@ -242,12 +244,13 @@ test_that("fit_args = list(maxit=20L): five mirrored entries AND maxit=20L prese
               s0_seq = .tiny_s0, s1_seq = .tiny_s1, max_widen = 0L)
   )
   fa <- r$control$fit_args
-  # Five mirrored entries
-  expect_equal(fa$initial_sparsity,  0.05)
+  # Six mirrored entries
+  expect_equal(fa$initial_sparsity,  0.5)
   expect_equal(fa$theta_a,           1)
   expect_equal(fa$theta_b,           1)
   expect_equal(fa$epsilon,           1e-04)
   expect_equal(fa$inner_maxit_start, 1000)
+  expect_equal(fa$theta_update,      "count")
   # Fold maxit taken from fit_args
   expect_equal(fa$maxit, 20L,
                label = "fold maxit = 20 from control$fit_args")
@@ -351,11 +354,12 @@ test_that("control = NULL regression guard: resolved $control matches production
   fa   <- ctrl$fit_args
   tau  <- (.spec$u_min + .spec$u_max) / 2
 
-  expect_equal(fa$initial_sparsity,  0.05,  label = "default initial_sparsity")
-  expect_equal(fa$theta_a,           1,     label = "default theta_a")
-  expect_equal(fa$theta_b,           1,     label = "default theta_b")
-  expect_equal(fa$epsilon,           1e-04, label = "default epsilon")
-  expect_equal(fa$inner_maxit_start, 1000,  label = "default inner_maxit_start")
+  expect_equal(fa$initial_sparsity,  0.5,     label = "default initial_sparsity")
+  expect_equal(fa$theta_a,           1,       label = "default theta_a")
+  expect_equal(fa$theta_b,           1,       label = "default theta_b")
+  expect_equal(fa$epsilon,           1e-04,   label = "default epsilon")
+  expect_equal(fa$inner_maxit_start, 1000,    label = "default inner_maxit_start")
+  expect_equal(fa$theta_update,      "count", label = "default theta_update")
   expect_equal(fa$maxit,             50,    label = "default fold maxit = 50")
   expect_equal(ctrl$init_method,     "LASSO_cv", label = "default init_method")
   expect_true(length(ctrl$init_args$lambda_path) == 10L,
