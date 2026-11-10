@@ -21,6 +21,7 @@ init_ref <- full_model_cv$full_model$coef[, full_model_cv$lambda == lambda_min]
 fit <- fit_ssl_psdh(x, y,
   ss = c(0.04, 0.5), initial_sparsity = 0.05,
   theta_a = 1, theta_b = ncol(x),
+  theta_update = "expected",
   maxit = 50, epsilon = 1e-04,
   init_method = "LASSO_cv",
   init_args = list(lambda_path = init_lam_path))

@@ -15,11 +15,17 @@
 #'   given feature is active (\eqn{\pi = \Pr(\gamma_j = 1)}).
 #' @param betas Numeric vector of length \eqn{p}. Current coefficient
 #'   estimates \eqn{\hat{\beta}} from the previous M-step.
-#' @param exact If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.
+#' @param exact If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used. Ignored when \code{theta} is supplied.
 #' @param a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior on
-#'   the global mixture probability \eqn{\theta}. Default \code{1}.
+#'   the global mixture probability \eqn{\theta}. Default \code{1}. Ignored
+#'   when \code{theta} is supplied.
 #' @param b Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior on
-#'   \eqn{\theta}. Default \code{1}.
+#'   \eqn{\theta}. Default \code{1}. Ignored when \code{theta} is supplied.
+#' @param theta Numeric scalar in \eqn{(0, 1)} or \code{NULL} (default).
+#'   When supplied, \code{prior\_Slab} is set directly to \code{theta} and
+#'   \code{pips}, \code{exact}, \code{a} and \code{b} are all ignored.  Useful
+#'   for the count-based \eqn{\theta} update of Rockova and George (2018),
+#'   where a single global \eqn{\theta} replaces the leave-one-out average.
 #'
 #' @returns Numeric vector of length \eqn{p}. Posterior inclusion
 #'   probability \eqn{E[\gamma_j \mid \beta_j]} for each feature; values
@@ -36,8 +42,13 @@
 #' }
 expected_inclusion_probs <- function(s0, s1, pips, betas,
                                      exact = FALSE,
-                                     a = 1, b = 1) {
+                                     a = 1, b = 1,
+                                     theta = NULL) {
 
+  if (!is.null(theta)) {
+    if (!is.numeric(theta) || length(theta) != 1 || theta <= 0 || theta >= 1)
+      stop("'theta' must be a single number strictly between 0 and 1.")
+  }
 
   #if(exact == FALSE){
   #p(betaj | gammaj = 1, s1)
@@ -56,15 +67,19 @@ expected_inclusion_probs <- function(s0, s1, pips, betas,
   #   prior_Spike <- 1-mean(pips)
   # }
 
-  p <- length(pips)
+  if (!is.null(theta)) {
+    prior_Slab <- theta
+  } else {
+    p <- length(pips)
 
-  if(exact){
-    # leave-one-out Beta(a, b) mode: drop coordinate j from the numerator
-    # sum and from the coefficient count in the denominator
-    prior_Slab  <- (sum(pips) - pips + a - 1) / ((p - 1) + a + b - 2)
-  }else{
-    # global Beta(a, b) mode: (sum(pips) + a - 1) / (p + a + b - 2)
-    prior_Slab  <- (sum(pips) + a - 1) / (p + a + b - 2)
+    if(exact){
+      # leave-one-out Beta(a, b) mode: drop coordinate j from the numerator
+      # sum and from the coefficient count in the denominator
+      prior_Slab  <- (sum(pips) - pips + a - 1) / ((p - 1) + a + b - 2)
+    }else{
+      # global Beta(a, b) mode: (sum(pips) + a - 1) / (p + a + b - 2)
+      prior_Slab  <- (sum(pips) + a - 1) / (p + a + b - 2)
+    }
   }
   prior_Spike <- 1 - prior_Slab
 

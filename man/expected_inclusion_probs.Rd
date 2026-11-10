@@ -4,7 +4,16 @@
 \alias{expected_inclusion_probs}
 \title{E-step: posterior inclusion probabilities}
 \usage{
-expected_inclusion_probs(s0, s1, pips, betas, exact = FALSE, a = 1, b = 1)
+expected_inclusion_probs(
+  s0,
+  s1,
+  pips,
+  betas,
+  exact = FALSE,
+  a = 1,
+  b = 1,
+  theta = NULL
+)
 }
 \arguments{
 \item{s0}{Numeric scalar. Spike scale parameter of the Laplace prior
@@ -20,13 +29,20 @@ given feature is active (\eqn{\pi = \Pr(\gamma_j = 1)}).}
 \item{betas}{Numeric vector of length \eqn{p}. Current coefficient
 estimates \eqn{\hat{\beta}} from the previous M-step.}
 
-\item{exact}{If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used.}
+\item{exact}{If false, overall mixing probability is substituted for the calculated leave one out mixing probabilities. If true, individual leave one out mixing probabilities used. Ignored when \code{theta} is supplied.}
 
 \item{a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)} prior on
-the global mixture probability \eqn{\theta}. Default \code{1}.}
+the global mixture probability \eqn{\theta}. Default \code{1}. Ignored
+when \code{theta} is supplied.}
 
 \item{b}{Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)} prior on
-\eqn{\theta}. Default \code{1}.}
+\eqn{\theta}. Default \code{1}. Ignored when \code{theta} is supplied.}
+
+\item{theta}{Numeric scalar in \eqn{(0, 1)} or \code{NULL} (default).
+When supplied, \code{prior\_Slab} is set directly to \code{theta} and
+\code{pips}, \code{exact}, \code{a} and \code{b} are all ignored.  Useful
+for the count-based \eqn{\theta} update of Rockova and George (2018),
+where a single global \eqn{\theta} replaces the leave-one-out average.}
 }
 \value{
 Numeric vector of length \eqn{p}. Posterior inclusion

@@ -15,8 +15,11 @@
 #' @param ss Length-2 numeric vector \code{c(s0, s1)}. Spike (\code{s0})
 #'   and slab (\code{s1}) scale parameters of the Laplace prior.
 #'   Must satisfy \code{s1 > s0 > 0}. Default \code{c(0.04, 0.5)}.
-#' @param initial_sparsity Numeric in \code{(0, 1)}. Starting value for the
-#'   global mixture probability (prior proportion of active features).
+#' @param initial_sparsity Numeric in \code{(0, 1)}. Under
+#'   \code{theta_update = "count"} this is \eqn{\theta^{(0)}}, the mixing
+#'   proportion used in the first E-step only; subsequent E-steps use the
+#'   count-based update. Under \code{theta_update = "expected"} it seeds the
+#'   initial inclusion probabilities \eqn{p_j^{(0)}} for all features.
 #'   Default \code{0.05}.
 #' @param theta_a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
 #'   prior on the global mixture probability \eqn{\theta}. Default \code{1}.
@@ -26,6 +29,17 @@
 #'   \eqn{\theta} toward the true sparsity \eqn{q/p} and adaptively shrinks
 #'   noise coefficients. Set \code{theta_b = 1} to recover the flat
 #'   \eqn{Beta(1, 1)} (separable-like) behaviour.
+#' @param theta_update Character string, one of \code{"count"} (default) or
+#'   \code{"expected"}. Controls how the global mixture probability
+#'   \eqn{\theta} is updated at each EM iteration.
+#'   \code{"count"}: uses the coordinate-ascent update
+#'   \eqn{\theta^{(t+1)} = (a + \|\hat{\beta}^{(t)}\|_0) / (a + b + p)} from
+#'   Rockova and George (2018); a single global \eqn{\theta} is passed to the
+#'   E-step (leave-one-out does not apply).
+#'   \code{"expected"}: the original EM update — \eqn{\theta} is derived from
+#'   the posterior inclusion probabilities via \code{update_mixture_prob()}
+#'   (for reporting only; the E-step derives its prior directly from the pips,
+#'   with optional leave-one-out when \eqn{p < n}).
 #' @param maxit Integer. Maximum number of EM iterations. Default \code{50}.
 #' @param epsilon Numeric. Convergence threshold. After at least 5 EM
 #'   iterations the loop stops when (a)
@@ -81,6 +95,13 @@
 #'     \item{\code{$init_meta}}{List. Provenance returned by the
 #'       initialization function (e.g. selected lambda, CV scores, elapsed
 #'       time). \code{NULL} when \code{init} was supplied directly.}
+#'     \item{\code{$theta}}{Numeric scalar. The final value of the global
+#'       mixture probability \eqn{\theta} at convergence.}
+#'     \item{\code{$theta_path}}{Numeric vector of length \code{iterations + 1}.
+#'       The trajectory of \eqn{\theta}: first entry is \code{initial_sparsity};
+#'       subsequent entries are the values after each M-step update.}
+#'     \item{\code{$theta_update}}{Character. The \code{theta_update} rule used:
+#'       \code{"count"} or \code{"expected"}.}
 #'   }
 #'
 #' @seealso \code{\link{predict.ssl_psdh}}, \code{\link{update_betas}},
@@ -91,26 +112,24 @@
 #'
 #' @examples
 #' \dontrun{
-#' # Built-in CV-LASSO initialization
-#' fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-#'                     init_method = "LASSO_cv")
+#' # Built-in CV-LASSO initialization (count-based theta update, default)
+#' fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init_method = "LASSO_cv")
 #' fit$coefficients
 #'
 #' # Supply a precomputed starting vector
 #' init_vec <- rep(0, ncol(x))
-#' fit2 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-#'                      init = init_vec)
+#' fit2 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init = init_vec)
 #'
 #' # User-defined initialization function
 #' custom_init <- function(x, y, ...) rep(0, ncol(x))
-#' fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-#'                      init_method = custom_init)
+#' fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init_method = custom_init)
 #' }
 fit_ssl_psdh <- function(x, y,
                          ss = c(0.04, 0.5),
                          initial_sparsity = 0.05,
                          theta_a = 1,
                          theta_b = ncol(x),
+                         theta_update = c("count", "expected"),
                          maxit = 50,
                          epsilon = 1e-04,
                          init = NULL,
@@ -135,7 +154,12 @@ fit_ssl_psdh <- function(x, y,
       "'LASSO_bic', 'zero' (or your own function)."
     )
 
+  theta_update <- match.arg(theta_update)
+
   # Standard input checks
+  if (!is.numeric(initial_sparsity) || length(initial_sparsity) != 1 ||
+      initial_sparsity <= 0 || initial_sparsity >= 1)
+    stop("initial_sparsity must be a single number strictly between 0 and 1.")
   if (maxit < 1) stop("maxit must be positive integer.")
   if (epsilon <= 0) stop("epsilon must be a positive number.")
   if (length(ss) != 2) stop("ss must be a vector of length 2")
@@ -156,7 +180,8 @@ fit_ssl_psdh <- function(x, y,
 
     #Initial penalty weights
      ##expected inclusion probs all equal to initial sparsity
-    current_mixture_prob <- initial_sparsity
+    current_theta <- initial_sparsity
+    theta_path <- initial_sparsity
     current_inclusion_probs <- rep(initial_sparsity, ncol(x))
     current_penalty_weights <- expected_penalty_weights(ss0,
                                                         ss1,
@@ -195,15 +220,19 @@ fit_ssl_psdh <- function(x, y,
       # E-Step
       # Update inclusion probabilites (gamma_j)
 
-
-      current_inclusion_probs <- expected_inclusion_probs(ss0, ss1,
-                                                        current_inclusion_probs,
-                                                        current_betas,
-                                                        exact = ncol(x)<nrow(x),
-                                                        a = theta_a,
-                                                        b = theta_b)
-
-
+      if (theta_update == "count") {
+        current_inclusion_probs <- expected_inclusion_probs(ss0, ss1,
+                                                          current_inclusion_probs,
+                                                          current_betas,
+                                                          theta = current_theta)
+      } else {
+        current_inclusion_probs <- expected_inclusion_probs(ss0, ss1,
+                                                          current_inclusion_probs,
+                                                          current_betas,
+                                                          exact = ncol(x)<nrow(x),
+                                                          a = theta_a,
+                                                          b = theta_b)
+      }
 
       # Update penalty weights (inverse S_j)
       current_penalty_weights <- expected_penalty_weights(ss0,
@@ -215,14 +244,7 @@ fit_ssl_psdh <- function(x, y,
 
 
 
-
       # M-Step
-      # Update mixture prob (pi) under the Beta(theta_a, theta_b) prior
-      current_mixture_prob <- update_mixture_prob(current_inclusion_probs,
-                                                  a = theta_a,
-                                                  b = theta_b)
-
-
       # Update shrinkage (lambda)
       current_lambda <- 1/nrow(x)
 
@@ -253,6 +275,13 @@ fit_ssl_psdh <- function(x, y,
       }
 
       current_betas <- mod$coef
+
+      if (theta_update == "count") {
+        current_theta <- update_mixture_prob_count(current_betas, theta_a, theta_b)
+      } else {
+        current_theta <- update_mixture_prob(current_inclusion_probs, theta_a, theta_b)
+      }
+      theta_path <- c(theta_path, current_theta)
 
       betas_path[,iter+1] <- current_betas
       pips_path[,iter+1]<- current_inclusion_probs
@@ -332,6 +361,9 @@ fit_ssl_psdh <- function(x, y,
     ret$init        <- res$init
     ret$init_method <- init_label
     ret$init_meta   <- res$meta
+    ret$theta       <- current_theta
+    ret$theta_path  <- theta_path
+    ret$theta_update <- theta_update
 
     class(ret) <- "ssl_psdh"
     return(ret)

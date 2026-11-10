@@ -11,6 +11,7 @@ fit_ssl_psdh(
   initial_sparsity = 0.05,
   theta_a = 1,
   theta_b = ncol(x),
+  theta_update = c("count", "expected"),
   maxit = 50,
   epsilon = 1e-04,
   init = NULL,
@@ -33,8 +34,11 @@ event status codes (\code{0} = censored, \code{1} = event of interest,
 and slab (\code{s1}) scale parameters of the Laplace prior.
 Must satisfy \code{s1 > s0 > 0}. Default \code{c(0.04, 0.5)}.}
 
-\item{initial_sparsity}{Numeric in \code{(0, 1)}. Starting value for the
-global mixture probability (prior proportion of active features).
+\item{initial_sparsity}{Numeric in \code{(0, 1)}. Under
+\code{theta_update = "count"} this is \eqn{\theta^{(0)}}, the mixing
+proportion used in the first E-step only; subsequent E-steps use the
+count-based update. Under \code{theta_update = "expected"} it seeds the
+initial inclusion probabilities \eqn{p_j^{(0)}} for all features.
 Default \code{0.05}.}
 
 \item{theta_a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
@@ -46,6 +50,18 @@ the paper's non-separable \eqn{Beta(1, p)} calibration, which drives
 \eqn{\theta} toward the true sparsity \eqn{q/p} and adaptively shrinks
 noise coefficients. Set \code{theta_b = 1} to recover the flat
 \eqn{Beta(1, 1)} (separable-like) behaviour.}
+
+\item{theta_update}{Character string, one of \code{"count"} (default) or
+\code{"expected"}. Controls how the global mixture probability
+\eqn{\theta} is updated at each EM iteration.
+\code{"count"}: uses the coordinate-ascent update
+\eqn{\theta^{(t+1)} = (a + \|\hat{\beta}^{(t)}\|_0) / (a + b + p)} from
+Rockova and George (2018); a single global \eqn{\theta} is passed to the
+E-step (leave-one-out does not apply).
+\code{"expected"}: the original EM update — \eqn{\theta} is derived from
+the posterior inclusion probabilities via \code{update_mixture_prob()}
+(for reporting only; the E-step derives its prior directly from the pips,
+with optional leave-one-out when \eqn{p < n}).}
 
 \item{maxit}{Integer. Maximum number of EM iterations. Default \code{50}.}
 
@@ -109,6 +125,13 @@ name (\code{"LASSO_cv"}, \code{"LASSO_bic"}, \code{"zero"}), or
 \item{\code{$init_meta}}{List. Provenance returned by the
 initialization function (e.g. selected lambda, CV scores, elapsed
 time). \code{NULL} when \code{init} was supplied directly.}
+\item{\code{$theta}}{Numeric scalar. The final value of the global
+mixture probability \eqn{\theta} at convergence.}
+\item{\code{$theta_path}}{Numeric vector of length \code{iterations + 1}.
+The trajectory of \eqn{\theta}: first entry is \code{initial_sparsity};
+subsequent entries are the values after each M-step update.}
+\item{\code{$theta_update}}{Character. The \code{theta_update} rule used:
+\code{"count"} or \code{"expected"}.}
 }
 }
 \description{
@@ -120,20 +143,17 @@ parameterised by scale pair \code{ss = c(s0, s1)}.
 }
 \examples{
 \dontrun{
-# Built-in CV-LASSO initialization
-fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-                    init_method = "LASSO_cv")
+# Built-in CV-LASSO initialization (count-based theta update, default)
+fit <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init_method = "LASSO_cv")
 fit$coefficients
 
 # Supply a precomputed starting vector
 init_vec <- rep(0, ncol(x))
-fit2 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-                     init = init_vec)
+fit2 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init = init_vec)
 
 # User-defined initialization function
 custom_init <- function(x, y, ...) rep(0, ncol(x))
-fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), initial_sparsity = 0.05,
-                     init_method = custom_init)
+fit3 <- fit_ssl_psdh(x, y, ss = c(0.04, 0.5), init_method = custom_init)
 }
 }
 \seealso{
