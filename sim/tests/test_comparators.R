@@ -19,7 +19,7 @@ load_sim("dev", force = FALSE)
 # ---------------------------------------------------------------------------
 # Fixtures -- built once, reused across tests
 # Target runtime: < 60 s total for this file.
-# Configuration: n=100, p=10 (p < n so unpenalized initial for aLASSO runs).
+# Configuration: n=100, p=10.
 # ---------------------------------------------------------------------------
 
 .tiny_args <- list(
@@ -133,21 +133,76 @@ test_that("$risk has length n; finite for converged fits", {
 })
 
 # ---------------------------------------------------------------------------
-# lambda.path == reference_lambda for every fit
+# Lambda paths: LASSO/SCAD/MCP share one ordinary path; aLASSO has its own
 # ---------------------------------------------------------------------------
 
-test_that("every model used the same reference lambda path", {
-  # Verify via coef: all four fits should produce a coefficient matrix
-  # of the same number of columns (= length of reference path).
-  # We check by re-building reference_lambda and comparing lengths.
-  # The direct path comparison is done inside fit_comparators(); if it
-  # passed without error the assertion held.
-  # Here we check indirectly: bic_path lengths all match.
-  lens <- vapply(c("lasso","alasso","scad","mcp"),
-                 function(nm) length(.comp[[nm]]$meta$bic_path),
-                 integer(1))
-  expect_true(length(unique(lens)) == 1L,
-              label = "all BIC path lengths identical")
+test_that("LASSO, SCAD and MCP share one lambda path; aLASSO's differs", {
+  lp <- lapply(c(lasso = "lasso", alasso = "alasso", scad = "scad", mcp = "mcp"),
+               function(nm) .comp[[nm]]$meta$lambda_path)
+  expect_identical(lp$scad, lp$lasso)
+  expect_identical(lp$mcp,  lp$lasso)
+  expect_equal(length(lp$alasso), length(lp$lasso))
+  expect_false(isTRUE(all.equal(lp$alasso, lp$lasso)))
+})
+
+test_that("aLASSO path starts at the weighted KKT bound", {
+  sc <- .comp$standardization
+  xs <- sweep(sweep(.x, 2L, sc$center, "-"), 2L, sc$scale, "/")
+  ns <- .fg_null_score(xs, .y[, "time"], .y[, "status"])
+  w  <- .comp$alasso$meta$adaptive_weights
+  expect_equal(.comp$alasso$meta$lambda_path[1],
+               (1 + 1e-6) * max(abs(ns$grad) / w) / nrow(.x), tolerance = 1e-10)
+})
+
+test_that("every path is all-zero at its first lambda and not at its second", {
+  # Checks that each lambda.max sits exactly at the KKT boundary for the
+  # penalty actually fitted (weighted for aLASSO, ordinary otherwise).
+  for (nm in c("lasso","alasso","scad","mcp")) {
+    dp <- unname(.comp[[nm]]$meta$df_path)
+    expect_equal(dp[1], 0, label = paste(nm, "df at lambda.max"))
+    expect_gte(dp[2], 1,   label = paste(nm, "df at second lambda"))
+  }
+})
+
+# ---------------------------------------------------------------------------
+# Path diagnostics retained
+# ---------------------------------------------------------------------------
+
+test_that("meta carries per-lambda solver diagnostics of full length", {
+  fields <- c("lambda_path","logLik_path","converged_path","iter_path",
+              "bic_path","df_path")
+  for (nm in c("lasso","alasso","scad","mcp")) {
+    m <- .comp[[nm]]$meta
+    for (f in fields)
+      expect_equal(length(m[[f]]), 100L, label = paste(nm, f, "length"))
+    expect_true(is.logical(m$converged_path), label = paste(nm, "converged_path"))
+    expect_equal(m$selected_df, sum(.comp[[nm]]$coef_std != 0),
+                 label = paste(nm, "selected_df"))
+    expect_true(is.logical(m$selected_at_last_valid),
+                label = paste(nm, "selected_at_last_valid"))
+    expect_true(is.logical(m$selection_truncated) &&
+                  length(m$selection_truncated) == 1L,
+                label = paste(nm, "selection_truncated"))
+  }
+})
+
+# ---------------------------------------------------------------------------
+# aLASSO initializer and weights
+# ---------------------------------------------------------------------------
+
+test_that("aLASSO uses the ridge initializer and bounded, median-1 weights", {
+  m <- .comp$alasso$meta
+  expect_identical(m$initial_estimator, "ridge")
+  expect_true(is.finite(m$ridge_lambda) && m$ridge_lambda > 0)
+  expect_equal(length(m$initial_beta_std), ncol(.x))
+  w <- m$adaptive_weights
+  expect_identical(names(w), colnames(.x))
+  expect_true(all(w >= 0.1 & w <= 25))
+  # Clipping is monotone and 1 lies inside the bounds, so the median survives.
+  expect_equal(stats::median(w), 1, tolerance = 1e-12)
+  # Larger first-stage coefficients get smaller penalties.
+  ord <- order(abs(m$initial_beta_std))
+  expect_true(all(diff(w[ord]) <= 1e-12))
 })
 
 # ---------------------------------------------------------------------------
