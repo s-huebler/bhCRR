@@ -20,7 +20,7 @@
 #'   proportion used in the first E-step only; subsequent E-steps use the
 #'   count-based update. Under \code{theta_update = "expected"} it seeds the
 #'   initial inclusion probabilities \eqn{p_j^{(0)}} for all features.
-#'   Default \code{0.05}.
+#'   Default \code{0.5}, following Rockova and George (2018).
 #' @param theta_a Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
 #'   prior on the global mixture probability \eqn{\theta}. Default \code{1}.
 #' @param theta_b Numeric. Shape parameter \eqn{b} of the \eqn{Beta(a, b)}
@@ -126,7 +126,7 @@
 #' }
 fit_ssl_psdh <- function(x, y,
                          ss = c(0.04, 0.5),
-                         initial_sparsity = 0.05,
+                         initial_sparsity = 0.5,
                          theta_a = 1,
                          theta_b = ncol(x),
                          theta_update = c("count", "expected"),

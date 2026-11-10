@@ -8,7 +8,7 @@ fit_ssl_psdh(
   x,
   y,
   ss = c(0.04, 0.5),
-  initial_sparsity = 0.05,
+  initial_sparsity = 0.5,
   theta_a = 1,
   theta_b = ncol(x),
   theta_update = c("count", "expected"),
@@ -39,7 +39,7 @@ Must satisfy \code{s1 > s0 > 0}. Default \code{c(0.04, 0.5)}.}
 proportion used in the first E-step only; subsequent E-steps use the
 count-based update. Under \code{theta_update = "expected"} it seeds the
 initial inclusion probabilities \eqn{p_j^{(0)}} for all features.
-Default \code{0.05}.}
+Default \code{0.5}, following Rockova and George (2018).}
 
 \item{theta_a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
 prior on the global mixture probability \eqn{\theta}. Default \code{1}.}

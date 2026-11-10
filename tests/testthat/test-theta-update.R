@@ -61,6 +61,10 @@ test_that("count-rule fit returns correct theta fields", {
                tolerance = 1e-12)
 })
 
+test_that("default initial_sparsity is 0.5", {
+  expect_equal(formals(fit_ssl_psdh)$initial_sparsity, 0.5)
+})
+
 test_that("theta_update = 'expected' returns correct theta_update field", {
   dat <- make_ssl_fixture_data()
   fit <- fit_ssl_psdh(dat$x, dat$y,
