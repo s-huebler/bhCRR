@@ -27,17 +27,19 @@
 #'   \eqn{\theta} toward the true sparsity \eqn{q/p} and adaptively shrinks
 #'   noise coefficients. Set \code{theta_b = 1} to recover the flat
 #'   \eqn{Beta(1, 1)} (separable-like) behaviour.
-#' @param theta_update Character string, one of \code{"count"} (default) or
-#'   \code{"expected"}. Controls how the global mixture probability
-#'   \eqn{\theta} is updated after each M-step.
-#'   \code{"count"}: the coordinate-ascent update
-#'   \eqn{\theta^{(t+1)} = (a + \|\hat{\beta}^{(t)}\|_0) / (a + b + p)} from
-#'   Rockova and George (2018), based on the observed support size.
-#'   \code{"expected"}: the EM update
-#'   \eqn{\theta^{(t+1)} = (\sum_j p_j^{(t)} + a - 1) / (p + a + b - 2)},
-#'   based on the current posterior inclusion probabilities.
-#'   The updated \eqn{\theta^{(t+1)}} is used as the prior inclusion
-#'   probability in the next E-step.
+#' @param theta_update Character string, one of \code{"count"} (default),
+#'   \code{"expected"}, or \code{"expected_clamp"}. Controls how the global
+#'   mixture probability \eqn{\theta} is updated after each M-step; the
+#'   updated \eqn{\theta^{(t+1)}} is used as the prior inclusion probability
+#'   in the next E-step. See \code{\link{update_mixture_prob}} for the full
+#'   definitions.
+#'   \code{"count"}: Rockova and George (2018) support-size update
+#'   \eqn{(a + \|\hat{\beta}\|_0) / (a + b + p)}.
+#'   \code{"expected"}: EM posterior-mode update
+#'   \eqn{(\sum_j p_j + a - 1) / (p + a + b - 2)}.
+#'   \code{"expected_clamp"}: \code{"expected"} floored at \code{0.001}
+#'   (analogous to \code{BhGLM::update.ptheta.group()}, which clamps to
+#'   \eqn{[0.01, 0.99]}; here there is no upper clamp).
 #' @param maxit Integer. Maximum number of EM iterations. Default \code{50}.
 #' @param epsilon Numeric. Convergence threshold. After at least 5 EM
 #'   iterations the loop stops when (a)
@@ -127,7 +129,7 @@ fit_ssl_psdh <- function(x, y,
                          initial_sparsity = 0.5,
                          theta_a = 1,
                          theta_b = ncol(x),
-                         theta_update = c("count", "expected"),
+                         theta_update = c("count", "expected", "expected_clamp"),
                          maxit = 50,
                          epsilon = 1e-04,
                          init = NULL,
@@ -259,11 +261,10 @@ fit_ssl_psdh <- function(x, y,
 
       current_betas <- mod$coef
 
-      if (theta_update == "count") {
-        current_theta <- update_mixture_prob_count(current_betas, theta_a, theta_b)
-      } else {
-        current_theta <- update_mixture_prob(current_inclusion_probs, theta_a, theta_b)
-      }
+      current_theta <- update_mixture_prob(pips = current_inclusion_probs,
+                                           betas = current_betas,
+                                           a = theta_a, b = theta_b,
+                                           theta_update = theta_update)
       theta_path <- c(theta_path, current_theta)
 
       betas_path[,iter+1] <- current_betas
