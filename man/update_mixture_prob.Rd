@@ -28,8 +28,8 @@ closed-form M-step solution for \eqn{\pi} under a flat Beta(1,1) prior.
 }
 \examples{
 \dontrun{
-probs <- expected_inclusion_probs(s1 = 0.5, s0 = 0.04, pi = 0.1,
-                                  betas = rnorm(100))
+probs <- expected_inclusion_probs(s0 = 0.04, s1 = 0.5,
+                                  betas = rnorm(100), theta = 0.1)
 update_mixture_prob(probs)
 }
 }

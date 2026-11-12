@@ -34,12 +34,10 @@ event status codes (\code{0} = censored, \code{1} = event of interest,
 and slab (\code{s1}) scale parameters of the Laplace prior.
 Must satisfy \code{s1 > s0 > 0}. Default \code{c(0.04, 0.5)}.}
 
-\item{initial_sparsity}{Numeric in \code{(0, 1)}. Under
-\code{theta_update = "count"} this is \eqn{\theta^{(0)}}, the mixing
-proportion used in the first E-step only; subsequent E-steps use the
-count-based update. Under \code{theta_update = "expected"} it seeds the
-initial inclusion probabilities \eqn{p_j^{(0)}} for all features.
-Default \code{0.5}, following Rockova and George (2018).}
+\item{initial_sparsity}{Numeric in \code{(0, 1)}. The initial mixing
+probability \eqn{\theta^{(0)}}, used in the first E-step under both
+\code{theta_update} rules. Default \code{0.5}, following Rockova and
+George (2018).}
 
 \item{theta_a}{Numeric. Shape parameter \eqn{a} of the \eqn{Beta(a, b)}
 prior on the global mixture probability \eqn{\theta}. Default \code{1}.}
@@ -53,15 +51,15 @@ noise coefficients. Set \code{theta_b = 1} to recover the flat
 
 \item{theta_update}{Character string, one of \code{"count"} (default) or
 \code{"expected"}. Controls how the global mixture probability
-\eqn{\theta} is updated at each EM iteration.
-\code{"count"}: uses the coordinate-ascent update
+\eqn{\theta} is updated after each M-step.
+\code{"count"}: the coordinate-ascent update
 \eqn{\theta^{(t+1)} = (a + \|\hat{\beta}^{(t)}\|_0) / (a + b + p)} from
-Rockova and George (2018); a single global \eqn{\theta} is passed to the
-E-step (leave-one-out does not apply).
-\code{"expected"}: the original EM update — \eqn{\theta} is derived from
-the posterior inclusion probabilities via \code{update_mixture_prob()}
-(for reporting only; the E-step derives its prior directly from the pips,
-with optional leave-one-out when \eqn{p < n}).}
+Rockova and George (2018), based on the observed support size.
+\code{"expected"}: the EM update
+\eqn{\theta^{(t+1)} = (\sum_j p_j^{(t)} + a - 1) / (p + a + b - 2)},
+based on the current posterior inclusion probabilities.
+The updated \eqn{\theta^{(t+1)}} is used as the prior inclusion
+probability in the next E-step.}
 
 \item{maxit}{Integer. Maximum number of EM iterations. Default \code{50}.}
 

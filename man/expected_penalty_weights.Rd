@@ -32,8 +32,8 @@ small penalty (slab-like shrinkage).
 }
 \examples{
 \dontrun{
-probs <- expected_inclusion_probs(s1 = 0.5, s0 = 0.04, pi = 0.1,
-                                  betas = c(0.5, 0.0, -0.3))
+probs <- expected_inclusion_probs(s0 = 0.04, s1 = 0.5,
+                                  betas = c(0.5, 0.0, -0.3), theta = 0.1)
 expected_penalty_weights(s1 = 0.5, s0 = 0.04, p = probs)
 }
 }
